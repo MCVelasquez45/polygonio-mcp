@@ -26,6 +26,8 @@ Then follow the README in each example folder for setup instructions.
 ## Directory Structure
 
 ```
+agent/
+  └── gpt5-openai-agents-sdk-polygon-mcp/
 examples/
   ├── rest/
   ├── websocket/

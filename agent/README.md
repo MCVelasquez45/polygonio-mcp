@@ -1,7 +1,7 @@
 # GPT-5 + OpenAI Agents SDK + Polygon.io MCP Server — Agentic Financial Analyst Demo
 
 <div align="center">
-  <img src="../../../images/logo.png" alt="Project Logo" width="100%"/>
+  <img src="../images/logo.png" alt="Project Logo" width="100%"/>
 </div>
 
 A simple Python CLI for natural language financial queries using [GPT‑5](https://openai.com/gpt-5/) via the [OpenAI](https://openai.com/) [Agents SDK](https://openai.github.io/openai-agents-python/) and the [Polygon.io](https://polygon.io/) [MCP server](https://github.com/polygon-io/mcp_polygon). It also supports saving analyses as Markdown reports.
@@ -89,7 +89,7 @@ Be specific in your prompt. The better the prompt — the better the response.
 Putting in `Do a return on investment analysis of Meta vs Microsoft. Review news, sentiment, rating, earnings. Analyze the results. Save a report. ` will result in a report similar to what exists in example.md in the reports folder of this repo.
 
 <div align="center">
-  <img src="../gpt5-openai-agents-sdk-polygon-mcp/images/example.png" alt="Example" width="100%"/>
+  <img src="./images/example.png" alt="Example" width="100%"/>
 </div>
 
 ---
