@@ -9,10 +9,16 @@ A simple Python CLI for natural language financial queries using [GPT‑5](https
 ## Features
 
 - **Ask questions like:**  
-  - `last trade for AAPL`  
-  - `aggregates for MSFT from 2024-01-01 to 2024-03-01 daily`  
-  - `ticker details TSLA`
-  - `analyze the return on investment between microsoft and meta. review news, ratings, earning. save a report`
+  - `options snapshot for AAPL`  
+  - `intraday aggregates for MSFT 2024-03-18 minute`  
+  - `list US options exchanges`
+  - `compare META and MSFT fundamentals, review recent news, save a report`
+
+- **Advanced options data tools:**  
+  Purpose-built tools expose Polygon options snapshots, ticker sentiment, and FRED macro series so the agent can ground options analysis in live data (delta, IV, open interest, macro spreads, etc.).
+
+- **Order flow, exchanges, and fundamentals:**  
+  Additional tools retrieve contract-level options quotes/trades, intraday bars for underlyings, exchange metadata, dividends, and full financial statements.
 
 - **Rich CLI output:**  
   Answers are formatted for easy reading in your terminal.
@@ -36,13 +42,15 @@ A simple Python CLI for natural language financial queries using [GPT‑5](https
 2. **Get your API keys:**
    - [OpenAI API key](https://platform.openai.com/api-keys)
    - [Polygon.io API key](https://polygon.io/)
+   - [FRED API key](https://research.stlouisfed.org/docs/api/api_key.html) (needed for macro data)
 
 3. **Create a `.env` file in the same directory as `main.py`:**
     ```
     OPENAI_API_KEY=sk-...
     POLYGON_API_KEY=your_polygon_api_key_here
+    FRED_API_KEY=your_fred_api_key_here
     ```
-    Both keys are required for the CLI to work.
+    All three keys unlock the full toolset; Polygon and OpenAI are required, FRED is required for macro queries.
 
 4. **Run the CLI (dependencies will be auto-installed from `pyproject.toml`):**
     ```sh
@@ -57,10 +65,10 @@ A simple Python CLI for natural language financial queries using [GPT‑5](https
 ## Example Usage
 
 ```
-> last trade for AAPL
+> options snapshot for NVDA
 ✔ Query processed successfully!
 Agent Response:
-$AAPL last trade: $XXX.XX at 2025-08-13 15:30:00 UTC
+Top NVDA contracts ranked by gamma with implied volatility and NBBO spreads…
 ---------------------
 
 > exit
@@ -89,10 +97,11 @@ Putting in `Do a return on investment analysis of Meta vs Microsoft. Review news
 ## Troubleshooting
 
 - **Missing API Key:**  
-  If you see an error about `POLYGON_API_KEY` or `OPENAI_API_KEY`, make sure your `.env` file is in the same directory and contains both keys:
+  If you see an error about `POLYGON_API_KEY`, `OPENAI_API_KEY`, or `FRED_API_KEY`, make sure your `.env` file is in the same directory and contains the right values:
   ```
   OPENAI_API_KEY=sk-...
   POLYGON_API_KEY=your_polygon_api_key_here
+  FRED_API_KEY=your_fred_api_key_here
   ```
 
 - **`uvx: command not found`:**  
@@ -101,12 +110,15 @@ Putting in `Do a return on investment analysis of Meta vs Microsoft. Review news
 - **Dependencies:**  
   `uv run` will install from `pyproject.toml`. If you prefer pip:
   ```sh
-  pip install openai-agents pydantic rich python-dotenv openai
+  pip install openai-agents pydantic rich python-dotenv openai httpx
   python main.py
   ```
 
 - **Guardrail blocks non‑finance prompts:**  
   Try a market or finance-related query.
+
+- **Polygon endpoint returns 403/404:**  
+  Some `/vX/...` endpoints require higher entitlements. The agent automatically falls back to `/v3/...` when possible; otherwise upgrade access or remove that tool call.
 
 - **Other errors:**  
   All errors are printed in red in the terminal for easy debugging.
@@ -116,8 +128,18 @@ Putting in `Do a return on investment analysis of Meta vs Microsoft. Review news
 ## How it Works
 
 - Loads your OpenAI and Polygon API keys from `.env`.
+- Connects to the FRED API (via `FRED_API_KEY`) for macroeconomic time series requested by the agent.
 - Starts the Polygon MCP server over stdio: `uvx --from git+https://github.com/polygon-io/mcp_polygon@v0.4.0 mcp_polygon` (no manual server setup).
 - Runs a GPT‑5 analysis agent (OpenAI Agents SDK) with a finance guardrail and tools.
+- Gives the agent direct access to custom tools:
+  - `get_polygon_options_snapshot` (strike, IV, greeks, OI)
+  - `get_polygon_option_contract_snapshot` (full contract snapshot with day stats)
+  - `get_polygon_option_quotes` & `get_polygon_option_trades` (NBBO + tape insight)
+  - `get_polygon_intraday_aggregates` (intraday or multi-day candlesticks)
+  - `get_polygon_exchanges` (exchange metadata by asset class)
+  - `get_polygon_ticker_sentiment` (headline coverage with metadata)
+  - `get_polygon_dividends`, `get_polygon_earnings`, `get_polygon_financials` (corporate events & reports)
+  - `get_fred_series` & `get_fred_release_calendar` (macro series and upcoming releases)
 - Can save formatted analyses via `save_analysis_report` to `reports/<category>/...`.
 - Persists short‑term session context while the CLI runs and renders rich output.
 
