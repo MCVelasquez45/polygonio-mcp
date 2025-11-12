@@ -28,10 +28,47 @@ Then follow the README in each example folder for setup instructions.
 ```
 agent/
   └── gpt5-openai-agents-sdk-polygon-mcp/
+server/
+  ├── src/
+  └── package.json
+client/
+  ├── src/
+  └── package.json
 examples/
   ├── rest/
   ├── websocket/
   └── integrations/
+```
+
+## Local Development (Three Processes)
+
+1. **Python agent API**
+   ```bash
+   cd agent
+   uv pip install fastapi uvicorn  # first run only
+   uvicorn api:app --reload --port 5001
+   ```
+2. **Express gateway**
+   ```bash
+   cd server
+   npm install
+   npm run dev
+   ```
+3. **Vite React client**
+   ```bash
+   cd client
+   npm install
+   npm run dev
+   ```
+
+Each layer reads its own `.env` (see the `.env.example` files) so you can point the Express gateway at the Python host and the client at the gateway.
+
+## Development Startup
+
+```bash
+cd agent && uvicorn api:app --reload --port 5001 &
+cd server && npm run dev &
+cd client && npm run dev &
 ```
 
 ## Disclaimer

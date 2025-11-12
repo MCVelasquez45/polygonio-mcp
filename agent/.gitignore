@@ -1,2 +1,10 @@
 .env
-.venv/
+.env.*
+.DS_Store
+__pycache__/
+*.py[cod]
+*.log
+.python-version
+.uv/
+reports/
+gpt5_polygonio_demo.egg-info/

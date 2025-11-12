@@ -16,7 +16,9 @@ dependencies = [
   "rich",
   "python-dotenv",
   "openai",
-  "httpx"
+  "httpx",
+  "fastapi",
+  "uvicorn"
 ]
 
 [build-system]
@@ -24,10 +26,10 @@ requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# Do NOT auto-discover packages
-packages = []
-# Treat your main script as a standalone module
-py-modules = ["main"]
+# Explicitly track local packages that contain runtime code.
+packages = ["core", "cli"]
+# Expose the CLI and API entrypoints as standalone modules.
+py-modules = ["main", "api"]
 # Do not include data from folders like images/ or reports/
 include-package-data = false
 

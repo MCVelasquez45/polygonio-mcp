@@ -30,6 +30,15 @@ env/
 .uv/
 uv.lock
 
+# Node projects
+node_modules/
+/server/node_modules/
+/client/node_modules/
+/server/dist/
+/client/dist/
+/server/.env
+/client/.env
+
 # PyInstaller
 *.manifest
 *.spec
