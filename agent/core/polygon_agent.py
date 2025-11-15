@@ -11,6 +11,7 @@ from textwrap import dedent
 from typing import Any, Dict, List, Optional
 
 import httpx
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -33,11 +34,13 @@ from agents.mcp import MCPServerStdio
 load_dotenv()
 
 POLYGON_BASE_URL = "https://api.polygon.io"
+CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
 DEFAULT_TRACE_LABEL = "Polygon.io Demo"
 # Disable history replay by default until the OpenAI Responses API exposes a safe way
 # to trim reasoning/function_call pairs without corrupting the transcript.
 DEFAULT_SESSION_HISTORY_LIMIT = 0
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_GUARDRAIL_PASSED_SESSIONS: set[str] = set()
 
 _history_limit_env = os.getenv("FINANCE_AGENT_HISTORY_LIMIT")
 try:
@@ -74,6 +77,64 @@ def _session_history_input_callback(
         trimmed_history = history
 
     return trimmed_history + new_input
+
+
+def _session_guardrail_key(session: SQLiteSession | None) -> str | None:
+    """Normalize a cache key for tracking guardrail completion per session."""
+    if session is None:
+        return None
+    session_id = getattr(session, "session_id", None)
+    if isinstance(session_id, str) and session_id:
+        return f"id:{session_id}"
+    session_name = getattr(session, "session_name", None)
+    if isinstance(session_name, str) and session_name:
+        return f"name:{session_name}"
+    return f"obj:{id(session)}"
+
+
+async def _fetch_capitol_trades_html() -> str:
+    """Download the Capitol Trades HTML page."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(CAPITOL_TRADES_URL, headers=headers)
+        response.raise_for_status()
+        return response.text
+
+
+def _parse_capitol_trades(html: str) -> List[Dict[str, str]]:
+    """Extract trade rows from the Capitol Trades HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select(".TradeTable__Row")
+    trades: List[Dict[str, str]] = []
+
+    for row in rows:
+        cells = row.find_all("td")
+        if not cells:
+            continue
+
+        def _cell(idx: int) -> str:
+            if idx >= len(cells):
+                return ""
+            return cells[idx].get_text(strip=True)
+
+        trade = {
+            "date": _cell(0),
+            "member": _cell(1),
+            "asset": _cell(2),
+            "type": _cell(3),
+            "amount": _cell(4),
+        }
+        if any(trade.values()):
+            trades.append(trade)
+
+    return trades
 
 
 class FinanceOutput(BaseModel):
@@ -727,6 +788,19 @@ async def get_polygon_financials(
     return await fetcher.get_financials(ticker, limit, timeframe)
 
 
+@function_tool
+async def get_capitol_trades(n: int = 10) -> Dict[str, Any]:
+    """Fetch recent congressional trades scraped from Capitol Trades."""
+    limit = max(1, min(int(n), 50))
+    try:
+        html = await _fetch_capitol_trades_html()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Failed to download Capitol Trades page: {exc}") from exc
+
+    trades = _parse_capitol_trades(html)
+    return {"trades": trades[:limit]}
+
+
 guardrail_agent = Agent(
     name="Guardrail check",
     instructions=(
@@ -768,8 +842,13 @@ def create_polygon_mcp_server() -> MCPServerStdio:
     )
 
 
-def create_financial_analysis_agent(server: MCPServerStdio) -> Agent:
-    """Instantiate the financial analysis agent bound to the provided MCP server."""
+def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail: bool = True) -> Agent:
+    """Instantiate the financial analysis agent bound to the provided MCP server.
+
+    The finance guardrail is enforced on the first turn of a session to keep the
+    agent scoped to market analysis, but subsequent turns can skip it for smoother
+    follow-up questions once intent is established.
+    """
     return Agent(
         name="Financial Analysis Agent",
         instructions=(
@@ -789,7 +868,7 @@ def create_financial_analysis_agent(server: MCPServerStdio) -> Agent:
             "get_polygon_option_trades, get_polygon_intraday_aggregates,\n"
             "get_polygon_exchanges, get_polygon_ticker_sentiment,\n"
             "get_polygon_earnings, get_polygon_dividends, get_polygon_financials,\n"
-            "get_fred_series, get_fred_release_calendar\n"
+            "get_capitol_trades, get_fred_series, get_fred_release_calendar\n"
             "Disclaimer: Not financial advice. For informational purposes only."
         ),
         mcp_servers=[server],
@@ -805,10 +884,11 @@ def create_financial_analysis_agent(server: MCPServerStdio) -> Agent:
             get_polygon_dividends,
             get_polygon_earnings,
             get_polygon_financials,
+            get_capitol_trades,
             get_fred_series,
             get_fred_release_calendar,
         ],
-        input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)],
+        input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)] if enforce_guardrail else [],
         model=OpenAIResponsesModel(model="gpt-5", openai_client=AsyncOpenAI()),
         model_settings=ModelSettings(truncation="auto"),
     )
@@ -828,7 +908,9 @@ async def run_analysis(
         session_obj = SQLiteSession(session_label)
 
     server_obj = server or create_polygon_mcp_server()
-    agent = create_financial_analysis_agent(server_obj)
+    session_key = _session_guardrail_key(session_obj)
+    enforce_guardrail = session_key is None or session_key not in _GUARDRAIL_PASSED_SESSIONS
+    agent = create_financial_analysis_agent(server_obj, enforce_guardrail=enforce_guardrail)
 
     run_config = RunConfig(session_input_callback=_session_history_input_callback) if session_obj else None
 
@@ -842,10 +924,16 @@ async def run_analysis(
                 max_turns=32,
             )
 
+    async def _tracked_execute():
+        result = await _execute()
+        if session_key and enforce_guardrail:
+            _GUARDRAIL_PASSED_SESSIONS.add(session_key)
+        return result
+
     if server is None:
         async with server_obj:
-            return await _execute()
-    return await _execute()
+            return await _tracked_execute()
+    return await _tracked_execute()
 
 
 __all__ = [
@@ -871,6 +959,7 @@ __all__ = [
     "get_polygon_earnings",
     "get_polygon_dividends",
     "get_polygon_financials",
+    "get_capitol_trades",
     # helper
     "InputGuardrailTripwireTriggered",
 ]

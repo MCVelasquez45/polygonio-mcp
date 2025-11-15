@@ -18,7 +18,8 @@ dependencies = [
   "openai",
   "httpx",
   "fastapi",
-  "uvicorn"
+  "uvicorn",
+  "beautifulsoup4"
 ]
 
 [build-system]
