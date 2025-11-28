@@ -497,15 +497,26 @@ export async function getMassiveOptionsChain(
     console.warn('[MASSIVE] snapshot chain fetch failed for', normalizedUnderlying, error);
   }
 
-  const snapshotRoot = Array.isArray(snapshotPayload?.results)
-    ? snapshotPayload.results[0] ?? {}
-    : snapshotPayload?.results ?? snapshotPayload ?? {};
-  const underlyingAsset = snapshotRoot?.underlying_asset ?? snapshotRoot?.underlying ?? {};
+  const snapshotResults = Array.isArray(snapshotPayload?.results) ? snapshotPayload.results : null;
+  const snapshotRoot =
+    snapshotResults && snapshotResults.length && (Array.isArray(snapshotResults[0]?.options) || Array.isArray(snapshotResults[0]?.contracts))
+      ? snapshotResults[0]
+      : snapshotPayload?.results ?? snapshotPayload ?? {};
+  const underlyingAsset =
+    snapshotRoot?.underlying_asset ??
+    snapshotRoot?.underlying ??
+    snapshotResults?.[0]?.underlying_asset ??
+    snapshotResults?.[0]?.underlying ??
+    {};
   const underlyingPrice = resolveNumber(underlyingAsset?.price) ?? null;
   const rawOptions = Array.isArray(snapshotRoot?.options)
     ? snapshotRoot.options
     : Array.isArray(snapshotRoot?.contracts)
     ? snapshotRoot.contracts
+    : snapshotResults
+    ? snapshotResults
+        .map((entry: any) => entry?.option ?? entry)
+        .filter(Boolean)
     : Array.isArray(snapshotRoot)
     ? snapshotRoot
     : [];
@@ -604,23 +615,48 @@ export async function getMassiveOptionsChain(
   }
 
   for (const option of rawOptions) {
+    const optionEntry = option?.option ?? option;
+    const optionDetails = optionEntry?.details ?? optionEntry?.detail ?? null;
     const expiration =
-      typeof option?.expiration_date === 'string' ? option.expiration_date : option?.expiration;
-    if (Array.isArray(option?.strikes)) {
-      for (const strikeEntry of option.strikes) {
+      typeof optionEntry?.expiration_date === 'string'
+        ? optionEntry.expiration_date
+        : typeof optionEntry?.expiration === 'string'
+        ? optionEntry.expiration
+        : typeof optionDetails?.expiration_date === 'string'
+        ? optionDetails.expiration_date
+        : typeof optionDetails?.expiration === 'string'
+        ? optionDetails.expiration
+        : undefined;
+    if (Array.isArray(optionEntry?.strikes)) {
+      for (const strikeEntry of optionEntry.strikes) {
         const strike = Number(strikeEntry?.strike_price ?? strikeEntry?.strike);
         upsertStrike(expiration, strike, strikeEntry?.call, strikeEntry?.put);
       }
       continue;
     }
-    const strike = Number(option?.strike_price ?? option?.strike);
-    if (option?.call || option?.put) {
-      upsertStrike(expiration, strike, option.call, option.put);
+    const strike = Number(
+      optionEntry?.strike_price ?? optionEntry?.strike ?? optionDetails?.strike_price ?? optionDetails?.strike
+    );
+    if (optionEntry?.call || optionEntry?.put) {
+      upsertStrike(expiration, strike, optionEntry.call, optionEntry.put);
       continue;
     }
-    const contractType = option?.contract_type ?? option?.type;
+    const contractType =
+      optionEntry?.contract_type ??
+      optionEntry?.type ??
+      optionEntry?.option_type ??
+      optionDetails?.contract_type ??
+      optionDetails?.type ??
+      optionDetails?.option_type;
     if (contractType === 'call' || contractType === 'put') {
-      const leg = normalizeSnapshotLeg(option, strike, expiration, contractType, underlyingPrice, normalizedUnderlying);
+      const leg = normalizeSnapshotLeg(
+        optionEntry,
+        strike,
+        expiration,
+        contractType,
+        underlyingPrice,
+        normalizedUnderlying
+      );
       if (!leg) continue;
       const strikesForExpiration = expirationMap.get(expiration) ?? new Map<number, any>();
       const row = strikesForExpiration.get(strike) ?? { strike, call: undefined, put: undefined };
@@ -756,7 +792,7 @@ function normalizeSnapshotLeg(
     resolveNumber(raw?.price) ??
     mark ??
     mid;
-  const day = raw?.day ?? raw?.stats ?? {};
+  const day = raw?.day ?? raw?.stats ?? null;
   const change = resolveNumber(
     day?.change ?? raw?.change ?? raw?.price_change ?? raw?.day_change ?? raw?.gain
   );
@@ -800,6 +836,9 @@ function normalizeSnapshotLeg(
         ? underlyingPrice >= strike
         : underlyingPrice <= strike
       : undefined;
+  const sourceBreakEven = resolveNumber(
+    raw?.break_even_price ?? raw?.details?.break_even_price ?? raw?.option?.break_even_price
+  );
   const leg: any = {
     ticker,
     type,
@@ -831,6 +870,25 @@ function normalizeSnapshotLeg(
       sip_timestamp: lastTrade?.sip_timestamp ?? lastTrade?.timestamp ?? raw?.lastTradeTimestamp ?? null
     }
   };
+  if (sourceBreakEven != null) {
+    leg.breakeven = sourceBreakEven;
+  }
+
+  const snapshotPayload: Record<string, any> = {
+    break_even_price: sourceBreakEven,
+    day: day ?? null,
+    details: raw?.details ?? null,
+    greeks: raw?.greeks ?? null,
+    implied_volatility: iv,
+    last_quote: lastQuote ?? null,
+    last_trade: lastTrade ?? null,
+    open_interest: resolveNumber(raw?.open_interest ?? raw?.openInterest),
+    underlying_asset: raw?.underlying_asset ?? null
+  };
+  const hasSnapshotData = Object.values(snapshotPayload).some(value => value != null);
+  if (hasSnapshotData) {
+    leg.snapshot = snapshotPayload;
+  }
 
   if (fallback) {
     leg.bid = leg.bid ?? fallback.bid ?? null;

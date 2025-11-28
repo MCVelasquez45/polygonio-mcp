@@ -82,6 +82,7 @@ export type OptionLeg = {
     size?: number | null;
     sip_timestamp?: number | null;
   };
+  snapshot?: Record<string, unknown>;
 };
 
 export type OptionChainStrike = {
