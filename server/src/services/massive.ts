@@ -766,13 +766,21 @@ function normalizeSnapshotLeg(
       : null;
   if (!tickerCandidate) return null;
   const ticker = tickerCandidate.toUpperCase();
-  const lastQuote = raw?.last_quote ?? raw?.lastQuote ?? raw?.quote ?? {};
-  const bid = resolveNumber(
-    lastQuote?.bid ?? lastQuote?.bid_price ?? raw?.bid ?? raw?.bidPrice ?? raw?.price_data?.bid
+  const priceData = raw?.price_data ?? raw?.priceData ?? raw?.pricing ?? null;
+  const priceDataQuote = priceData?.last_quote ?? priceData?.quote ?? {};
+  const priceDataTrade = priceData?.last_trade ?? priceData?.trade ?? {};
+  const lastQuote = raw?.last_quote ?? raw?.lastQuote ?? raw?.quote ?? priceDataQuote ?? {};
+  const lastTrade = raw?.last_trade ?? raw?.lastTrade ?? raw?.trade ?? priceDataTrade ?? {};
+  const priceDataBid = resolveNumber(
+    priceData?.bid ?? priceData?.bid_price ?? priceDataQuote?.bid ?? priceDataQuote?.bid_price
   );
-  const ask = resolveNumber(
-    lastQuote?.ask ?? lastQuote?.ask_price ?? raw?.ask ?? raw?.askPrice ?? raw?.price_data?.ask
+  const priceDataAsk = resolveNumber(
+    priceData?.ask ?? priceData?.ask_price ?? priceDataQuote?.ask ?? priceDataQuote?.ask_price
   );
+  const bid =
+    resolveNumber(lastQuote?.bid ?? lastQuote?.bid_price ?? raw?.bid ?? raw?.bidPrice) ?? priceDataBid ?? null;
+  const ask =
+    resolveNumber(lastQuote?.ask ?? lastQuote?.ask_price ?? raw?.ask ?? raw?.askPrice) ?? priceDataAsk ?? null;
   const snapshotMid = resolveNumber(
     raw?.mid ??
       raw?.mark ??
@@ -780,41 +788,61 @@ function normalizeSnapshotLeg(
       lastQuote?.mid ??
       lastQuote?.mark ??
       lastQuote?.mid_price ??
-      lastQuote?.mark_price
+      lastQuote?.mark_price ??
+      priceData?.mid ??
+      priceData?.midpoint ??
+      priceData?.mark
   );
   const mid = snapshotMid ?? computeMid(bid, ask);
-  const mark = resolveNumber(raw?.mark ?? raw?.mid ?? raw?.price ?? raw?.last_price ?? mid);
-  const lastTrade = raw?.last_trade ?? raw?.lastTrade ?? raw?.trade ?? {};
+  const priceDataMark = resolveNumber(priceData?.mark ?? priceData?.mid ?? priceData?.price ?? priceData?.last);
+  const mark = resolveNumber(raw?.mark ?? raw?.mid ?? raw?.price ?? raw?.last_price ?? priceDataMark ?? mid);
   const lastPrice =
     resolveNumber(lastTrade?.price) ??
     resolveNumber(raw?.lastPrice) ??
     resolveNumber(raw?.last_price) ??
     resolveNumber(raw?.price) ??
+    resolveNumber(priceData?.last ?? priceData?.last_price ?? priceData?.close) ??
     mark ??
     mid;
-  const day = raw?.day ?? raw?.stats ?? null;
+  const day = raw?.day ?? raw?.stats ?? priceData?.day ?? null;
   const change = resolveNumber(
-    day?.change ?? raw?.change ?? raw?.price_change ?? raw?.day_change ?? raw?.gain
+    day?.change ??
+      raw?.change ??
+      raw?.price_change ??
+      raw?.day_change ??
+      raw?.gain ??
+      priceData?.change ??
+      priceData?.day_change ??
+      priceData?.price_change
   );
   const changePercent = resolveNumber(
     day?.change_percent ??
       raw?.change_percent ??
       raw?.day_change_percent ??
       raw?.percent_change ??
-      raw?.percentGain
+      raw?.percentGain ??
+      priceData?.change_percent ??
+      priceData?.percent_change
   );
-  const volume = resolveNumber(raw?.volume ?? day?.volume ?? raw?.dayVolume);
+  const volume = resolveNumber(
+    raw?.volume ?? day?.volume ?? raw?.dayVolume ?? priceData?.volume ?? priceData?.day_volume ?? priceData?.total_volume
+  );
   const openInterest = resolveNumber(
-    raw?.openInterest ?? raw?.open_interest ?? day?.open_interest ?? raw?.oi
+    raw?.openInterest ?? raw?.open_interest ?? day?.open_interest ?? raw?.oi ?? priceData?.open_interest ?? priceData?.openInterest
   );
   const iv = resolveNumber(
     raw?.implied_volatility ??
       raw?.impliedVolatility ??
       raw?.iv ??
       day?.implied_volatility ??
-      day?.impliedVolatility
+      day?.impliedVolatility ??
+      priceData?.implied_volatility ??
+      priceData?.iv
   );
-  const greeks = raw?.greeks ?? raw?.details?.greeks ?? {};
+  const greeks = {
+    ...(priceData?.greeks ?? {}),
+    ...(raw?.greeks ?? raw?.details?.greeks ?? {})
+  };
   const delta = resolveNumber(greeks?.delta);
   const gamma = resolveNumber(greeks?.gamma);
   const theta = resolveNumber(greeks?.theta);
@@ -837,7 +865,12 @@ function normalizeSnapshotLeg(
         : underlyingPrice <= strike
       : undefined;
   const sourceBreakEven = resolveNumber(
-    raw?.break_even_price ?? raw?.details?.break_even_price ?? raw?.option?.break_even_price
+    raw?.break_even_price ??
+      raw?.details?.break_even_price ??
+      raw?.option?.break_even_price ??
+      priceData?.breakeven ??
+      priceData?.breakeven_price ??
+      priceData?.break_even_price
   );
   const leg: any = {
     ticker,
@@ -865,9 +898,14 @@ function normalizeSnapshotLeg(
     toBreakevenPercent,
     inTheMoney,
     lastTrade: {
-      price: resolveNumber(lastTrade?.price ?? lastTrade?.last_price),
-      size: resolveNumber(lastTrade?.size ?? lastTrade?.quantity ?? raw?.lastTradeSize),
-      sip_timestamp: lastTrade?.sip_timestamp ?? lastTrade?.timestamp ?? raw?.lastTradeTimestamp ?? null
+      price: resolveNumber(lastTrade?.price ?? lastTrade?.last_price ?? priceDataTrade?.price),
+      size: resolveNumber(lastTrade?.size ?? lastTrade?.quantity ?? raw?.lastTradeSize ?? priceDataTrade?.size),
+      sip_timestamp:
+        lastTrade?.sip_timestamp ??
+        lastTrade?.timestamp ??
+        raw?.lastTradeTimestamp ??
+        priceDataTrade?.sip_timestamp ??
+        null
     }
   };
   if (sourceBreakEven != null) {
@@ -883,7 +921,8 @@ function normalizeSnapshotLeg(
     last_quote: lastQuote ?? null,
     last_trade: lastTrade ?? null,
     open_interest: resolveNumber(raw?.open_interest ?? raw?.openInterest),
-    underlying_asset: raw?.underlying_asset ?? null
+    underlying_asset: raw?.underlying_asset ?? null,
+    price_data: priceData ?? null
   };
   const hasSnapshotData = Object.values(snapshotPayload).some(value => value != null);
   if (hasSnapshotData) {

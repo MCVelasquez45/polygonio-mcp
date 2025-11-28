@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { OptionChainExpirationGroup, OptionLeg } from '../../types/market';
 import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
 
@@ -12,6 +12,37 @@ type Props = {
   onContractSelect: (leg: OptionLeg | null) => void;
 };
 
+type ChainRow = {
+  strike: number | null;
+  breakeven: number | null;
+  toBreakeven: number | null;
+  changePercent: number | null;
+  changeValue: number | null;
+  price: number | null;
+  volume: number | null;
+  openInterest: number | null;
+};
+
+type ChainColumn = {
+  key: keyof ChainRow;
+  label: string;
+  minWidth: string;
+  align?: 'left' | 'right';
+  className?: string;
+  formatter?: (value: number | null) => string;
+};
+
+const CHAIN_COLUMNS: ChainColumn[] = [
+  { key: 'strike', label: 'Strike', minWidth: '90px', align: 'left', formatter: value => formatCurrency(value) },
+  { key: 'breakeven', label: 'Breakeven', minWidth: '120px', align: 'left', formatter: value => formatCurrency(value) },
+  { key: 'toBreakeven', label: 'To Breakeven', minWidth: '120px', align: 'left', formatter: value => formatPercent(value) },
+  { key: 'changePercent', label: '% Change', minWidth: '90px', align: 'right', className: 'font-semibold', formatter: value => formatPercent(value) },
+  { key: 'changeValue', label: 'Change', minWidth: '100px', align: 'right', formatter: value => formatSignedCurrency(value) },
+  { key: 'price', label: 'Price', minWidth: '90px', align: 'right', className: 'font-semibold', formatter: value => formatCurrency(value) },
+  { key: 'volume', label: 'Volume', minWidth: '110px', align: 'right', formatter: value => formatCount(value) },
+  { key: 'openInterest', label: 'Open Interest', minWidth: '120px', align: 'right', formatter: value => formatCount(value) }
+];
+
 export function OptionsChainPanel({
   ticker,
   groups,
@@ -23,6 +54,8 @@ export function OptionsChainPanel({
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const tableBodyRef = useRef<HTMLTableSectionElement | null>(null);
 
   useEffect(() => {
     if (!groups.length) {
@@ -58,6 +91,33 @@ export function OptionsChainPanel({
   }, [activeGroup, optionType]);
 
   const dteLabel = activeGroup?.dte != null ? `${activeGroup.dte} DTE` : null;
+
+  useEffect(() => {
+    if (!scrollContainerRef.current || !tableBodyRef.current) return;
+    if (underlyingPrice == null) return;
+    const rowElements = Array.from(
+      tableBodyRef.current.querySelectorAll<HTMLTableRowElement>('tr[data-strike]')
+    );
+    if (!rowElements.length) return;
+    let closestRow: HTMLTableRowElement | null = null;
+    let smallestDiff = Number.POSITIVE_INFINITY;
+    for (const rowEl of rowElements) {
+      const strikeAttr = rowEl.getAttribute('data-strike');
+      if (!strikeAttr) continue;
+      const strikeValue = Number(strikeAttr);
+      if (Number.isNaN(strikeValue)) continue;
+      const distance = Math.abs(strikeValue - underlyingPrice);
+      if (distance < smallestDiff) {
+        smallestDiff = distance;
+        closestRow = rowEl;
+      }
+    }
+    if (closestRow) {
+      const container = scrollContainerRef.current;
+      const targetOffset = closestRow.offsetTop - container.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, targetOffset), behavior: 'auto' });
+    }
+  }, [underlyingPrice, optionType, selectedExpiration, rows.length]);
 
   const handleSelect = (leg: OptionLeg) => {
     if (selectedContract?.ticker === leg.ticker) {
@@ -116,21 +176,6 @@ export function OptionsChainPanel({
     </div>
   );
 
-  const renderColumns = () => (
-    <div className="px-4 py-2 border-b border-gray-900 bg-gray-950/60 overflow-x-auto">
-      <div className="grid grid-cols-5 md:grid-cols-8 gap-2 text-[0.65rem] uppercase tracking-widest text-gray-500 min-w-[560px]">
-        <span>Strike</span>
-        <span className="hidden md:block">Breakeven</span>
-        <span className="hidden md:block">To breakeven</span>
-        <span>% Change</span>
-        <span className="hidden md:block">Change</span>
-        <span>Price</span>
-        <span className="hidden md:block">Volume</span>
-        <span className="hidden md:block">Open Interest</span>
-      </div>
-    </div>
-  );
-
   const renderRow = (row: typeof rows[number], index: number) => {
     const leg = optionType === 'calls' ? row.call : row.put;
     if (!leg) return null;
@@ -151,88 +196,87 @@ export function OptionsChainPanel({
       ((prevStrike == null && underlyingPrice <= strike) ||
         (prevStrike != null && prevStrike < underlyingPrice && strike >= underlyingPrice));
 
+    const alignedRow: ChainRow = {
+      strike: strike ?? null,
+      breakeven,
+      toBreakeven,
+      changePercent,
+      changeValue,
+      price,
+      volume: leg.volume ?? null,
+      openInterest: leg.openInterest ?? null
+    };
+
     return (
-      <div key={`${leg.ticker}-${optionType}`} className="border-b border-gray-900/60">
+      <Fragment key={`${leg.ticker}-${optionType}`}>
         {showUnderlyingLine && (
-          <div className="flex justify-center py-2">
-            <div className="px-4 py-1 rounded-full bg-emerald-600/20 text-emerald-300 text-xs">
-              Share: ${underlyingPrice?.toFixed(2)}
-            </div>
-          </div>
+          <tr>
+            <td colSpan={CHAIN_COLUMNS.length} className="py-2 text-center">
+              <span className="px-4 py-1 rounded-full bg-emerald-600/20 text-emerald-300 text-xs">
+                Share: {formatCurrency(underlyingPrice)}
+              </span>
+            </td>
+          </tr>
         )}
-        <button
-          type="button"
+        <tr
+          role="button"
+          tabIndex={0}
           onClick={() => handleSelect(leg)}
-          className={`w-full px-4 py-3 text-left transition-colors ${
-            isSelected ? 'bg-gray-900/80' : 'hover:bg-gray-900/40'
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              handleSelect(leg);
+            }
+          }}
+          className={`cursor-pointer transition-colors ${
+            isSelected ? 'bg-gray-900/80' : 'hover:bg-gray-900/30'
           }`}
+          data-strike={strike ?? undefined}
         >
-          <div className="w-full overflow-x-auto">
-            <div className="grid grid-cols-5 md:grid-cols-8 gap-2 items-center min-w-[560px]">
-              <div className="text-gray-100 text-xs md:text-sm">${strike?.toFixed(2) ?? '—'}</div>
-              <div className="hidden md:block text-gray-300 text-xs md:text-sm">
-                {breakeven != null ? `$${breakeven.toFixed(2)}` : '—'}
-              </div>
-              <div className="hidden md:block text-gray-400 text-xs md:text-sm">
-                {toBreakeven != null ? `${toBreakeven.toFixed(2)}%` : '—'}
-              </div>
-              <div
-                className={`text-xs md:text-sm ${
-                  changePercent != null && changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'
-                }`}
+          {CHAIN_COLUMNS.map(column => {
+            const rawValue = alignedRow[column.key];
+            const formattedValue = column.formatter ? column.formatter(rawValue) : formatValue(rawValue);
+            const changeColor =
+              column.key === 'changePercent' || column.key === 'changeValue'
+                ? changePercent != null
+                  ? changePercent >= 0
+                    ? 'text-emerald-400'
+                    : 'text-red-400'
+                  : 'text-gray-400'
+                : '';
+            return (
+              <td
+                key={column.key}
+                className={`px-4 py-3 text-xs md:text-sm ${
+                  column.align === 'right' ? 'text-right' : 'text-left'
+                } ${column.className ?? ''} ${changeColor}`}
+                style={{ minWidth: column.minWidth }}
               >
-                {changePercent != null ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : '—'}
-              </div>
-              <div
-                className={`hidden md:block text-xs md:text-sm ${
-                  changeValue != null && changeValue >= 0 ? 'text-emerald-400' : 'text-red-400'
-                }`}
-              >
-                {changeValue != null ? `${changeValue >= 0 ? '+' : ''}$${changeValue.toFixed(2)}` : '—'}
-              </div>
-              <div className="text-right">
-                <span
-                  className={`px-2 py-1 rounded-full border text-xs md:text-sm ${
-                    changePercent != null && changePercent >= 0
-                      ? 'border-emerald-500 text-emerald-300'
-                      : 'border-orange-500 text-orange-300'
-                  }`}
-                >
-                  {price != null ? `$${price.toFixed(2)}` : '—'}
-                </span>
-              </div>
-              <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
-                {leg.volume != null ? leg.volume.toLocaleString() : '—'}
-              </div>
-              <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
-                {leg.openInterest != null ? leg.openInterest.toLocaleString() : '—'}
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-[0.7rem] text-gray-400 md:hidden">
-            <span>
-              <span className="text-gray-500">Breakeven:&nbsp;</span>
-              {breakeven != null ? `$${breakeven.toFixed(2)}` : '—'}
-            </span>
-            <span className="text-right">
-              <span className="text-gray-500">To BE:&nbsp;</span>
-              {toBreakeven != null ? `${toBreakeven.toFixed(2)}%` : '—'}
-            </span>
-            <span>
-              <span className="text-gray-500">Vol:&nbsp;</span>
-              {leg.volume != null ? leg.volume.toLocaleString() : '—'}
-            </span>
-            <span className="text-right">
-              <span className="text-gray-500">OI:&nbsp;</span>
-              {leg.openInterest != null ? leg.openInterest.toLocaleString() : '—'}
-            </span>
-          </div>
-        </button>
+                {column.key === 'price' ? (
+                  <span
+                    className={`px-2 py-1 rounded-full border ${
+                      changePercent != null && changePercent >= 0
+                        ? 'border-emerald-500 text-emerald-300'
+                        : changePercent != null
+                        ? 'border-orange-500 text-orange-300'
+                        : 'border-gray-700 text-gray-300'
+                    }`}
+                  >
+                    {formattedValue}
+                  </span>
+                ) : (
+                  formattedValue
+                )}
+              </td>
+            );
+          })}
+        </tr>
         {isSelected && (
-          <div className="px-4 py-4 bg-gray-900/50 border-t border-gray-900">
-            <div className="text-xs text-gray-400 mb-3">
-              {ticker} {strike != null ? `$${strike.toFixed(2)}` : ''} {leg.type.toUpperCase()} ·{' '}
-              {new Date(leg.expiration).toLocaleDateString()}
+          <tr>
+            <td colSpan={CHAIN_COLUMNS.length} className="px-4 py-4 bg-gray-900/50 border-t border-gray-900">
+              <div className="text-xs text-gray-400 mb-3">
+                {ticker} {strike != null ? `$${strike.toFixed(2)}` : ''} {leg.type.toUpperCase()} ·{' '}
+                {new Date(leg.expiration).toLocaleDateString()}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
               <InfoTile label="Bid" value={leg.bid != null ? `$${leg.bid.toFixed(2)}` : '—'} />
@@ -253,9 +297,10 @@ export function OptionsChainPanel({
               <InfoTile label="Vega" value={leg.vega != null ? leg.vega.toFixed(3) : '—'} />
               <InfoTile label="Rho" value={leg.rho != null ? leg.rho.toFixed(3) : '—'} />
             </div>
-          </div>
+            </td>
+          </tr>
         )}
-      </div>
+      </Fragment>
     );
   };
 
@@ -275,9 +320,23 @@ export function OptionsChainPanel({
           </div>
         ) : (
           <div className="flex flex-col h-full overflow-hidden">
-            {renderColumns()}
-            <div className="flex-1 overflow-y-auto divide-y divide-gray-900/60">
-              {rows.map((row, index) => renderRow(row, index))}
+            <div ref={scrollContainerRef} className="flex-1 overflow-auto">
+              <table className="w-full table-fixed border-collapse min-w-full">
+                <thead className="bg-gray-950/70">
+                  <tr className="text-[0.65rem] uppercase tracking-[0.2em] text-gray-500">
+                    {CHAIN_COLUMNS.map(column => (
+                      <th
+                        key={column.key}
+                        className={`px-4 py-2 ${column.align === 'right' ? 'text-right' : 'text-left'}`}
+                        style={{ minWidth: column.minWidth }}
+                      >
+                        {column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody ref={tableBodyRef}>{rows.map((row, index) => renderRow(row, index))}</tbody>
+              </table>
             </div>
           </div>
         )}
@@ -293,4 +352,36 @@ function InfoTile({ label, value }: { label: string; value: string }) {
       <p className="text-sm font-semibold text-gray-100 mt-1">{value}</p>
     </div>
   );
+}
+
+function formatValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') {
+    return '—';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toString();
+  }
+  return String(value);
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—';
+  return `$${value.toFixed(2)}`;
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatCount(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—';
+  return value.toLocaleString();
+}
+
+function formatSignedCurrency(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—';
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}$${Math.abs(value).toFixed(2)}`;
 }

@@ -83,10 +83,11 @@ const alerts = [
 
 type Props = {
   selectedTicker: string;
-  onSelectTicker: (ticker: string) => void;
+  onSelectTicker: (ticker: string, snapshot?: WatchlistSnapshot | null) => void;
+  onSnapshotUpdate?: (ticker: string, snapshot: WatchlistSnapshot | null) => void;
 };
 
-export function TradingSidebar({ selectedTicker, onSelectTicker }: Props) {
+export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdate }: Props) {
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
   const [tickerInput, setTickerInput] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -218,12 +219,20 @@ export function TradingSidebar({ selectedTicker, onSelectTicker }: Props) {
   useEffect(() => {
     if (!watchlist.length) return;
     if (!selectedTicker && watchlist[0]) {
-      onSelectTicker(watchlist[0].symbol);
+      const firstSymbol = watchlist[0].symbol;
+      const snapshot = snapshots[firstSymbol.toUpperCase()] ?? null;
+      onSelectTicker(firstSymbol, snapshot);
     }
-  }, [watchlist, selectedTicker, onSelectTicker]);
+  }, [watchlist, selectedTicker, onSelectTicker, snapshots]);
+
+  useEffect(() => {
+    if (!selectedTicker || !onSnapshotUpdate) return;
+    const snapshot = snapshots[selectedTicker.toUpperCase()] ?? null;
+    onSnapshotUpdate(selectedTicker, snapshot ?? null);
+  }, [snapshots, selectedTicker, onSnapshotUpdate]);
 
   return (
-    <aside className="w-72 max-w-[18rem] bg-gray-950 border-r border-gray-900 flex flex-col h-full">
+    <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-900">
         <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
           <button
@@ -329,11 +338,11 @@ export function TradingSidebar({ selectedTicker, onSelectTicker }: Props) {
                   key={snapshot?.ticker ?? stock.symbol}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onSelectTicker(stock.symbol)}
+                  onClick={() => onSelectTicker(stock.symbol, snapshot ?? null)}
                   onKeyDown={event => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      onSelectTicker(stock.symbol);
+                      onSelectTicker(stock.symbol, snapshot ?? null);
                     }
                   }}
                   className={`w-full rounded-2xl border px-4 py-3 text-left transition-colors ${
@@ -414,6 +423,6 @@ export function TradingSidebar({ selectedTicker, onSelectTicker }: Props) {
           </div>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

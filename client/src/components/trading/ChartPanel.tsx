@@ -73,7 +73,7 @@ export function ChartPanel({
   const displayChangePercent = changePercent ?? fallbackChange?.percent ?? null;
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 h-[26rem] min-w-0">
+    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm uppercase tracking-[0.4em] text-gray-500">{ticker}</p>
@@ -109,18 +109,19 @@ export function ChartPanel({
         </div>
       </header>
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-[300px]">
         {isLoading ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading bars…</div>
         ) : chartData.length === 0 ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Select a contract to load chart data.</div>
         ) : (
           <div className="h-full flex flex-col gap-4">
-            <div className="flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -18, bottom: 5 }}>
-                  <defs>
-                    <linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1">
+            <div className="w-full flex-1 min-h-[300px]">
+              <div className="w-full h-full min-h-[300px] aspect-[16/9]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -18, bottom: 5 }}>
+                    <defs>
+                      <linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#34d399" stopOpacity={0.35} />
                       <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
                     </linearGradient>
@@ -136,9 +137,10 @@ export function ChartPanel({
                   <Area type="monotone" dataKey="close" stroke="#34d399" strokeWidth={2} fill="url(#priceArea)" />
                   <Area type="monotone" dataKey="sma" stroke="#60a5fa" strokeWidth={1.5} dot={false} fillOpacity={0} />
                 </AreaChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <div className="h-20">
+            <div className="h-24">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} barSize={6}>
                   <CartesianGrid vertical={false} stroke="#1f2937" opacity={0.3} />

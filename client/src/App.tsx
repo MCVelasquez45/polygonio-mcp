@@ -256,7 +256,6 @@ function App() {
     setChainExpirations([]);
     setChainUnderlyingPrice(null);
     setChainError(null);
-    setUnderlyingSnapshot(null);
   }, [normalizedTicker]);
 
   useEffect(() => {
@@ -515,9 +514,15 @@ function App() {
   const sidebar = (
     <TradingSidebar
       selectedTicker={normalizedTicker}
-      onSelectTicker={next => {
+      onSelectTicker={(next, snapshot) => {
         setTicker(next);
+        setUnderlyingSnapshot(snapshot ?? null);
         setSidebarOpen(false);
+      }}
+      onSnapshotUpdate={(ticker, snapshot) => {
+        if (!ticker) return;
+        if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
+        setUnderlyingSnapshot(snapshot ?? null);
       }}
     />
   );
@@ -537,8 +542,8 @@ function App() {
   );
 
   const tradingView = (
-    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 md:p-6 pb-24 lg:pb-6 overflow-y-auto w-full max-w-7xl mx-auto">
-      <div className="lg:col-span-8 flex flex-col gap-4 min-h-[26rem] min-w-0">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
+      <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
         <ChartPanel
           ticker={displayTicker}
           timeframe={timeframe}
@@ -577,7 +582,7 @@ function App() {
         </div>
         <GreeksPanel contract={contractDetail} label={displayTicker} />
       </div>
-      <div className="lg:col-span-4 min-h-[26rem] min-w-0">
+      <div className="lg:col-span-1 min-h-[26rem] min-w-0">
         <OrderTicketPanel
           contract={contractDetail}
           quote={quote}
@@ -586,7 +591,7 @@ function App() {
           label={displayTicker}
         />
       </div>
-      <div className="lg:col-span-12 min-w-0">
+      <div className="lg:col-span-3 min-w-0">
         <OptionsChainPanel
           ticker={displayTicker}
           groups={chainExpirations}
@@ -612,40 +617,44 @@ function App() {
         isChatOpen={isChatOpen}
       />
 
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden bg-gray-950 relative">
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
         )}
 
-        <div
-          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 lg:relative lg:z-0 lg:translate-x-0 ${
+        <aside
+          className={`fixed inset-y-0 left-0 z-30 w-72 bg-gray-950 border-r border-gray-900 transform transition-transform duration-300 lg:static lg:translate-x-0 lg:flex-shrink-0 ${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           }`}
         >
-          {sidebar}
-        </div>
+          <div className="h-full overflow-y-auto px-4 py-6">{sidebar}</div>
+        </aside>
 
-        <main className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-          {marketError && (
-            <div className="mx-3 mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
-              {marketError}
-            </div>
-          )}
+        <main className="flex-1 overflow-y-auto">
+          <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
+            {marketError && (
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
+                {marketError}
+              </div>
+            )}
 
-          {view === 'trading' && tradingView}
-          {view === 'scanner' && (
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 w-full max-w-5xl mx-auto">
-              <OptionsScanner onTickerSelect={value => {
-                setTicker(value);
-                setView('trading');
-              }} />
-            </div>
-          )}
-          {view === 'portfolio' && (
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 w-full max-w-5xl mx-auto">
-              <PortfolioPanel />
-            </div>
-          )}
+            {view === 'trading' && tradingView}
+            {view === 'scanner' && (
+              <div className="pb-24">
+                <OptionsScanner
+                  onTickerSelect={value => {
+                    setTicker(value);
+                    setView('trading');
+                  }}
+                />
+              </div>
+            )}
+            {view === 'portfolio' && (
+              <div className="pb-24">
+                <PortfolioPanel />
+              </div>
+            )}
+          </div>
         </main>
       </div>
 
