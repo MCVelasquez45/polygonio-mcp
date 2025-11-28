@@ -623,11 +623,11 @@ function App() {
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 bg-gray-950 border-r border-gray-900 transform transition-transform duration-300 lg:static lg:translate-x-0 lg:flex-shrink-0 ${
+          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:w-72 lg:translate-x-0 ${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           }`}
         >
-          <div className="h-full overflow-y-auto px-4 py-6">{sidebar}</div>
+          <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
 
         <main className="flex-1 overflow-y-auto">

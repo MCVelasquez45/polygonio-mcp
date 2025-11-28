@@ -232,8 +232,8 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
   }, [snapshots, selectedTicker, onSnapshotUpdate]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-gray-900">
+    <div className="flex flex-col h-full w-full overflow-hidden bg-gray-950">
+      <div className="px-3 py-3 border-b border-gray-900">
         <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
           <button
             type="button"
@@ -263,18 +263,18 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
         {view === 'watchlist' ? (
           <>
-            <form onSubmit={handleAddTicker} className="rounded-2xl border border-gray-900 bg-gray-950 p-3 space-y-2">
+            <form onSubmit={handleAddTicker} className="rounded-2xl border border-gray-900 bg-gray-950/80 p-3 space-y-3">
               <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Add Ticker</p>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <input
-                  className="flex-1 rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-sm uppercase tracking-wide text-gray-100 focus:border-emerald-500 focus:outline-none"
+                  className="w-full sm:flex-1 rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-sm uppercase tracking-wide text-gray-100 focus:border-emerald-500 focus:outline-none"
                   placeholder="e.g. AMZN"
                   value={tickerInput}
                   onChange={event => setTickerInput(event.target.value.toUpperCase())}
                 />
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+                  className="inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white w-full sm:w-auto"
                 >
                   <Plus className="h-4 w-4" /> Add
                 </button>
