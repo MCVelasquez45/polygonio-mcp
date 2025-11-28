@@ -157,7 +157,7 @@ function resolveRetryDelay(error: unknown, attempt: number) {
   return Math.min(backoff, MASSIVE_RETRY_MAX_MS);
 }
 
-async function massiveGet<T = any>(
+export async function massiveGet<T = any>(
   path: string,
   params: Record<string, any> = {},
   options?: MassiveRequestOptions
@@ -472,6 +472,53 @@ export async function listMassiveOptionContracts(options: OptionContractQuery = 
     results,
     nextUrl: payload.next_url ?? null,
     requestId: payload.request_id
+  };
+}
+
+export async function listOptionExpirations(
+  underlying: string,
+  opts: { limit?: number; maxPages?: number } = {}
+) {
+  const symbol = underlying.toUpperCase();
+  const limitParam = Number(opts.limit ?? 1000) || 1000;
+  const limit = Math.min(Math.max(limitParam, 1), 1000);
+  const maxPagesParam = Number(opts.maxPages ?? 5) || 5;
+  const maxPages = Math.min(Math.max(maxPagesParam, 1), 25);
+  const expirations = new Set<string>();
+  let cursor: string | null = null;
+  let pagesFetched = 0;
+
+  do {
+    const params: Record<string, any> = {
+      underlying_asset: symbol,
+      underlying_ticker: symbol,
+      limit,
+      order: 'asc',
+      sort: 'expiration_date'
+    };
+    if (cursor) {
+      params.cursor = cursor;
+    }
+    const payload = await massiveGet('/v3/reference/options/contracts', params, { cacheTtlMs: 60_000 });
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    for (const contract of results) {
+      const expiration =
+        typeof contract?.expiration_date === 'string'
+          ? contract.expiration_date
+          : typeof contract?.expiration === 'string'
+          ? contract.expiration
+          : null;
+      if (expiration) {
+        expirations.add(expiration);
+      }
+    }
+    cursor = extractCursor(payload?.next_url);
+    pagesFetched += 1;
+  } while (cursor && pagesFetched < maxPages);
+
+  return {
+    ticker: symbol,
+    expirations: Array.from(expirations).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
   };
 }
 
@@ -960,7 +1007,7 @@ function normalizeSnapshotLeg(
   return leg;
 }
 
-function normalizeReferenceContract(contract: any, underlyingSymbol: string) {
+export function normalizeReferenceContract(contract: any, underlyingSymbol: string) {
   const ticker =
     typeof contract?.ticker === 'string' ? contract.ticker.toUpperCase() : null;
   if (!ticker) return null;
@@ -1052,6 +1099,19 @@ function normalizeOptionContractDetail(detail: any, fallbackTicker: string) {
       sip_timestamp: lastTradeRaw.sip_timestamp ?? null,
     }
   };
+}
+
+export function extractCursor(nextUrl: string | null | undefined) {
+  if (!nextUrl || typeof nextUrl !== 'string') return null;
+  try {
+    const parsed = new URL(nextUrl);
+    const cursorParam = parsed.searchParams.get('cursor');
+    if (cursorParam) return cursorParam;
+  } catch {
+    // ignore invalid URLs
+  }
+  const match = nextUrl.match(/cursor=([^&]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 export async function getMassiveOptionsSnapshot(underlying: string) {

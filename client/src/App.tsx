@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
 import { ChartPanel } from './components/trading/ChartPanel';
@@ -79,6 +79,10 @@ function App() {
   const [chainUnderlyingPrice, setChainUnderlyingPrice] = useState<number | null>(null);
   const [chainLoading, setChainLoading] = useState(false);
   const [chainError, setChainError] = useState<string | null>(null);
+  const [availableExpirations, setAvailableExpirations] = useState<string[]>([]);
+  const [customExpirations, setCustomExpirations] = useState<string[]>([]);
+  const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
+  const invalidExpirationsRef = useRef<Set<string>>(new Set());
 
   const [selectedLeg, setSelectedLeg] = useState<OptionLeg | null>(null);
   const [desiredContract, setDesiredContract] = useState<string | null>(null);
@@ -95,6 +99,7 @@ function App() {
   const [quote, setQuote] = useState<QuoteSnapshot | null>(null);
   const [trades, setTrades] = useState<TradePrint[]>([]);
   const [underlyingSnapshot, setUnderlyingSnapshot] = useState<WatchlistSnapshot | null>(null);
+  const underlyingSnapshotRef = useRef<WatchlistSnapshot | null>(null);
 
   const [marketError, setMarketError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
@@ -104,6 +109,9 @@ function App() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
+  const selectionHydratedRef = useRef(false);
+  const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
+  const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const chartCacheRef = useRef<
     Map<string, { timestamp: number; bars: AggregateBar[]; indicators?: IndicatorBundle }>
   >(new Map());
@@ -128,6 +136,13 @@ function App() {
       console.warn('Failed to fetch conversation transcript', error);
     }
   }, []);
+
+  const mergedExpirations = useMemo(() => {
+    const merged = new Set<string>();
+    availableExpirations.forEach(value => merged.add(value));
+    customExpirations.forEach(value => merged.add(value));
+    return Array.from(merged).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  }, [availableExpirations, customExpirations]);
 
   const hydrateConversations = useCallback(async () => {
     try {
@@ -186,6 +201,34 @@ function App() {
   }, [hydrateConversations]);
 
   useEffect(() => {
+    if (selectionHydratedRef.current) return;
+    selectionHydratedRef.current = true;
+    let cancelled = false;
+    async function hydrateSelection() {
+      try {
+        const payload = await marketApi.getPersistedSelection();
+        if (cancelled) return;
+        const selection = payload?.selection;
+        if (selection?.ticker) {
+          setTicker(selection.ticker);
+        }
+        const normalizedContract = selection?.contract ? selection.contract.toUpperCase() : null;
+        pendingSelectionRef.current.contract = normalizedContract;
+        pendingSelectionRef.current.expiration = selection?.expiration ?? null;
+        if (normalizedContract) {
+          setDesiredContract(normalizedContract);
+        }
+      } catch (error) {
+        console.warn('Failed to hydrate option selection', error);
+      }
+    }
+    hydrateSelection();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
   }, [activeConversationId]);
 
@@ -205,12 +248,22 @@ function App() {
   }, [conversations]);
 
   useEffect(() => {
+    if (!normalizedTicker) {
+      setChainExpirations([]);
+      setChainUnderlyingPrice(null);
+      setChainLoading(false);
+      return;
+    }
     let cancelled = false;
     async function loadChain() {
       setChainLoading(true);
       setChainError(null);
       try {
-        const response = await marketApi.getOptionsChain({ ticker: normalizedTicker, limit: 150 });
+        const response = await marketApi.getOptionsChain({
+          ticker: normalizedTicker,
+          limit: selectedExpiration ? 200 : 150,
+          expiration: selectedExpiration ?? undefined
+        });
         console.log('[CLIENT] options chain response', {
           ticker: normalizedTicker,
           expirations: response?.expirations?.length ?? 0,
@@ -219,20 +272,37 @@ function App() {
         if (!cancelled) {
           const groups = Array.isArray(response.expirations) ? response.expirations : [];
           if (!groups.length) {
-            setChainError(`No option contracts found for ${normalizedTicker}.`);
+            const errorMessage = selectedExpiration
+              ? 'No contracts available for this expiration'
+              : `No option contracts found for ${normalizedTicker}.`;
+            setChainError(errorMessage);
             setChainExpirations([]);
             setChainUnderlyingPrice(response?.underlyingPrice ?? null);
           } else {
             setChainExpirations(groups);
-            setChainUnderlyingPrice(response?.underlyingPrice ?? null);
+            const fallbackUnderlying =
+              response?.underlyingPrice ??
+              (underlyingSnapshotRef.current?.entryType === 'underlying'
+                ? underlyingSnapshotRef.current.price ?? null
+                : null);
+            setChainUnderlyingPrice(fallbackUnderlying);
           }
         }
       } catch (error: any) {
         if (!cancelled) {
-          const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load options chain';
-          setChainError(message);
-          setChainExpirations([]);
-          setChainUnderlyingPrice(null);
+          const status = error?.response?.status;
+          if (status === 404 && selectedExpiration) {
+            console.warn('[CLIENT] expiration missing, reverting to full chain', selectedExpiration);
+            pendingSelectionRef.current.expiration = null;
+            invalidExpirationsRef.current.add(selectedExpiration);
+            setCustomExpirations(prev => prev.filter(value => value !== selectedExpiration));
+            setSelectedExpiration(null);
+          } else {
+            const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load options chain';
+            setChainError(message);
+            setChainExpirations([]);
+            setChainUnderlyingPrice(null);
+          }
         }
       } finally {
         if (!cancelled) setChainLoading(false);
@@ -242,11 +312,10 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedTicker]);
+  }, [normalizedTicker, selectedExpiration]);
 
   useEffect(() => {
     setSelectedLeg(null);
-    setDesiredContract(normalizedTicker.startsWith('O:') ? normalizedTicker : null);
     setContractDetail(null);
     setBars([]);
     setIndicators(undefined);
@@ -256,6 +325,70 @@ function App() {
     setChainExpirations([]);
     setChainUnderlyingPrice(null);
     setChainError(null);
+
+    if (normalizedTicker.startsWith('O:')) {
+      const contractSymbol = normalizedTicker.toUpperCase();
+      pendingSelectionRef.current.contract = contractSymbol;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(contractSymbol);
+      setDesiredContract(contractSymbol);
+    } else if (!pendingSelectionRef.current.contract) {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+  }, [normalizedTicker]);
+
+  useEffect(() => {
+    setCustomExpirations([]);
+    invalidExpirationsRef.current.clear();
+  }, [normalizedTicker]);
+
+  useEffect(() => {
+    if (!normalizedTicker) {
+      setAvailableExpirations([]);
+      setSelectedExpiration(null);
+      setChainExpirations([]);
+      setChainUnderlyingPrice(null);
+      return;
+    }
+    let cancelled = false;
+    setChainError(null);
+    setAvailableExpirations([]);
+    setSelectedExpiration(null);
+    setChainExpirations([]);
+    setChainUnderlyingPrice(null);
+    async function loadExpirations() {
+      try {
+        const payload = await marketApi.getOptionExpirations(normalizedTicker);
+        if (cancelled) return;
+        const expirations = Array.isArray(payload?.expirations) ? payload.expirations : [];
+        setAvailableExpirations(expirations);
+        const pendingExpiration = pendingSelectionRef.current.expiration;
+        if (pendingExpiration) {
+          if (!expirations.includes(pendingExpiration)) {
+            setCustomExpirations(prev =>
+              prev.includes(pendingExpiration) ? prev : [...prev, pendingExpiration]
+            );
+          }
+          setSelectedExpiration(pendingExpiration);
+          pendingSelectionRef.current.expiration = null;
+          invalidExpirationsRef.current.delete(pendingExpiration);
+        } else if (selectedExpiration && !expirations.includes(selectedExpiration)) {
+          setSelectedExpiration(null);
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load expirations';
+          setChainError(message);
+          setAvailableExpirations([]);
+          setSelectedExpiration(null);
+        }
+      }
+    }
+    loadExpirations();
+    return () => {
+      cancelled = true;
+    };
   }, [normalizedTicker]);
 
   useEffect(() => {
@@ -265,12 +398,55 @@ function App() {
     const matching = findLegByTicker(chainExpirations, desiredContract);
     if (matching) {
       setSelectedLeg(matching);
+      if (pendingSelectionRef.current.contract?.toUpperCase() === desiredContract.toUpperCase()) {
+        pendingSelectionRef.current.contract = null;
+      }
     }
   }, [chainExpirations, desiredContract, selectedLeg]);
 
   useEffect(() => {
+    if (!desiredContract) return;
+    if (selectedLeg?.ticker === desiredContract) return;
+    const parsedExpiration = parseOptionExpirationFromTicker(desiredContract);
+    if (!parsedExpiration) return;
+    if (selectedExpiration === parsedExpiration) return;
+    pendingSelectionRef.current.expiration = parsedExpiration;
+    if (!mergedExpirations.includes(parsedExpiration)) {
+      setCustomExpirations(prev =>
+        prev.includes(parsedExpiration) ? prev : [...prev, parsedExpiration]
+      );
+    }
+    if (!invalidExpirationsRef.current.has(parsedExpiration)) {
+      setSelectedExpiration(parsedExpiration);
+    }
+  }, [desiredContract, selectedLeg, mergedExpirations, selectedExpiration]);
+
+  useEffect(() => {
+    if (!selectedLeg) return;
+    if (
+      pendingSelectionRef.current.contract &&
+      pendingSelectionRef.current.contract.toUpperCase() === selectedLeg.ticker.toUpperCase()
+    ) {
+      pendingSelectionRef.current.contract = null;
+    }
+    if (pendingSelectionRef.current.expiration === selectedLeg.expiration) {
+      pendingSelectionRef.current.expiration = null;
+    }
+    marketApi
+      .savePersistedSelection({
+        ticker: normalizedTicker,
+        contract: selectedLeg.ticker,
+        expiration: selectedLeg.expiration,
+        strike: selectedLeg.strike,
+        type: selectedLeg.type
+      })
+      .catch(error => console.warn('Failed to persist option selection', error));
+  }, [selectedLeg, normalizedTicker]);
+
+  useEffect(() => {
     if (!normalizedTicker || normalizedTicker.startsWith('O:')) {
       setUnderlyingSnapshot(null);
+       underlyingSnapshotRef.current = null;
       return;
     }
     let cancelled = false;
@@ -280,11 +456,13 @@ function App() {
         if (!cancelled) {
           const snapshot = payload.entries?.[0] ?? null;
           setUnderlyingSnapshot(snapshot);
+          underlyingSnapshotRef.current = snapshot ?? null;
         }
       } catch (error) {
         if (!cancelled) {
           console.warn('Failed to load underlying snapshot', error);
           setUnderlyingSnapshot(null);
+          underlyingSnapshotRef.current = null;
         }
       }
     }
@@ -515,14 +693,31 @@ function App() {
     <TradingSidebar
       selectedTicker={normalizedTicker}
       onSelectTicker={(next, snapshot) => {
-        setTicker(next);
+        const normalized = next.toUpperCase();
+        setTicker(normalized);
         setUnderlyingSnapshot(snapshot ?? null);
+        underlyingSnapshotRef.current = snapshot ?? null;
+        if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
+          const referenceContract = snapshot.referenceContract.toUpperCase();
+          pendingSelectionRef.current.contract = referenceContract;
+          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
+          setDesiredContract(referenceContract);
+        } else if (normalized.startsWith('O:')) {
+          pendingSelectionRef.current.contract = normalized;
+          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+          setDesiredContract(normalized);
+        } else {
+          pendingSelectionRef.current.contract = null;
+          pendingSelectionRef.current.expiration = null;
+          setDesiredContract(null);
+        }
         setSidebarOpen(false);
       }}
       onSnapshotUpdate={(ticker, snapshot) => {
         if (!ticker) return;
         if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
         setUnderlyingSnapshot(snapshot ?? null);
+        underlyingSnapshotRef.current = snapshot ?? null;
       }}
     />
   );
@@ -532,6 +727,13 @@ function App() {
       setSelectedLeg(leg);
       if (leg?.ticker) {
         setDesiredContract(leg.ticker.toUpperCase());
+        if (leg.expiration) {
+          setCustomExpirations(prev =>
+            prev.includes(leg.expiration) ? prev : [...prev, leg.expiration]
+          );
+          setSelectedExpiration(leg.expiration);
+          invalidExpirationsRef.current.delete(leg.expiration);
+        }
       } else if (normalizedTicker.startsWith('O:')) {
         setDesiredContract(normalizedTicker);
       } else {
@@ -540,6 +742,16 @@ function App() {
     },
     [normalizedTicker]
   );
+
+  const handleExpirationChange = useCallback((value: string | null) => {
+    pendingSelectionRef.current.expiration = null;
+    if (value) {
+      invalidExpirationsRef.current.delete(value);
+    }
+    setSelectedExpiration(value);
+    setSelectedLeg(null);
+    setDesiredContract(null);
+  }, []);
 
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
@@ -598,6 +810,9 @@ function App() {
           underlyingPrice={chainUnderlyingPrice}
           loading={chainLoading}
           error={chainError}
+          availableExpirations={mergedExpirations}
+          selectedExpiration={selectedExpiration}
+          onExpirationChange={handleExpirationChange}
           selectedContract={selectedLeg}
           onContractSelect={handleContractSelection}
         />
@@ -609,7 +824,20 @@ function App() {
     <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
       <TradingHeader
         selectedTicker={normalizedTicker}
-        onTickerSubmit={value => setTicker(value)}
+        onTickerSubmit={value => {
+          const normalized = value.trim().toUpperCase();
+          if (!normalized) return;
+          setTicker(normalized);
+          if (normalized.startsWith('O:')) {
+            pendingSelectionRef.current.contract = normalized;
+            pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+            setDesiredContract(normalized);
+          } else {
+            pendingSelectionRef.current.contract = null;
+            pendingSelectionRef.current.expiration = null;
+            setDesiredContract(null);
+          }
+        }}
         currentView={view}
         onViewChange={setView}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
@@ -725,4 +953,19 @@ function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): 
     }
   }
   return null;
+}
+
+function parseOptionExpirationFromTicker(symbol: string | null | undefined): string | null {
+  if (!symbol) return null;
+  const match = symbol.toUpperCase().match(/O:[A-Z0-9\.]+(\d{6})([CP])/);
+  if (!match) return null;
+  const raw = match[1];
+  const year = Number(raw.slice(0, 2));
+  const month = raw.slice(2, 4);
+  const day = raw.slice(4, 6);
+  if (Number.isNaN(year) || Number.isNaN(Number(month)) || Number.isNaN(Number(day))) {
+    return null;
+  }
+  const fullYear = 2000 + year;
+  return `${fullYear}-${month}-${day}`;
 }

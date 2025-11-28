@@ -8,6 +8,9 @@ type Props = {
   underlyingPrice: number | null;
   loading: boolean;
   error?: string | null;
+  availableExpirations: string[];
+  selectedExpiration: string | null;
+  onExpirationChange: (value: string | null) => void;
   selectedContract?: OptionLeg | null;
   onContractSelect: (leg: OptionLeg | null) => void;
 };
@@ -49,37 +52,29 @@ export function OptionsChainPanel({
   underlyingPrice,
   loading,
   error,
+  availableExpirations,
+  selectedExpiration,
+  onExpirationChange,
   selectedContract,
   onContractSelect,
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
-  const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableBodyRef = useRef<HTMLTableSectionElement | null>(null);
 
-  useEffect(() => {
-    if (!groups.length) {
-      setSelectedExpiration(null);
-      return;
-    }
-    const hasSelected = groups.some(group => group.expiration === selectedExpiration);
-    if (!hasSelected) {
-      setSelectedExpiration(groups[0].expiration);
-    }
-  }, [groups, selectedExpiration]);
-
   const expirationOptions = useMemo(
     () =>
-      groups.map(group => ({
-        value: group.expiration,
-        label: new Date(group.expiration).toLocaleDateString(),
-        dte: group.dte ?? undefined,
+      availableExpirations.map(date => ({
+        value: date,
+        label: new Date(date).toLocaleDateString(),
+        dte: computeDteValue(date) ?? undefined,
       })),
-    [groups]
+    [availableExpirations]
   );
 
   const activeGroup = useMemo(() => {
     if (!groups.length) return null;
+    if (!selectedExpiration) return groups[0];
     return groups.find(group => group.expiration === selectedExpiration) ?? groups[0];
   }, [groups, selectedExpiration]);
 
@@ -90,7 +85,13 @@ export function OptionsChainPanel({
     );
   }, [activeGroup, optionType]);
 
-  const dteLabel = activeGroup?.dte != null ? `${activeGroup.dte} DTE` : null;
+  const dteValue =
+    activeGroup?.dte != null
+      ? activeGroup.dte
+      : selectedExpiration
+      ? computeDteValue(selectedExpiration)
+      : null;
+  const dteLabel = dteValue != null ? `${dteValue} DTE` : null;
 
   useEffect(() => {
     if (!scrollContainerRef.current || !tableBodyRef.current) return;
@@ -130,9 +131,18 @@ export function OptionsChainPanel({
   const renderHeader = () => (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div>
-        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Options Chain</p>
+        <p className="text-xs uppercase tracking-[0.4em] text-gray-500 flex items-center gap-2">
+          Options Chain
+          <span className="tracking-normal text-gray-300">{ticker}</span>
+        </p>
         <div className="flex items-center gap-2 text-lg font-semibold">
-          <span>{activeGroup ? new Date(activeGroup.expiration).toLocaleDateString() : '—'}</span>
+          <span>
+            {selectedExpiration
+              ? new Date(selectedExpiration).toLocaleDateString()
+              : activeGroup
+              ? new Date(activeGroup.expiration).toLocaleDateString()
+              : '—'}
+          </span>
           {dteLabel && <span className="text-xs text-gray-500">{dteLabel}</span>}
         </div>
         {underlyingPrice != null && (
@@ -143,33 +153,39 @@ export function OptionsChainPanel({
         )}
       </div>
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full lg:w-auto">
-        <div className="rounded-full border border-gray-800 p-1 flex">
+        <div className="grid grid-cols-2 gap-2 text-[0.65rem] font-semibold w-full sm:w-auto">
           {(['calls', 'puts'] as const).map(type => (
             <button
               key={type}
               type="button"
               onClick={() => setOptionType(type)}
-              className={`px-3 py-1 text-xs rounded-full ${
-                optionType === type ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
+              className={`rounded-xl px-3 py-2 border transition-colors ${
+                optionType === type
+                  ? type === 'calls'
+                    ? 'border-emerald-500/60 bg-emerald-500/15 text-white'
+                    : 'border-orange-500/60 bg-orange-500/15 text-white'
+                  : 'border-gray-800 text-gray-400 hover:text-white'
               }`}
             >
-              {type.toUpperCase()}
+              {type === 'calls' ? 'CALLS' : 'PUTS'}
             </button>
           ))}
         </div>
         <div className="relative w-full sm:w-auto">
           <select
-            className="appearance-none bg-gray-950 border border-gray-900 rounded-full pl-4 pr-9 py-2 text-sm w-full"
-            value={activeGroup?.expiration ?? ''}
-            onChange={event => setSelectedExpiration(event.target.value)}
+            className="appearance-none bg-gray-950 border border-gray-900 rounded-full pl-10 pr-9 py-2 text-sm w-full disabled:opacity-50"
+            value={selectedExpiration ?? ''}
+            onChange={event => onExpirationChange(event.target.value || null)}
+            disabled={!expirationOptions.length}
           >
+            <option value="">{expirationOptions.length ? 'All expirations' : 'No expirations'}</option>
             {expirationOptions.map(exp => (
               <option key={exp.value} value={exp.value}>
                 {exp.label} {exp.dte != null ? `(${exp.dte} DTE)` : ''}
               </option>
             ))}
           </select>
-          <Calendar className="h-4 w-4 text-gray-500 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Calendar className="h-4 w-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <ChevronDown className="h-4 w-4 text-gray-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
       </div>
@@ -384,4 +400,11 @@ function formatSignedCurrency(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
   return `${sign}$${Math.abs(value).toFixed(2)}`;
+}
+
+function computeDteValue(expiration: string | null | undefined) {
+  if (!expiration) return null;
+  const expDate = new Date(expiration);
+  if (Number.isNaN(expDate.getTime())) return null;
+  return Math.round((expDate.getTime() - Date.now()) / 86_400_000);
 }

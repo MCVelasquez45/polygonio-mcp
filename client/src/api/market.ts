@@ -49,9 +49,9 @@ export async function getQuote(ticker: string): Promise<QuoteSnapshot & MarketMe
   return data;
 }
 
-export async function getOptionsChain(params: { ticker: string; limit?: number }): Promise<OptionChainData & MarketMeta> {
+export async function getOptionsChain(params: { ticker: string; limit?: number; expiration?: string | null }): Promise<OptionChainData & MarketMeta> {
   const { data } = await http.get<OptionChainData & MarketMeta>(`/api/market/options/chain/${params.ticker}`, {
-    params: { limit: params.limit },
+    params: { limit: params.limit, expiration: params.expiration ?? undefined },
   });
   return data;
 }
@@ -59,6 +59,34 @@ export async function getOptionsChain(params: { ticker: string; limit?: number }
 export async function getOptionContract(optionSymbol: string): Promise<OptionContractDetail & MarketMeta> {
   const { data } = await http.get<OptionContractDetail & MarketMeta>(`/api/market/options/contracts/${optionSymbol}`);
   return data;
+}
+
+type ExpirationsResponse = {
+  ticker: string;
+  expirations: string[];
+};
+
+export async function getOptionExpirations(ticker: string): Promise<ExpirationsResponse> {
+  const { data } = await http.get<ExpirationsResponse>(`/api/market/options/expirations/${ticker}`);
+  return data;
+}
+
+export type PersistedSelection = {
+  ticker: string;
+  contract: string;
+  expiration?: string;
+  strike?: number;
+  type?: 'call' | 'put';
+  side?: 'buy' | 'sell';
+};
+
+export async function getPersistedSelection(userId = 'default'): Promise<{ selection: (PersistedSelection & { updatedAt?: string }) | null }> {
+  const { data } = await http.get(`/api/market/options/selection`, { params: { userId } });
+  return data;
+}
+
+export async function savePersistedSelection(selection: PersistedSelection, userId = 'default'): Promise<void> {
+  await http.post('/api/market/options/selection', { ...selection, userId });
 }
 
 export async function getWatchlistSnapshots(tickers: string[]): Promise<WatchlistResponse> {
@@ -69,4 +97,3 @@ export async function getWatchlistSnapshots(tickers: string[]): Promise<Watchlis
   const { data } = await http.get<WatchlistResponse>('/api/market/watchlist', { params });
   return data;
 }
-

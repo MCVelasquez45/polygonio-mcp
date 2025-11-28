@@ -9,8 +9,10 @@ import {
   getMassiveOptionsChain,
   getMassiveOptionsSnapshot,
   getMassiveOptionContractSnapshot,
+  listOptionExpirations,
 } from '../services/massive';
 import { fetchWithCache } from '../services/marketCache';
+import { getLatestSelection, saveSelection } from '../services/selectionStore';
 
 const router = Router();
 
@@ -125,9 +127,12 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
     logMarketRequest(req);
     const ticker = req.params.ticker.toUpperCase();
     const limit = Number(req.query.limit) || 50;
+    const expirationFilter = typeof req.query.expiration === 'string' && req.query.expiration.trim().length
+      ? String(req.query.expiration)
+      : undefined;
     const { data, fetchedAt, fromCache } = await fetchWithCache(
       'options-chain',
-      { ticker, limit },
+      { ticker, limit, expiration: expirationFilter },
       120_000,
       async () => {
         if (ticker.startsWith('O:')) {
@@ -139,7 +144,22 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
           }
           return getMassiveOptionsChain(detail.underlying, limit);
         }
-        const chain = await getMassiveOptionsChain(ticker, limit);
+        const effectiveLimit = expirationFilter ? Math.max(limit, 5000) : limit;
+        const chain = await getMassiveOptionsChain(ticker, effectiveLimit);
+        if (expirationFilter) {
+          const filtered = Array.isArray(chain?.expirations)
+            ? chain.expirations.filter(group => group?.expiration === expirationFilter)
+            : [];
+          if (!filtered.length) {
+            const err: any = new Error('No contracts for selected expiration');
+            err.status = 404;
+            throw err;
+          }
+          return {
+            ...chain,
+            expirations: filtered
+          };
+        }
         console.log('[MARKET] options chain payload', {
           ticker,
           limit,
@@ -220,6 +240,75 @@ router.get('/options/contracts/:symbol', async (req, res, next) => {
       { ticker: symbol }
     );
     res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/options/selection', async (req, res, next) => {
+  try {
+    const userId = typeof req.query.userId === 'string' && req.query.userId.trim().length ? req.query.userId : 'default';
+    const selection = await getLatestSelection(userId);
+    res.json({ selection });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/options/selection', async (req, res, next) => {
+  try {
+    const body = req.body ?? {};
+    const userId = typeof body.userId === 'string' && body.userId.trim().length ? body.userId : 'default';
+    const ticker = typeof body.ticker === 'string' ? body.ticker.trim().toUpperCase() : '';
+    const contract = typeof body.contract === 'string' ? body.contract.trim().toUpperCase() : '';
+    const expiration = typeof body.expiration === 'string' ? body.expiration : undefined;
+    const strike = typeof body.strike === 'number' ? body.strike : undefined;
+    const type = body.type === 'call' || body.type === 'put' ? body.type : undefined;
+    const side = body.side === 'sell' ? 'sell' : 'buy';
+    if (!ticker || !contract) {
+      return res.status(400).json({ error: 'ticker and contract are required' });
+    }
+    const document = await saveSelection(userId, { ticker, contract, expiration, strike, type, side });
+    res.json({ selection: document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/options/expirations/:ticker', async (req, res, next) => {
+  try {
+    logMarketRequest(req);
+    const requestedTicker = req.params.ticker?.toUpperCase();
+    if (!requestedTicker) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    const limit = Number(req.query.limit ?? 1000) || 1000;
+    const maxPages = Number(req.query.maxPages ?? 5) || 5;
+
+    let underlyingTicker = requestedTicker;
+    if (requestedTicker.startsWith('O:')) {
+      const detail = await getMassiveOptionContract(requestedTicker);
+      if (!detail?.underlying) {
+        return res.status(404).json({ error: 'Unable to resolve underlying for contract' });
+      }
+      underlyingTicker = detail.underlying.toUpperCase();
+    }
+
+    const { data, fetchedAt, fromCache } = await fetchWithCache(
+      'options-expirations',
+      { ticker: underlyingTicker, limit, maxPages },
+      300_000,
+      () => listOptionExpirations(underlyingTicker, { limit, maxPages }),
+      { ticker: underlyingTicker }
+    );
+
+    res.json({
+      ticker: data.ticker,
+      requestedTicker,
+      expirations: data.expirations ?? [],
+      fetchedAt,
+      cache: fromCache ? 'hit' : 'miss'
+    });
   } catch (error) {
     next(error);
   }

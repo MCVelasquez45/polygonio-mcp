@@ -68,9 +68,9 @@ export function ChartPanel({
   const openPrice = chartData.at(0)?.close ?? null;
   const change = currentPrice != null && openPrice != null ? currentPrice - openPrice : null;
   const changePercent = change != null && openPrice ? (change / openPrice) * 100 : null;
-  const displayPrice = currentPrice ?? fallbackPrice ?? null;
-  const displayChange = change ?? fallbackChange?.absolute ?? null;
-  const displayChangePercent = changePercent ?? fallbackChange?.percent ?? null;
+  const displayPrice = fallbackPrice ?? currentPrice ?? null;
+  const displayChange = fallbackChange?.absolute ?? change ?? null;
+  const displayChangePercent = fallbackChange?.percent ?? changePercent ?? null;
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
