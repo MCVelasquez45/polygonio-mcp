@@ -538,7 +538,7 @@ function App() {
 
   const tradingView = (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 md:p-6 pb-24 lg:pb-6 overflow-y-auto w-full max-w-7xl mx-auto">
-      <div className="lg:col-span-8 flex flex-col gap-4 min-h-[26rem]">
+      <div className="lg:col-span-8 flex flex-col gap-4 min-h-[26rem] min-w-0">
         <ChartPanel
           ticker={displayTicker}
           timeframe={timeframe}
@@ -577,7 +577,7 @@ function App() {
         </div>
         <GreeksPanel contract={contractDetail} label={displayTicker} />
       </div>
-      <div className="lg:col-span-4 min-h-[26rem]">
+      <div className="lg:col-span-4 min-h-[26rem] min-w-0">
         <OrderTicketPanel
           contract={contractDetail}
           quote={quote}
@@ -586,7 +586,7 @@ function App() {
           label={displayTicker}
         />
       </div>
-      <div className="lg:col-span-12">
+      <div className="lg:col-span-12 min-w-0">
         <OptionsChainPanel
           ticker={displayTicker}
           groups={chainExpirations}
