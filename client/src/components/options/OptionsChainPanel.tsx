@@ -117,8 +117,8 @@ export function OptionsChainPanel({
   );
 
   const renderColumns = () => (
-    <div className="px-4 py-2 border-b border-gray-900 bg-gray-950/60">
-      <div className="grid grid-cols-5 md:grid-cols-8 gap-2 text-[0.65rem] uppercase tracking-widest text-gray-500 min-w-[640px]">
+    <div className="px-4 py-2 border-b border-gray-900 bg-gray-950/60 overflow-x-auto">
+      <div className="grid grid-cols-5 md:grid-cols-8 gap-2 text-[0.65rem] uppercase tracking-widest text-gray-500 min-w-[560px]">
         <span>Strike</span>
         <span className="hidden md:block">Breakeven</span>
         <span className="hidden md:block">To breakeven</span>
@@ -167,45 +167,65 @@ export function OptionsChainPanel({
             isSelected ? 'bg-gray-900/80' : 'hover:bg-gray-900/40'
           }`}
         >
-          <div className="grid grid-cols-5 md:grid-cols-8 gap-2 items-center min-w-[640px]">
-            <div className="text-gray-100 text-xs md:text-sm">${strike?.toFixed(2) ?? '—'}</div>
-            <div className="hidden md:block text-gray-300 text-xs md:text-sm">
-              {breakeven != null ? `$${breakeven.toFixed(2)}` : '—'}
-            </div>
-            <div className="hidden md:block text-gray-400 text-xs md:text-sm">
-              {toBreakeven != null ? `${toBreakeven.toFixed(2)}%` : '—'}
-            </div>
-            <div
-              className={`text-xs md:text-sm ${
-                changePercent != null && changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'
-              }`}
-            >
-              {changePercent != null ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : '—'}
-            </div>
-            <div
-              className={`hidden md:block text-xs md:text-sm ${
-                changeValue != null && changeValue >= 0 ? 'text-emerald-400' : 'text-red-400'
-              }`}
-            >
-              {changeValue != null ? `${changeValue >= 0 ? '+' : ''}$${changeValue.toFixed(2)}` : '—'}
-            </div>
-            <div className="text-right">
-              <span
-                className={`px-2 py-1 rounded-full border text-xs md:text-sm ${
-                  changePercent != null && changePercent >= 0
-                    ? 'border-emerald-500 text-emerald-300'
-                    : 'border-orange-500 text-orange-300'
+          <div className="w-full overflow-x-auto">
+            <div className="grid grid-cols-5 md:grid-cols-8 gap-2 items-center min-w-[560px]">
+              <div className="text-gray-100 text-xs md:text-sm">${strike?.toFixed(2) ?? '—'}</div>
+              <div className="hidden md:block text-gray-300 text-xs md:text-sm">
+                {breakeven != null ? `$${breakeven.toFixed(2)}` : '—'}
+              </div>
+              <div className="hidden md:block text-gray-400 text-xs md:text-sm">
+                {toBreakeven != null ? `${toBreakeven.toFixed(2)}%` : '—'}
+              </div>
+              <div
+                className={`text-xs md:text-sm ${
+                  changePercent != null && changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'
                 }`}
               >
-                {price != null ? `$${price.toFixed(2)}` : '—'}
-              </span>
+                {changePercent != null ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : '—'}
+              </div>
+              <div
+                className={`hidden md:block text-xs md:text-sm ${
+                  changeValue != null && changeValue >= 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {changeValue != null ? `${changeValue >= 0 ? '+' : ''}$${changeValue.toFixed(2)}` : '—'}
+              </div>
+              <div className="text-right">
+                <span
+                  className={`px-2 py-1 rounded-full border text-xs md:text-sm ${
+                    changePercent != null && changePercent >= 0
+                      ? 'border-emerald-500 text-emerald-300'
+                      : 'border-orange-500 text-orange-300'
+                  }`}
+                >
+                  {price != null ? `$${price.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
+                {leg.volume != null ? leg.volume.toLocaleString() : '—'}
+              </div>
+              <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
+                {leg.openInterest != null ? leg.openInterest.toLocaleString() : '—'}
+              </div>
             </div>
-            <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-[0.7rem] text-gray-400 md:hidden">
+            <span>
+              <span className="text-gray-500">Breakeven:&nbsp;</span>
+              {breakeven != null ? `$${breakeven.toFixed(2)}` : '—'}
+            </span>
+            <span className="text-right">
+              <span className="text-gray-500">To BE:&nbsp;</span>
+              {toBreakeven != null ? `${toBreakeven.toFixed(2)}%` : '—'}
+            </span>
+            <span>
+              <span className="text-gray-500">Vol:&nbsp;</span>
               {leg.volume != null ? leg.volume.toLocaleString() : '—'}
-            </div>
-            <div className="hidden md:block text-right text-xs md:text-sm text-gray-300">
+            </span>
+            <span className="text-right">
+              <span className="text-gray-500">OI:&nbsp;</span>
               {leg.openInterest != null ? leg.openInterest.toLocaleString() : '—'}
-            </div>
+            </span>
           </div>
         </button>
         {isSelected && (

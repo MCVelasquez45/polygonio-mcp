@@ -44,7 +44,7 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: 
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm font-semibold">
           <button
             type="button"
             className={`rounded-xl px-3 py-2 border ${
@@ -65,7 +65,7 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: 
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm font-semibold">
           <button
             type="button"
             className={`rounded-xl px-3 py-2 border ${

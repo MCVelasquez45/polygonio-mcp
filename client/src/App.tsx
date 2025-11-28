@@ -537,7 +537,7 @@ function App() {
   );
 
   const tradingView = (
-    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 md:p-6 pb-24 lg:pb-6 overflow-y-auto">
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-3 md:p-6 pb-24 lg:pb-6 overflow-y-auto w-full max-w-7xl mx-auto">
       <div className="lg:col-span-8 flex flex-col gap-4 min-h-[26rem]">
         <ChartPanel
           ticker={displayTicker}
@@ -634,7 +634,7 @@ function App() {
 
           {view === 'trading' && tradingView}
           {view === 'scanner' && (
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20">
+            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 w-full max-w-5xl mx-auto">
               <OptionsScanner onTickerSelect={value => {
                 setTicker(value);
                 setView('trading');
@@ -642,7 +642,7 @@ function App() {
             </div>
           )}
           {view === 'portfolio' && (
-            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20">
+            <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 w-full max-w-5xl mx-auto">
               <PortfolioPanel />
             </div>
           )}
