@@ -73,7 +73,7 @@ export function ChartPanel({
   const displayChangePercent = changePercent ?? fallbackChange?.percent ?? null;
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 h-[24rem] sm:h-[28rem] min-w-0 overflow-hidden">
+    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 h-[26rem] min-w-0">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm uppercase tracking-[0.4em] text-gray-500">{ticker}</p>
@@ -109,7 +109,7 @@ export function ChartPanel({
         </div>
       </header>
 
-      <div className="flex-1 min-h-[12rem] min-w-0">
+      <div className="flex-1">
         {isLoading ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading bars…</div>
         ) : chartData.length === 0 ? (
