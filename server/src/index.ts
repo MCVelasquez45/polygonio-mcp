@@ -6,7 +6,9 @@ import { Server as SocketIOServer } from 'socket.io';
 import analyzeRouter from './routes/analyze';
 import chatRouter from './routes/chat';
 import conversationsRouter from './routes/conversations';
+import marketRouter from './routes/market';
 import { initMongo } from './services/mongo';
+import { ensureMarketCacheIndexes } from './services/marketCache';
 
 const app = express();
 app.use(cors());
@@ -25,6 +27,14 @@ app.get('/health', (_req, res) => {
 app.use('/api/analyze', analyzeRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
+app.use('/api/market', marketRouter);
+
+app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
+  const status = error?.response?.status ?? error?.status ?? 500;
+  const payload = error?.response?.data ?? { error: error?.message ?? 'Internal server error' };
+  res.status(status).json(payload);
+});
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const httpServer = createServer(app);
@@ -46,6 +56,7 @@ async function start() {
   const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/market-copilot';
   try {
     await initMongo(mongoUri);
+    await ensureMarketCacheIndexes();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);
     process.exit(1);
