@@ -69,7 +69,7 @@ async def run_cli(
 
             try:
                 result = await run_analysis(user_input, session=session_obj, server=server_obj)
-                show_success(console, result)
+                show_success(console, user_input, result)
             except InputGuardrailTripwireTriggered as exc:
                 show_guardrail_warning(console, exc)
             except Exception as exc:  # pragma: no cover - protect CLI loop

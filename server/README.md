@@ -10,6 +10,7 @@ npm run dev
 
 * `/api/analyze` → proxies to Python MCP `/analyze`
 * `/api/chat` → proxies to Python MCP `/chat`
+* `/api/market` → REST surface for Massive option aggregates, SMA, quotes, trades, and contract detail (requires `MASSIVE_API_KEY`)
 
 ## Logging
 
