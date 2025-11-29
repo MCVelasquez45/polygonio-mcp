@@ -10,11 +10,15 @@ import {
   getMassiveOptionsSnapshot,
   getMassiveOptionContractSnapshot,
   listOptionExpirations,
+  normalizeExpirationDate,
+  clampChainLimit,
 } from '../services/massive';
 import { fetchWithCache } from '../services/marketCache';
 import { getLatestSelection, saveSelection } from '../services/selectionStore';
+import { getCachedChainSnapshot, saveChainSnapshot } from '../services/optionsChainStore';
 
 const router = Router();
+const STABLE_CHAIN_MAX_AGE_MS = 10 * 60 * 1000;
 
 function logMarketRequest(req: any) {
   try {
@@ -127,38 +131,86 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
     logMarketRequest(req);
     const ticker = req.params.ticker.toUpperCase();
     const limit = Number(req.query.limit) || 50;
-    const expirationFilter = typeof req.query.expiration === 'string' && req.query.expiration.trim().length
-      ? String(req.query.expiration)
-      : undefined;
+    const rawExpiration =
+      typeof req.query.expiration === 'string' && req.query.expiration.trim().length
+        ? String(req.query.expiration)
+        : undefined;
+    const expirationFilter = rawExpiration ? normalizeExpirationDate(rawExpiration) ?? undefined : undefined;
+    if (rawExpiration && !expirationFilter) {
+      console.warn('[MARKET] invalid expiration filter provided, ignoring', { rawExpiration });
+    }
+    const desiredLimit = expirationFilter ? Math.max(limit, 5000) : limit;
+    const clampedDesiredLimit = clampChainLimit(desiredLimit);
+
+    let underlyingSymbol = ticker;
+    let resolvedContractDetail: Awaited<ReturnType<typeof getMassiveOptionContract>> | null = null;
+
+    if (ticker.startsWith('O:')) {
+      resolvedContractDetail = await getMassiveOptionContract(ticker);
+      if (!resolvedContractDetail?.underlying) {
+        const err: any = new Error('Contract not found or missing underlying');
+        err.status = 404;
+        throw err;
+      }
+      underlyingSymbol = resolvedContractDetail.underlying.toUpperCase();
+    }
+
+    if (expirationFilter) {
+      const cachedSnapshot = await getCachedChainSnapshot(
+        underlyingSymbol,
+        expirationFilter,
+        STABLE_CHAIN_MAX_AGE_MS,
+        { minLimit: clampedDesiredLimit }
+      );
+      if (cachedSnapshot) {
+        return res.json({
+          ...cachedSnapshot.data,
+          fetchedAt: cachedSnapshot.updatedAt,
+          cache: 'stable'
+        });
+      }
+    }
+
     const { data, fetchedAt, fromCache } = await fetchWithCache(
       'options-chain',
       { ticker, limit, expiration: expirationFilter },
       120_000,
       async () => {
         if (ticker.startsWith('O:')) {
-          const detail = await getMassiveOptionContract(ticker);
+          const detail =
+            resolvedContractDetail ??
+            (await getMassiveOptionContract(ticker));
           if (!detail?.underlying) {
             const err: any = new Error('Contract not found or missing underlying');
             err.status = 404;
             throw err;
           }
-          return getMassiveOptionsChain(detail.underlying, limit);
-        }
-        const effectiveLimit = expirationFilter ? Math.max(limit, 5000) : limit;
-        const chain = await getMassiveOptionsChain(ticker, effectiveLimit);
-        if (expirationFilter) {
-          const filtered = Array.isArray(chain?.expirations)
-            ? chain.expirations.filter(group => group?.expiration === expirationFilter)
-            : [];
-          if (!filtered.length) {
+          const contractLimit = expirationFilter ? Math.max(limit, 5000) : limit;
+          const chain = await getMassiveOptionsChain(detail.underlying, contractLimit, 'asc', 'ticker', {
+            expiration: expirationFilter
+          });
+          if (
+            expirationFilter &&
+            (!Array.isArray(chain?.expirations) ||
+              !chain.expirations.some(group => group?.expiration === expirationFilter))
+          ) {
             const err: any = new Error('No contracts for selected expiration');
             err.status = 404;
             throw err;
           }
-          return {
-            ...chain,
-            expirations: filtered
-          };
+          return chain;
+        }
+        const chain = await getMassiveOptionsChain(ticker, desiredLimit, 'asc', 'ticker', {
+          expiration: expirationFilter
+        });
+        if (
+          expirationFilter &&
+          (!Array.isArray(chain?.expirations) ||
+            !chain.expirations.some(group => group?.expiration === expirationFilter))
+        ) {
+          const err: any = new Error('No contracts for selected expiration');
+          err.status = 404;
+          throw err;
         }
         console.log('[MARKET] options chain payload', {
           ticker,
@@ -170,6 +222,19 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
       },
       { ticker }
     );
+    if (expirationFilter) {
+      try {
+        const snapshotCoverage =
+          typeof data?.metadata?.referenceContracts === 'number'
+            ? data.metadata.referenceContracts
+            : typeof data?.metadata?.limit === 'number'
+            ? data.metadata.limit
+            : clampedDesiredLimit;
+        await saveChainSnapshot(underlyingSymbol, expirationFilter, data, { limit: snapshotCoverage });
+      } catch (error) {
+        console.warn('[MARKET] failed to persist chain snapshot', { underlyingSymbol, expirationFilter }, error);
+      }
+    }
     res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
   } catch (error) {
     next(error);

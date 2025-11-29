@@ -8,6 +8,10 @@ const MASSIVE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.MASSIVE_MIN_INTER
 const MASSIVE_MAX_RETRIES = Math.max(0, Number(process.env.MASSIVE_MAX_RETRIES ?? 3));
 const MASSIVE_RETRY_BASE_MS = Math.max(100, Number(process.env.MASSIVE_RETRY_BASE_MS ?? 500));
 const MASSIVE_RETRY_MAX_MS = Math.max(MASSIVE_RETRY_BASE_MS, Number(process.env.MASSIVE_RETRY_MAX_MS ?? 5_000));
+const MASSIVE_REFERENCE_MAX_PAGES = Math.min(Math.max(Number(process.env.MASSIVE_REFERENCE_MAX_PAGES ?? 10), 1), 50);
+const MASSIVE_SNAPSHOT_MAX_PAGES = Math.min(Math.max(Number(process.env.MASSIVE_SNAPSHOT_MAX_PAGES ?? 25), 1), 50);
+const MASSIVE_SNAPSHOT_PAGE_LIMIT = Math.min(Math.max(Number(process.env.MASSIVE_SNAPSHOT_PAGE_LIMIT ?? 150), 1), 150);
+export const MASSIVE_MAX_CHAIN_LIMIT = Math.min(Math.max(Number(process.env.MASSIVE_MAX_CHAIN_LIMIT ?? 1000), 1), 1000);
 
 const client = axios.create({
   baseURL: MASSIVE_BASE_URL,
@@ -73,6 +77,13 @@ function normalizeParams(input: Record<string, any>) {
 
 function buildCacheKey(path: string, params: Record<string, any>) {
   return `${path}?${stableSerialize(params)}`;
+}
+
+export function clampChainLimit(requestedLimit: number): number {
+  if (!Number.isFinite(requestedLimit)) {
+    return MASSIVE_MAX_CHAIN_LIMIT;
+  }
+  return Math.min(Math.max(Math.floor(requestedLimit), 1), MASSIVE_MAX_CHAIN_LIMIT);
 }
 
 function delay(ms: number) {
@@ -502,12 +513,13 @@ export async function listOptionExpirations(
     const payload = await massiveGet('/v3/reference/options/contracts', params, { cacheTtlMs: 60_000 });
     const results = Array.isArray(payload?.results) ? payload.results : [];
     for (const contract of results) {
-      const expiration =
+      const rawExpiration =
         typeof contract?.expiration_date === 'string'
           ? contract.expiration_date
           : typeof contract?.expiration === 'string'
           ? contract.expiration
           : null;
+      const expiration = normalizeExpirationDate(rawExpiration);
       if (expiration) {
         expirations.add(expiration);
       }
@@ -522,66 +534,208 @@ export async function listOptionExpirations(
   };
 }
 
+async function fetchReferenceContracts(
+  params: Record<string, any>,
+  options: { maxPages?: number } = {}
+) {
+  const maxPages = Math.min(Math.max(options.maxPages ?? 1, 1), MASSIVE_REFERENCE_MAX_PAGES);
+  const aggregated: any[] = [];
+  let cursor: string | null = null;
+  let pagesFetched = 0;
+  let nextCursor: string | null = null;
+  const baseLimit = clampChainLimit(Number(params.limit ?? MASSIVE_MAX_CHAIN_LIMIT));
+
+  do {
+    const pageParams: Record<string, any> = {
+      ...params,
+      limit: baseLimit
+    };
+    if (cursor) {
+      pageParams.cursor = cursor;
+    }
+    const payload = await massiveGet('/v3/reference/options/contracts', pageParams, { cacheTtlMs: 60_000 });
+    const pageResults = Array.isArray(payload?.results) ? payload.results : [];
+    aggregated.push(...pageResults);
+    nextCursor = extractCursor(payload?.next_url);
+    cursor = nextCursor;
+    pagesFetched += 1;
+  } while (cursor && pagesFetched < maxPages);
+
+  return {
+    results: aggregated,
+    pagesFetched,
+    exhausted: !cursor
+  };
+}
+
+async function fetchSnapshotOptions(
+  symbol: string,
+  params: Record<string, any>,
+  options: { maxPages?: number } = {}
+) {
+  const maxPages = Math.min(Math.max(options.maxPages ?? MASSIVE_SNAPSHOT_MAX_PAGES, 1), MASSIVE_SNAPSHOT_MAX_PAGES);
+  const aggregated: any[] = [];
+  let pagesFetched = 0;
+  let exhausted = true;
+  let resolvedRoot: any = null;
+
+  let nextRequest: { path: string; params: Record<string, any> } | null = {
+    path: `/v3/snapshot/options/${symbol}`,
+    params: { ...params }
+  };
+
+  while (nextRequest && pagesFetched < maxPages) {
+    console.log('[MASSIVE] snapshot request', { symbol, pagesFetched, request: nextRequest });
+    const payload = await massiveGet(nextRequest.path, nextRequest.params, { cacheTtlMs: 5_000 });
+    console.log('[MASSIVE] snapshot response summary', {
+      symbol,
+      page: pagesFetched + 1,
+      hasResults: Array.isArray(payload?.results) ? payload.results.length : null,
+      hasOptions: Array.isArray(payload?.options) ? payload.options.length : null,
+      nextUrl: payload?.next_url ?? null
+    });
+    if (!resolvedRoot) {
+      resolvedRoot = resolveSnapshotRoot(payload);
+    }
+    const optionsChunk = extractSnapshotOptions(payload);
+    aggregated.push(...optionsChunk);
+    pagesFetched += 1;
+    nextRequest = parseMassiveNextUrl(payload?.next_url);
+  }
+
+  if (nextRequest) {
+    exhausted = false;
+  }
+
+  return {
+    options: aggregated,
+    root: resolvedRoot,
+    pagesFetched,
+    exhausted
+  };
+}
+
+function resolveSnapshotRoot(payload: any) {
+  const snapshotResults = Array.isArray(payload?.results) ? payload.results : null;
+  if (
+    snapshotResults &&
+    snapshotResults.length &&
+    (Array.isArray(snapshotResults[0]?.options) || Array.isArray(snapshotResults[0]?.contracts))
+  ) {
+    return snapshotResults[0];
+  }
+  if (Array.isArray(payload?.results)) {
+    return payload.results ?? {};
+  }
+  if (Array.isArray(payload)) {
+    return payload ?? {};
+  }
+  return payload ?? {};
+}
+
+function extractSnapshotOptions(payload: any) {
+  const snapshotResults = Array.isArray(payload?.results) ? payload.results : null;
+  if (snapshotResults && snapshotResults.length) {
+    if (Array.isArray(snapshotResults[0]?.options)) {
+      return snapshotResults[0].options ?? [];
+    }
+    if (Array.isArray(snapshotResults[0]?.contracts)) {
+      return snapshotResults[0].contracts ?? [];
+    }
+    return snapshotResults
+      .map((entry: any) => entry?.option ?? entry)
+      .filter(Boolean);
+  }
+  if (Array.isArray(payload?.options)) return payload.options;
+  if (Array.isArray(payload?.contracts)) return payload.contracts;
+  if (Array.isArray(payload)) return payload;
+  return [];
+}
+
+function parseMassiveNextUrl(nextUrl: string | null | undefined): { path: string; params: Record<string, any> } | null {
+  if (!nextUrl || typeof nextUrl !== 'string') return null;
+  try {
+    const parsed = new URL(nextUrl);
+    const params: Record<string, any> = {};
+    parsed.searchParams.forEach((value, key) => {
+      if (!key) return;
+      if (key.toLowerCase() === 'apikey') return;
+      params[key] = value;
+    });
+    const path = parsed.pathname.startsWith('/') ? parsed.pathname : `/${parsed.pathname}`;
+    return { path, params };
+  } catch (error) {
+    console.warn('[MASSIVE] failed to parse next_url', nextUrl, error);
+    return null;
+  }
+}
+
 export async function getMassiveOptionsChain(
   underlying: string,
   limit = 100,
   order: 'asc' | 'desc' = 'asc',
-  sort: string = 'ticker'
+  sort: string = 'ticker',
+  options: { expiration?: string } = {}
 ) {
   const normalizedUnderlying = underlying.toUpperCase();
-  let snapshotPayload: any;
+  const normalizedExpirationFilter = options.expiration ? normalizeExpirationDate(options.expiration) ?? undefined : undefined;
+  const clampedLimit = clampChainLimit(limit);
+  const snapshotParams: Record<string, any> = {
+    order,
+    limit: Math.min(clampedLimit, MASSIVE_SNAPSHOT_PAGE_LIMIT),
+    sort
+  };
+  if (normalizedExpirationFilter) {
+    snapshotParams.expiration_date = normalizedExpirationFilter;
+  }
+  let snapshotData: Awaited<ReturnType<typeof fetchSnapshotOptions>> | null = null;
   try {
-    snapshotPayload = await massiveGet(
-      `/v3/snapshot/options/${normalizedUnderlying}`,
-      {
-        order,
-        limit,
-        sort
-      },
-      { cacheTtlMs: 5_000 }
+    snapshotData = await fetchSnapshotOptions(
+      normalizedUnderlying,
+      snapshotParams,
+      { maxPages: normalizedExpirationFilter ? MASSIVE_SNAPSHOT_MAX_PAGES : 5 }
     );
   } catch (error) {
     console.warn('[MASSIVE] snapshot chain fetch failed for', normalizedUnderlying, error);
   }
 
-  const snapshotResults = Array.isArray(snapshotPayload?.results) ? snapshotPayload.results : null;
-  const snapshotRoot =
-    snapshotResults && snapshotResults.length && (Array.isArray(snapshotResults[0]?.options) || Array.isArray(snapshotResults[0]?.contracts))
-      ? snapshotResults[0]
-      : snapshotPayload?.results ?? snapshotPayload ?? {};
+  const snapshotRoot = snapshotData?.root ?? {};
   const underlyingAsset =
     snapshotRoot?.underlying_asset ??
     snapshotRoot?.underlying ??
-    snapshotResults?.[0]?.underlying_asset ??
-    snapshotResults?.[0]?.underlying ??
     {};
   const underlyingPrice = resolveNumber(underlyingAsset?.price) ?? null;
-  const rawOptions = Array.isArray(snapshotRoot?.options)
-    ? snapshotRoot.options
-    : Array.isArray(snapshotRoot?.contracts)
-    ? snapshotRoot.contracts
-    : snapshotResults
-    ? snapshotResults
-        .map((entry: any) => entry?.option ?? entry)
-        .filter(Boolean)
-    : Array.isArray(snapshotRoot)
-    ? snapshotRoot
-    : [];
+  const rawOptions = Array.isArray(snapshotData?.options) ? snapshotData.options : [];
 
   let referenceLegs = new Map<string, any>();
+  let referenceStats = { pagesFetched: 0, exhausted: true };
   try {
-    const referencePayload = await massiveGet(
-      '/v3/reference/options/contracts',
-      {
-        underlying_asset: normalizedUnderlying,
-        underlying_ticker: normalizedUnderlying,
-        limit,
-        order,
-        sort
-      },
-      { cacheTtlMs: 60_000 }
-    );
-    const contracts = Array.isArray(referencePayload?.results) ? referencePayload.results : [];
+    const referenceParams: Record<string, any> = {
+      underlying_asset: normalizedUnderlying,
+      underlying_ticker: normalizedUnderlying,
+      limit: clampedLimit,
+      order,
+      sort
+    };
+    if (normalizedExpirationFilter) {
+      referenceParams.expiration_date = normalizedExpirationFilter;
+    }
+    const {
+      results: contracts,
+      pagesFetched,
+      exhausted
+    } = await fetchReferenceContracts(referenceParams, {
+      maxPages: normalizedExpirationFilter ? MASSIVE_REFERENCE_MAX_PAGES : 1
+    });
+    referenceStats = { pagesFetched, exhausted };
+    if (!exhausted) {
+      console.warn('[MASSIVE] reference contracts truncated', {
+        ticker: normalizedUnderlying,
+        expiration: normalizedExpirationFilter,
+        pagesFetched,
+        requestLimit: clampedLimit
+      });
+    }
     referenceLegs = new Map(
       contracts
         .filter((contract: any) => {
@@ -600,7 +754,8 @@ export async function getMassiveOptionsChain(
   const expirationMap = new Map<string, Map<number, any>>();
   const seenTickers = new Set<string>();
 
-  function upsertStrike(expiration: string, strike: number, call: any, put: any) {
+  function upsertStrike(rawExpiration: string | null | undefined, strike: number, call: any, put: any) {
+    const expiration = normalizeExpirationDate(rawExpiration);
     if (!expiration || Number.isNaN(strike)) return;
     const strikesForExpiration = expirationMap.get(expiration) ?? new Map<number, any>();
     const row = strikesForExpiration.get(strike) ?? { strike, call: undefined, put: undefined };
@@ -664,7 +819,7 @@ export async function getMassiveOptionsChain(
   for (const option of rawOptions) {
     const optionEntry = option?.option ?? option;
     const optionDetails = optionEntry?.details ?? optionEntry?.detail ?? null;
-    const expiration =
+    const expiration = normalizeExpirationDate(
       typeof optionEntry?.expiration_date === 'string'
         ? optionEntry.expiration_date
         : typeof optionEntry?.expiration === 'string'
@@ -673,7 +828,8 @@ export async function getMassiveOptionsChain(
         ? optionDetails.expiration_date
         : typeof optionDetails?.expiration === 'string'
         ? optionDetails.expiration
-        : undefined;
+        : undefined
+    );
     if (Array.isArray(optionEntry?.strikes)) {
       for (const strikeEntry of optionEntry.strikes) {
         const strike = Number(strikeEntry?.strike_price ?? strikeEntry?.strike);
@@ -705,12 +861,13 @@ export async function getMassiveOptionsChain(
         normalizedUnderlying
       );
       if (!leg) continue;
-      const strikesForExpiration = expirationMap.get(expiration) ?? new Map<number, any>();
+      const expirationKey = leg.expiration;
+      const strikesForExpiration = expirationMap.get(expirationKey) ?? new Map<number, any>();
       const row = strikesForExpiration.get(strike) ?? { strike, call: undefined, put: undefined };
       if (contractType === 'call') row.call = leg;
       else row.put = leg;
       strikesForExpiration.set(strike, row);
-      expirationMap.set(expiration, strikesForExpiration);
+      expirationMap.set(expirationKey, strikesForExpiration);
     }
   }
 
@@ -729,6 +886,10 @@ export async function getMassiveOptionsChain(
       return aDate - bDate;
     });
 
+  if (normalizedExpirationFilter) {
+    expirations = expirations.filter(group => group.expiration === normalizedExpirationFilter);
+  }
+
   if (!expirations.length && referenceLegs.size) {
     const fallbackMap = new Map<string, Map<number, any>>();
     for (const leg of referenceLegs.values()) {
@@ -739,7 +900,7 @@ export async function getMassiveOptionsChain(
       strikesForExpiration.set(leg.strike, row);
       fallbackMap.set(leg.expiration, strikesForExpiration);
     }
-    expirations = Array.from(fallbackMap.entries())
+    let fallbackExpirations = Array.from(fallbackMap.entries())
       .map(([expiration, strikes]) => ({
         expiration,
         dte: computeDte(expiration),
@@ -753,18 +914,34 @@ export async function getMassiveOptionsChain(
         const bDate = new Date(b.expiration).getTime();
         return aDate - bDate;
       });
+
+    if (normalizedExpirationFilter) {
+      fallbackExpirations = fallbackExpirations.filter(group => group.expiration === normalizedExpirationFilter);
+    }
+    expirations = fallbackExpirations;
   }
 
   console.log('[MASSIVE] options chain resolved', {
     ticker: normalizedUnderlying,
     expirations: expirations.length,
-    strikes: expirations.reduce((acc, group) => acc + group.strikes.length, 0)
+    strikes: expirations.reduce((acc, group) => acc + group.strikes.length, 0),
+    snapshotPages: snapshotData?.pagesFetched ?? 0,
+    referencePages: referenceStats.pagesFetched
   });
 
   return {
     ticker: normalizedUnderlying,
     underlyingPrice,
-    expirations
+    expirations,
+    metadata: {
+      limit: clampedLimit,
+      referenceContracts: referenceLegs.size,
+      referencePages: referenceStats.pagesFetched,
+      referenceComplete: referenceStats.exhausted,
+       snapshotPages: snapshotData?.pagesFetched ?? 0,
+       snapshotComplete: snapshotData?.exhausted ?? false,
+      expiration: normalizedExpirationFilter ?? null
+    }
   };
 }
 
@@ -793,16 +970,43 @@ function computeDte(expiration: string): number | null {
   return diff;
 }
 
+export function normalizeExpirationDate(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+  const isoPrefixMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoPrefixMatch) {
+    return `${isoPrefixMatch[1]}-${isoPrefixMatch[2]}-${isoPrefixMatch[3]}`;
+  }
+  const digitsMatch = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (digitsMatch) {
+    return `${digitsMatch[1]}-${digitsMatch[2]}-${digitsMatch[3]}`;
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return null;
+  const date = new Date(parsed);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function normalizeSnapshotLeg(
   raw: any,
   strike: number,
-  expiration: string,
+  expiration: string | null | undefined,
   type: 'call' | 'put',
   underlyingPrice: number | null,
   underlyingSymbol: string,
   fallback?: any
 ) {
   if (!raw) return null;
+  const normalizedExpiration = normalizeExpirationDate(expiration);
+  if (!normalizedExpiration) return null;
   const tickerCandidate =
     typeof raw?.ticker === 'string'
       ? raw.ticker
@@ -923,7 +1127,7 @@ function normalizeSnapshotLeg(
     ticker,
     type,
     strike,
-    expiration,
+    expiration: normalizedExpiration,
     underlying: underlyingSymbol,
     bid,
     ask,
@@ -1013,10 +1217,12 @@ export function normalizeReferenceContract(contract: any, underlyingSymbol: stri
   if (!ticker) return null;
   const strike = Number(contract.strike_price ?? contract.strike);
   if (Number.isNaN(strike)) return null;
-  const expiration =
+  const expiration = normalizeExpirationDate(
     typeof contract?.expiration_date === 'string'
       ? contract.expiration_date
-      : contract?.expiration;
+      : contract?.expiration
+  );
+  if (!expiration) return null;
   const type = contract?.contract_type === 'put' ? 'put' : 'call';
   const lastQuote = contract?.last_quote ?? {};
   const lastTrade = contract?.last_trade ?? {};
@@ -1076,10 +1282,18 @@ function normalizeOptionContractDetail(detail: any, fallbackTicker: string) {
   if (!detail) return null;
   const lastQuoteRaw = detail.last_quote ?? {};
   const lastTradeRaw = detail.last_trade ?? {};
+  const expiration =
+    normalizeExpirationDate(
+      typeof detail?.expiration_date === 'string'
+        ? detail.expiration_date
+        : typeof detail?.expiration === 'string'
+        ? detail.expiration
+        : undefined
+    ) ?? undefined;
   return {
     ticker: detail.ticker ?? fallbackTicker,
     underlying: detail.underlying_ticker,
-    expiration: detail.expiration_date,
+    expiration,
     type: detail.contract_type,
     strike: detail.strike_price,
     openInterest: detail.open_interest,
@@ -1234,7 +1448,11 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
     underlying: underlyingSymbol,
     name: contractDetail.ticker ?? contractSymbol,
     strike: contractDetail.strike ?? optionData?.strike_price ?? null,
-    expiration: contractDetail.expiration ?? optionData?.expiration_date,
+    expiration:
+      normalizeExpirationDate(contractDetail.expiration ?? optionData?.expiration_date) ??
+      contractDetail.expiration ??
+      optionData?.expiration_date ??
+      undefined,
     price,
     bid: resolveNumber(lastQuote?.bid),
     ask: resolveNumber(lastQuote?.ask),

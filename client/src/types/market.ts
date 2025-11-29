@@ -101,6 +101,15 @@ export type OptionChainData = {
   ticker: string;
   underlyingPrice: number | null;
   expirations: OptionChainExpirationGroup[];
+  metadata?: {
+    limit?: number;
+    referenceContracts?: number;
+    referencePages?: number;
+    referenceComplete?: boolean;
+    snapshotPages?: number;
+    snapshotComplete?: boolean;
+    expiration?: string | null;
+  };
 };
 
 export type OptionContractDetail = {
