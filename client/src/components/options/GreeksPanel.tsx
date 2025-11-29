@@ -1,4 +1,5 @@
 import type { OptionContractDetail } from '../../types/market';
+import { formatExpirationDate } from '../../utils/expirations';
 
 const metrics = [
   { key: 'delta', label: 'Delta' },
@@ -16,7 +17,7 @@ type Props = {
 export function GreeksPanel({ contract, label }: Props) {
   const greeks = contract?.greeks ?? {};
   const meta = [
-    { label: 'Expiration', value: contract?.expiration ? new Date(contract.expiration).toLocaleDateString() : '—' },
+    { label: 'Expiration', value: contract?.expiration ? formatExpirationDate(contract.expiration) : '—' },
     { label: 'Strike', value: contract?.strike ? `$${contract.strike.toFixed(2)}` : '—' },
     { label: 'Implied Vol', value: contract?.impliedVolatility ? `${(contract.impliedVolatility * 100).toFixed(1)}%` : '—' },
     { label: 'Open Interest', value: contract?.openInterest?.toLocaleString() ?? '—' },

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { marketApi } from '../../api';
 import type { WatchlistSnapshot } from '../../types/market';
+import { formatExpirationDate } from '../../utils/expirations';
 
 type WatchlistEntry = {
   symbol: string;
@@ -327,11 +328,11 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
                 (normalizedSnapshotTicker ? normalizedSnapshotTicker === normalizedSelected : false) ||
                 (referenceContract ? referenceContract === normalizedSelected : false);
               const priceDisplay = hasPrice ? `$${Number(priceSource).toFixed(2)}` : '—';
+              const formattedExpiration =
+                snapshot?.expiration ? formatExpirationDate(snapshot.expiration) : '';
               const secondaryLine =
                 snapshot?.entryType === 'contract'
-                  ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''}$ ${
-                      snapshot?.expiration ? new Date(snapshot.expiration).toLocaleDateString() : ''
-                    }`
+                  ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''}$ ${formattedExpiration}`
                   : `Last refresh ${new Date().toLocaleTimeString()}`;
               return (
                 <div

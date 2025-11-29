@@ -10,6 +10,7 @@ import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { chatApi, marketApi } from './api';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
+import { getExpirationTimestamp } from './utils/expirations';
 import type {
   AggregateBar,
   IndicatorBundle,
@@ -141,7 +142,14 @@ function App() {
     const merged = new Set<string>();
     availableExpirations.forEach(value => merged.add(value));
     customExpirations.forEach(value => merged.add(value));
-    return Array.from(merged).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    return Array.from(merged).sort((a, b) => {
+      const tsA = getExpirationTimestamp(a);
+      const tsB = getExpirationTimestamp(b);
+      if (tsA == null && tsB == null) return 0;
+      if (tsA == null) return 1;
+      if (tsB == null) return -1;
+      return tsA - tsB;
+    });
   }, [availableExpirations, customExpirations]);
 
   const hydrateConversations = useCallback(async () => {

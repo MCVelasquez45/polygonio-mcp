@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { OptionChainExpirationGroup, OptionLeg } from '../../types/market';
 import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
+import { computeExpirationDte, formatExpirationDate } from '../../utils/expirations';
 
 type Props = {
   ticker: string;
@@ -66,8 +67,8 @@ export function OptionsChainPanel({
     () =>
       availableExpirations.map(date => ({
         value: date,
-        label: new Date(date).toLocaleDateString(),
-        dte: computeDteValue(date) ?? undefined,
+        label: formatExpirationDate(date),
+        dte: computeExpirationDte(date) ?? undefined,
       })),
     [availableExpirations]
   );
@@ -89,7 +90,7 @@ export function OptionsChainPanel({
     activeGroup?.dte != null
       ? activeGroup.dte
       : selectedExpiration
-      ? computeDteValue(selectedExpiration)
+      ? computeExpirationDte(selectedExpiration)
       : null;
   const dteLabel = dteValue != null ? `${dteValue} DTE` : null;
 
@@ -138,9 +139,9 @@ export function OptionsChainPanel({
         <div className="flex items-center gap-2 text-lg font-semibold">
           <span>
             {selectedExpiration
-              ? new Date(selectedExpiration).toLocaleDateString()
+              ? formatExpirationDate(selectedExpiration)
               : activeGroup
-              ? new Date(activeGroup.expiration).toLocaleDateString()
+              ? formatExpirationDate(activeGroup.expiration)
               : '—'}
           </span>
           {dteLabel && <span className="text-xs text-gray-500">{dteLabel}</span>}
@@ -292,7 +293,7 @@ export function OptionsChainPanel({
             <td colSpan={CHAIN_COLUMNS.length} className="px-4 py-4 bg-gray-900/50 border-t border-gray-900">
               <div className="text-xs text-gray-400 mb-3">
                 {ticker} {strike != null ? `$${strike.toFixed(2)}` : ''} {leg.type.toUpperCase()} ·{' '}
-                {new Date(leg.expiration).toLocaleDateString()}
+                {formatExpirationDate(leg.expiration)}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
               <InfoTile label="Bid" value={leg.bid != null ? `$${leg.bid.toFixed(2)}` : '—'} />
@@ -400,11 +401,4 @@ function formatSignedCurrency(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
   return `${sign}$${Math.abs(value).toFixed(2)}`;
-}
-
-function computeDteValue(expiration: string | null | undefined) {
-  if (!expiration) return null;
-  const expDate = new Date(expiration);
-  if (Number.isNaN(expDate.getTime())) return null;
-  return Math.round((expDate.getTime() - Date.now()) / 86_400_000);
 }

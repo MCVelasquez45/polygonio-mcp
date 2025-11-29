@@ -1,3 +1,5 @@
+import { formatExpirationDate } from '../../utils/expirations';
+
 const scannerRows = [
   {
     symbol: 'NVDA',
@@ -52,7 +54,7 @@ export function OptionsScanner({ onTickerSelect }: Props) {
                 <p className="text-lg font-semibold text-white">{row.contract}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-gray-400">Expires {new Date(row.expiry).toLocaleDateString()}</p>
+                <p className="text-sm text-gray-400">Expires {formatExpirationDate(row.expiry)}</p>
                 <p className="text-base font-semibold text-emerald-400">{row.flow}</p>
               </div>
               <div className="text-sm text-gray-300 flex-1 min-w-full border-t border-gray-900 pt-3">
