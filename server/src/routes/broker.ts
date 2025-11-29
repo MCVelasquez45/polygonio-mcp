@@ -1,0 +1,112 @@
+import { Router } from 'express';
+import {
+  getAlpacaAccount,
+  listAlpacaOptionOrders,
+  listAlpacaOptionPositions,
+  submitAlpacaOptionsOrder
+} from '../services/alpaca';
+
+const router = Router();
+const CACHE_TTL_MS = 10_000;
+
+let cachedAccount: { data: any; expiresAt: number } | null = null;
+let cachedPositions: { data: any; expiresAt: number } | null = null;
+
+router.get('/alpaca/account', async (_req, res, next) => {
+  try {
+    const now = Date.now();
+    if (cachedAccount && cachedAccount.expiresAt > now) {
+      return res.json(cachedAccount.data);
+    }
+    const account = await getAlpacaAccount();
+    cachedAccount = { data: account, expiresAt: now + CACHE_TTL_MS };
+    res.json(account);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/alpaca/options/positions', async (_req, res, next) => {
+  try {
+    const now = Date.now();
+    if (cachedPositions && cachedPositions.expiresAt > now) {
+      return res.json({ positions: cachedPositions.data });
+    }
+    const positions = await listAlpacaOptionPositions();
+    cachedPositions = { data: positions, expiresAt: now + CACHE_TTL_MS };
+    res.json({ positions });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/alpaca/options/orders', async (req, res, next) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+    const orders = await listAlpacaOptionOrders({ status, limit });
+    res.json({ orders });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/alpaca/options/orders', async (req, res, next) => {
+  try {
+    const body = req.body ?? {};
+    console.log('[BROKER] order submission received', body);
+    const legs = Array.isArray(body.legs) ? body.legs : [];
+    if (!legs.length) {
+      return res.status(400).json({ error: 'At least one leg is required' });
+    }
+    const normalizedLegs = legs.map((leg: any) => {
+      const symbol = typeof leg.symbol === 'string' ? leg.symbol.trim().toUpperCase() : '';
+      const qty = Number(leg.qty ?? leg.quantity ?? 0);
+      const side = leg.side === 'sell' ? 'sell' : 'buy';
+      const limitPrice = leg.limitPrice ?? leg.limit_price;
+      const type = leg.type ?? (limitPrice != null ? 'limit' : 'market');
+      if (!symbol || !Number.isFinite(qty) || qty <= 0) {
+        throw new Error('Invalid leg payload');
+      }
+      return {
+        symbol,
+        qty,
+        side,
+        type,
+        ...(limitPrice != null ? { limit_price: Number(limitPrice) } : {})
+      };
+    });
+    const limitPriceRaw = body.limitPrice ?? body.limit_price;
+    const limitPriceValue = Number(limitPriceRaw);
+    const orderClass =
+      typeof body.orderClass === 'string'
+        ? body.orderClass
+        : typeof body.order_class === 'string'
+        ? body.order_class
+        : undefined;
+    const orderType =
+      typeof body.orderType === 'string'
+        ? body.orderType
+        : typeof body.order_type === 'string'
+        ? body.order_type
+        : undefined;
+    const payload = {
+      legs: normalizedLegs,
+      quantity: Number(body.quantity ?? 1),
+      order_class: orderClass,
+      order_type: orderType,
+      limit_price: Number.isFinite(limitPriceValue) ? Math.abs(limitPriceValue) : undefined,
+      time_in_force: body.timeInForce ?? body.time_in_force ?? 'day',
+      client_order_id: body.clientOrderId ?? body.client_order_id,
+      extended_hours: Boolean(body.extendedHours ?? body.extended_hours)
+    };
+    console.log('[BROKER] normalized Alpaca payload', payload);
+    const order = await submitAlpacaOptionsOrder(payload);
+    console.log('[BROKER] Alpaca order response', order);
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;
