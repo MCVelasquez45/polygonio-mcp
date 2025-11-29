@@ -90,7 +90,6 @@ function App() {
   const activeContractSymbol = selectedLeg?.ticker ?? null;
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
-  const [contractLoading, setContractLoading] = useState(false);
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>('1/day');
   const [bars, setBars] = useState<AggregateBar[]>([]);
@@ -487,35 +486,12 @@ function App() {
   }, [activeContractSymbol]);
 
   useEffect(() => {
-    if (!activeContractSymbol) {
+    if (!selectedLeg) {
       setContractDetail(null);
-      setContractLoading(false);
       return;
     }
-    const symbol = activeContractSymbol!;
-    let cancelled = false;
-    async function loadDetail() {
-      setContractLoading(true);
-      try {
-        const detail = await marketApi.getOptionContract(symbol);
-        if (!cancelled) {
-          setContractDetail(detail);
-        }
-      } catch (error: any) {
-        if (!cancelled) {
-          const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load contract details';
-          setMarketError(message);
-          setContractDetail(null);
-        }
-      } finally {
-        if (!cancelled) setContractLoading(false);
-      }
-    }
-    loadDetail();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeContractSymbol]);
+    setContractDetail(optionLegToContractDetail(selectedLeg));
+  }, [selectedLeg]);
 
   useEffect(() => {
     const symbol = normalizedTicker;
@@ -800,14 +776,14 @@ function App() {
             {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
           </p>
         </div>
-        <GreeksPanel contract={contractDetail} label={displayTicker} />
+        <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
         <OrderTicketPanel
           contract={contractDetail}
           quote={quote}
           trades={trades}
-          isLoading={contractLoading}
+          isLoading={false}
           label={displayTicker}
         />
       </div>
@@ -961,6 +937,47 @@ function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): 
     }
   }
   return null;
+}
+
+function optionLegToContractDetail(leg: OptionLeg): OptionContractDetail {
+  const greeks = {
+    ...(leg.greeks ?? {}),
+    ...(typeof leg.delta === 'number' ? { delta: leg.delta } : {}),
+    ...(typeof leg.gamma === 'number' ? { gamma: leg.gamma } : {}),
+    ...(typeof leg.theta === 'number' ? { theta: leg.theta } : {}),
+    ...(typeof leg.vega === 'number' ? { vega: leg.vega } : {}),
+    ...(typeof leg.rho === 'number' ? { rho: leg.rho } : {}),
+  };
+  return {
+    ticker: leg.ticker,
+    underlying: leg.underlying,
+    expiration: leg.expiration,
+    type: leg.type,
+    strike: leg.strike,
+    openInterest: leg.openInterest ?? undefined,
+    breakEvenPrice: leg.breakeven ?? undefined,
+    impliedVolatility: leg.iv ?? undefined,
+    day: {
+      change: leg.change ?? null,
+      change_percent: leg.changePercent ?? null,
+      volume: leg.volume ?? null,
+      open_interest: leg.openInterest ?? null,
+    },
+    greeks,
+    lastQuote: {
+      bid: leg.bid ?? undefined,
+      ask: leg.ask ?? undefined,
+      mid: leg.mid ?? undefined,
+      mark: leg.mark ?? undefined,
+    },
+    lastTrade: leg.lastTrade
+      ? {
+          price: leg.lastTrade.price ?? undefined,
+          size: leg.lastTrade.size ?? undefined,
+          sip_timestamp: leg.lastTrade.sip_timestamp ?? undefined,
+        }
+      : undefined,
+  };
 }
 
 function parseOptionExpirationFromTicker(symbol: string | null | undefined): string | null {
