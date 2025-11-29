@@ -737,6 +737,10 @@ function App() {
     setDesiredContract(null);
   }, []);
 
+  const greeksUnderlyingPrice =
+    chainUnderlyingPrice ??
+    (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying' ? underlyingSnapshot.price ?? null : null);
+
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
@@ -776,7 +780,7 @@ function App() {
             {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
           </p>
         </div>
-        <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} />
+        <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
         <OrderTicketPanel

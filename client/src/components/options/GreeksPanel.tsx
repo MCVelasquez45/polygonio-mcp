@@ -16,6 +16,7 @@ type Props = {
   contract?: OptionContractDetail | null;
   leg?: OptionLeg | null;
   label?: string;
+  underlyingPrice?: number | null;
 };
 
 type RiskSlice = {
@@ -28,9 +29,11 @@ type RiskSlice = {
 
 const riskColors = ['#10b981', '#f97316', '#facc15', '#38bdf8', '#a855f7'];
 
-export function GreeksPanel({ contract, leg, label }: Props) {
+export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
+  const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
   const resolvedStrike = typeof contract?.strike === 'number' ? contract.strike : leg?.strike ?? null;
+  const contractType = contract?.type ?? leg?.type ?? null;
   const resolvedIV =
     typeof contract?.impliedVolatility === 'number'
       ? contract.impliedVolatility
@@ -48,9 +51,36 @@ export function GreeksPanel({ contract, leg, label }: Props) {
     acc[metric.key] = resolveGreekValue(contract, leg, metric.key);
     return acc;
   }, {});
+  const resolvedPremium = pickNumber(
+    leg?.mark,
+    leg?.mid,
+    leg?.lastPrice,
+    resolveQuoteMid(contract?.lastQuote),
+    contract?.lastTrade?.price ?? null
+  );
+  const legBreakeven = pickNumber(leg?.breakeven, contract?.breakEvenPrice ?? null);
+  const computedBreakeven =
+    resolvedStrike != null && resolvedPremium != null && contractType
+      ? contractType === 'call'
+        ? resolvedStrike + resolvedPremium
+        : resolvedStrike - resolvedPremium
+      : null;
+  const breakevenPrice = legBreakeven ?? computedBreakeven;
+  const breakevenMove =
+    breakevenPrice != null && typeof underlyingPrice === 'number' ? breakevenPrice - underlyingPrice : null;
+  const breakevenPercent =
+    breakevenMove != null && typeof underlyingPrice === 'number' && underlyingPrice !== 0
+      ? (breakevenMove / underlyingPrice) * 100
+      : null;
+  const breakevenFormula =
+    contractType && resolvedStrike != null && resolvedPremium != null
+      ? `${formatCurrency(resolvedStrike)} ${contractType === 'call' ? '+' : '-'} ${formatCurrency(resolvedPremium)}`
+      : null;
   const meta = [
     { label: 'Expiration', value: resolvedExpiration ? formatExpirationDate(resolvedExpiration) : '—' },
     { label: 'Strike', value: resolvedStrike != null ? `$${resolvedStrike.toFixed(2)}` : '—' },
+    { label: 'Premium', value: resolvedPremium != null ? `$${resolvedPremium.toFixed(2)}` : '—' },
+    { label: 'Breakeven', value: breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : '—' },
     { label: 'Implied Vol', value: resolvedIV != null ? `${(resolvedIV * 100).toFixed(1)}%` : '—' },
     { label: 'Open Interest', value: resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—' },
   ];
@@ -62,7 +92,7 @@ export function GreeksPanel({ contract, leg, label }: Props) {
       <header className="flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Greeks + Risk</p>
-          <p className="text-lg font-semibold text-gray-100">{label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract'}</p>
+          <p className="text-lg font-semibold text-gray-100">{displayName}</p>
         </div>
         {(contract?.type ?? leg?.type) && (
           <span className={`px-3 py-1 text-xs rounded-full border ${
@@ -75,7 +105,7 @@ export function GreeksPanel({ contract, leg, label }: Props) {
         )}
       </header>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
         {meta.map(item => (
           <div key={item.label} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
             <p className="text-xs uppercase tracking-widest text-gray-500">{item.label}</p>
@@ -83,6 +113,24 @@ export function GreeksPanel({ contract, leg, label }: Props) {
           </div>
         ))}
       </div>
+
+      {breakevenPrice != null && resolvedPremium != null && resolvedStrike != null && contractType && (
+        <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-2">
+          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Breakeven Calculator</p>
+          <p className="text-lg font-semibold text-white">
+            Needs {displayName} {contractType === 'call' ? '≥' : '≤'} ${breakevenPrice.toFixed(2)}
+          </p>
+          <p className="text-sm text-gray-400">
+            {contractType === 'call' ? 'Strike + Premium' : 'Strike - Premium'} ({breakevenFormula})
+          </p>
+          {breakevenMove != null && breakevenPercent != null && (
+            <p className="text-xs text-gray-500">
+              Current {label ?? 'price'} {underlyingPrice != null ? `$${underlyingPrice.toFixed(2)}` : '—'} · Move{' '}
+              {breakevenMove >= 0 ? '+' : '-'}${Math.abs(breakevenMove).toFixed(2)} ({Math.abs(breakevenPercent).toFixed(2)}%)
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {metrics.map(metric => (
@@ -266,4 +314,28 @@ function buildRiskProfile(
 function clamp01(value: number) {
   if (Number.isNaN(value)) return 0;
   return Math.min(Math.max(value, 0), 1);
+}
+
+function pickNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function resolveQuoteMid(quote: Record<string, unknown> | undefined | null): number | null {
+  if (!quote) return null;
+  const bid = typeof (quote as any).bid === 'number' ? (quote as any).bid : (quote as any).bidPrice ?? (quote as any).bid_price;
+  const ask = typeof (quote as any).ask === 'number' ? (quote as any).ask : (quote as any).askPrice ?? (quote as any).ask_price;
+  if (typeof (quote as any).mid === 'number') return (quote as any).mid;
+  if (typeof bid === 'number' && typeof ask === 'number') {
+    return (bid + ask) / 2;
+  }
+  return null;
+}
+
+function formatCurrency(value: number) {
+  return `$${value.toFixed(2)}`;
 }
