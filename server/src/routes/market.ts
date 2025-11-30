@@ -12,6 +12,8 @@ import {
   listOptionExpirations,
   normalizeExpirationDate,
   clampChainLimit,
+  listOptionExchanges,
+  listOptionConditions,
 } from '../services/massive';
 import { fetchWithCache } from '../services/marketCache';
 import { getLatestSelection, saveSelection } from '../services/selectionStore';
@@ -335,6 +337,41 @@ router.post('/options/selection', async (req, res, next) => {
     }
     const document = await saveSelection(userId, { ticker, contract, expiration, strike, type, side });
     res.json({ selection: document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/reference/exchanges', async (req, res, next) => {
+  try {
+    logMarketRequest(req);
+    const { data, fetchedAt, fromCache } = await fetchWithCache(
+      'reference-exchanges',
+      {},
+      86_400_000,
+      () => listOptionExchanges({ asset_class: 'options', locale: 'us' }),
+      {}
+    );
+    res.json({ exchanges: data ?? [], fetchedAt, cache: fromCache ? 'hit' : 'miss' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/reference/conditions', async (req, res, next) => {
+  try {
+    logMarketRequest(req);
+    const limit = Number(req.query.limit ?? 200) || 200;
+    const order = typeof req.query.order === 'string' ? req.query.order : 'asc';
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : 'type';
+    const { data, fetchedAt, fromCache } = await fetchWithCache(
+      'reference-conditions',
+      { limit, order, sort },
+      86_400_000,
+      () => listOptionConditions({ asset_class: 'options', limit, order, sort }),
+      {}
+    );
+    res.json({ conditions: data ?? [], fetchedAt, cache: fromCache ? 'hit' : 'miss' });
   } catch (error) {
     next(error);
   }

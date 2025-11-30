@@ -534,6 +534,24 @@ export async function listOptionExpirations(
   };
 }
 
+export async function listOptionExchanges(params: { asset_class?: string; locale?: string } = {}) {
+  const payload = await massiveGet('/v3/reference/exchanges', {
+    asset_class: params.asset_class ?? 'options',
+    locale: params.locale ?? 'us'
+  });
+  return Array.isArray(payload?.results) ? payload.results : payload?.exchanges ?? [];
+}
+
+export async function listOptionConditions(params: { asset_class?: string; limit?: number; order?: string; sort?: string } = {}) {
+  const payload = await massiveGet('/v3/reference/conditions', {
+    asset_class: params.asset_class ?? 'options',
+    limit: params.limit ?? 50,
+    order: params.order ?? 'asc',
+    sort: params.sort ?? 'asset_class'
+  });
+  return Array.isArray(payload?.results) ? payload.results : payload?.conditions ?? [];
+}
+
 async function fetchReferenceContracts(
   params: Record<string, any>,
   options: { maxPages?: number } = {}
