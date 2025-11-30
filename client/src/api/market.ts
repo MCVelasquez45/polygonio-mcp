@@ -3,12 +3,33 @@ import type { AggregateBar, OptionChainData, QuoteSnapshot, TradePrint, Watchlis
 
 type MarketMeta = {
   fetchedAt?: string;
-  cache?: 'hit' | 'miss';
+  cache?: 'hit' | 'miss' | 'fresh';
 };
 
 type AggregatesResponse = MarketMeta & {
   ticker: string;
-  results: AggregateBar[];
+  interval: string;
+  marketClosed: boolean;
+  afterHours: boolean;
+  usingLastSession: boolean;
+  resultGranularity: 'intraday' | 'daily' | 'cache';
+  marketStatus?: {
+    state: 'open' | 'closed' | 'after-hours' | 'pre-market' | 'unknown';
+    asOf: string;
+    nextOpen?: string | null;
+    nextClose?: string | null;
+  };
+  results: {
+    t: string;
+    o: number;
+    h: number;
+    l: number;
+    c: number;
+    v: number;
+    vw: number | null;
+    n: number | null;
+  }[];
+  note?: string;
 };
 
 type TradesResponse = MarketMeta & {

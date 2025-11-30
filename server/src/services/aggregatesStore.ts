@@ -10,6 +10,8 @@ export type StoredAggregateBar = {
   low: number;
   close: number;
   volume: number;
+  vwap?: number | null;
+  transactions?: number | null;
 };
 
 type AggregateBarDocument = StoredAggregateBar & {
@@ -62,6 +64,8 @@ export async function upsertAggregateBars(
           low: bar.low,
           close: bar.close,
           volume: bar.volume,
+          vwap: bar.vwap ?? null,
+          transactions: bar.transactions ?? null,
           source: options.source ?? 'massive',
           updatedAt: new Date()
         }
@@ -90,6 +94,8 @@ export async function getRecentAggregateBars(
     high: doc.high,
     low: doc.low,
     close: doc.close,
-    volume: doc.volume
+    volume: doc.volume,
+    vwap: doc.vwap ?? null,
+    transactions: doc.transactions ?? null
   }));
 }

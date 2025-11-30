@@ -12,7 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { AggregateBar, IndicatorBundle } from '../../types/market';
-import { TrendingDown, TrendingUp } from 'lucide-react';
+import { Lock, TrendingDown, TrendingUp } from 'lucide-react';
 
 type TimeframeOption = {
   label: string;
@@ -28,6 +28,15 @@ type Props = {
   onTimeframeChange: (value: string) => void;
   fallbackPrice?: number | null;
   fallbackChange?: { absolute: number | null; percent: number | null };
+  sessionMeta?: {
+    marketClosed?: boolean;
+    afterHours?: boolean;
+    usingLastSession?: boolean;
+    resultGranularity?: 'intraday' | 'daily' | 'cache';
+    note?: string | null;
+    state?: string;
+    nextOpen?: string | null;
+  } | null;
 };
 
 const TIMEFRAMES: TimeframeOption[] = [
@@ -56,6 +65,7 @@ export function ChartPanel({
   onTimeframeChange,
   fallbackPrice,
   fallbackChange,
+  sessionMeta,
 }: Props) {
   const chartData = useMemo<ChartDatum[]>(() => {
     if (!data.length) return [];
@@ -75,6 +85,9 @@ export function ChartPanel({
   const displayPrice = fallbackPrice ?? currentPrice ?? null;
   const displayChange = fallbackChange?.absolute ?? change ?? null;
   const displayChangePercent = fallbackChange?.percent ?? changePercent ?? null;
+  const isMarketClosed = sessionMeta?.marketClosed ?? false;
+  const usingLastSession = sessionMeta?.usingLastSession ?? false;
+  const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
@@ -94,8 +107,18 @@ export function ChartPanel({
                 {displayChange.toFixed(2)} ({displayChangePercent.toFixed(2)}%)
               </span>
             )}
+            {isMarketClosed && (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-full px-3 py-1">
+                <Lock className="h-3 w-3" /> Frozen
+              </span>
+            )}
           </div>
           <p className="text-xs text-gray-500">Option aggregates pulled directly from Massive</p>
+          {usingLastSession && (
+            <p className="text-[11px] text-amber-200/80 flex items-center gap-1">
+              Last session {resultGranularity === 'daily' ? 'daily' : 'intraday'} candles
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {TIMEFRAMES.map(option => (
@@ -159,6 +182,7 @@ export function ChartPanel({
           </div>
         )}
       </div>
+      {sessionMeta?.note && <p className="text-[11px] text-gray-500">{sessionMeta.note}</p>}
     </section>
   );
 }

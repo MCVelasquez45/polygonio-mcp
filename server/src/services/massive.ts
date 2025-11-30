@@ -296,7 +296,9 @@ export async function getOptionAggregates(
         high: row.h ?? row.high,
         low: row.l ?? row.low,
         close: row.c ?? row.close,
-        volume: row.v ?? row.volume
+        volume: row.v ?? row.volume ?? 0,
+        vwap: row.vw ?? row.vwap ?? null,
+        transactions: row.n ?? row.transactions ?? null
       }))
     : [];
 

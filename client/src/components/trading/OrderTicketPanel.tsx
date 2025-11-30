@@ -19,6 +19,9 @@ type Props = {
   trades: TradePrint[];
   isLoading: boolean;
   label?: string;
+  marketClosed?: boolean;
+  afterHours?: boolean;
+  nextOpen?: string | null;
 };
 
 type TicketLeg = {
@@ -63,7 +66,22 @@ const LEARN_MORE = [
   { topic: 'Spread', explanation: 'Bid vs. ask distance', recommendation: 'Favor spreads tighter than 20‑25% of the price.' }
 ];
 
-export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: Props) {
+function formatCountdown(value?: string | null): string | null {
+  if (!value) return null;
+  const target = Date.parse(value);
+  if (Number.isNaN(target)) return null;
+  const delta = target - Date.now();
+  if (delta <= 0) return new Date(target).toLocaleString();
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return `in ${days}d ${remainingHours}h`;
+}
+
+export function OrderTicketPanel({ contract, quote, trades, isLoading, label, marketClosed, afterHours, nextOpen }: Props) {
   const [orderType, setOrderType] = useState<'market' | 'limit'>('limit');
   const [timeInForce, setTimeInForce] = useState<'day' | 'gtc'>('day');
   const [quantity, setQuantity] = useState(1);
@@ -94,6 +112,12 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: 
       setLegs([]);
     }
   }, [contract?.ticker]);
+
+  useEffect(() => {
+    if (marketClosed && orderType !== 'limit') {
+      setOrderType('limit');
+    }
+  }, [marketClosed, orderType]);
 
   const markPrice = useMemo(() => {
     if (quote?.midpoint) return quote.midpoint;
@@ -213,13 +237,35 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: 
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {(marketClosed || afterHours) && (
+          <div
+            className={`rounded-xl border px-3 py-2 text-xs ${
+              marketClosed
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+                : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+            }`}
+          >
+            <p className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {marketClosed ? 'Market closed — orders queue until open.' : 'After-hours session — liquidity is thin.'}
+            </p>
+            {nextOpen && (
+              <p className="mt-1">
+                Next open {formatCountdown(nextOpen) ?? `on ${new Date(nextOpen).toLocaleString()}`}.
+              </p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm font-semibold">
           <button
             type="button"
             className={`rounded-xl px-3 py-2 border ${
-              orderType === 'market' ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-gray-800 text-gray-400'
-            }`}
-            onClick={() => setOrderType('market')}
+              orderType === 'market'
+                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                : 'border-gray-800 text-gray-400'
+            } ${marketClosed ? 'opacity-40 cursor-not-allowed' : ''}`}
+            onClick={() => !marketClosed && setOrderType('market')}
+            disabled={marketClosed}
           >
             Market
           </button>
@@ -234,6 +280,13 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label }: 
           </button>
         </div>
         {showHelp && <InfoTooltip topic="orderType" />}
+        {(marketClosed || afterHours) && (
+          <p className="text-[11px] text-amber-200">
+            {marketClosed
+              ? 'Market orders are paused until the opening bell.'
+              : 'Limit orders recommended during after-hours to control fills.'}
+          </p>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm font-semibold">
           <button

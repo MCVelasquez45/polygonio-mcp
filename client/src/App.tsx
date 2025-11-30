@@ -73,6 +73,40 @@ type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 const STORAGE_KEY = 'market-copilot.conversations';
 
+type MarketSessionMeta = {
+  marketClosed: boolean;
+  afterHours: boolean;
+  usingLastSession: boolean;
+  resultGranularity: 'intraday' | 'daily' | 'cache';
+  note?: string | null;
+  state?: string;
+  nextOpen?: string | null;
+  nextClose?: string | null;
+  fetchedAt?: string;
+};
+
+function formatRelativeTime(value?: string | null): string | null {
+  if (!value) return null;
+  const target = Date.parse(value);
+  if (Number.isNaN(target)) return null;
+  const deltaMs = target - Date.now();
+  if (deltaMs <= 0) {
+    return new Date(target).toLocaleString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return `in ${days}d ${remainingHours}h`;
+}
+
 function App() {
   const [view, setView] = useState<View>('trading');
   const [ticker, setTicker] = useState('SPY');
@@ -95,7 +129,7 @@ function App() {
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('5/minute');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('1/day');
   const [bars, setBars] = useState<AggregateBar[]>([]);
   const [indicators, setIndicators] = useState<IndicatorBundle>();
   const [chartLoading, setChartLoading] = useState(false);
@@ -117,11 +151,21 @@ function App() {
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const chartCacheRef = useRef<
-    Map<string, { timestamp: number; bars: AggregateBar[]; indicators?: IndicatorBundle }>
+    Map<
+      string,
+      {
+        timestamp: number;
+        bars: AggregateBar[];
+        indicators?: IndicatorBundle;
+        note?: string | null;
+        session?: MarketSessionMeta | null;
+      }
+    >
   >(new Map());
   const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chartRequestIdRef = useRef(0);
   const displayTicker = normalizedTicker;
+  const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
 
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
     if (transcriptsRef.current[sessionId]) return;
@@ -513,6 +557,8 @@ function App() {
     if (cached && Date.now() - cached.timestamp < 15_000) {
       setBars(cached.bars);
       setIndicators(cached.indicators);
+      setMarketError(cached.note ?? null);
+      setMarketSessionMeta(cached.session ?? null);
       return;
     }
 
@@ -537,15 +583,39 @@ function App() {
       const runFetch = async () => {
         const aggregates = await fetchAggregates();
         if (chartRequestIdRef.current !== requestId) return;
-        const bars = aggregates.results ?? [];
+        const bars = (aggregates.results ?? []).map(entry => ({
+          timestamp: Number.isFinite(Date.parse(entry.t)) ? Date.parse(entry.t) : Date.now(),
+          open: entry.o,
+          high: entry.h,
+          low: entry.l,
+          close: entry.c,
+          volume: entry.v
+        }));
         const indicatorBundle = buildIndicatorBundle(symbol, bars);
         setBars(bars);
         setIndicators(indicatorBundle);
+        const nextError =
+          aggregates.note ?? (bars.length === 0 ? `No aggregate data available for ${symbol} (${timeframe}).` : null);
+        const sessionMeta: MarketSessionMeta = {
+          marketClosed: Boolean(aggregates.marketClosed),
+          afterHours: Boolean(aggregates.afterHours),
+          usingLastSession: Boolean(aggregates.usingLastSession),
+          resultGranularity: aggregates.resultGranularity ?? 'intraday',
+          note: nextError,
+          state: aggregates.marketStatus?.state,
+          nextOpen: aggregates.marketStatus?.nextOpen ?? null,
+          nextClose: aggregates.marketStatus?.nextClose ?? null,
+          fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined
+        };
         chartCacheRef.current.set(cacheKey, {
           bars,
           indicators: indicatorBundle,
           timestamp: Date.now(),
+          note: nextError,
+          session: sessionMeta
         });
+        setMarketSessionMeta(sessionMeta);
+        setMarketError(nextError);
       };
 
       const safeRun = async () => {
@@ -593,6 +663,7 @@ function App() {
     const symbol = activeContractSymbol!;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    const shouldPoll = !marketSessionMeta?.marketClosed;
 
     const loadSnapshots = async () => {
       try {
@@ -625,13 +696,15 @@ function App() {
     };
 
     loadSnapshots();
-    timer = setInterval(loadSnapshots, 60_000);
+    if (shouldPoll) {
+      timer = setInterval(loadSnapshots, 60_000);
+    }
 
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [activeContractSymbol]);
+  }, [activeContractSymbol, marketSessionMeta?.marketClosed]);
 
   function startNewConversation() {
     const convo = createConversation();
@@ -748,6 +821,29 @@ function App() {
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
+        {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
+          <div
+            className={`rounded-2xl border px-4 py-3 ${
+              marketSessionMeta.marketClosed
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+                : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+            }`}
+          >
+            <p className="text-sm font-semibold flex items-center gap-2">
+              {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
+              {marketSessionMeta.usingLastSession && (
+                <span className="text-[10px] uppercase tracking-[0.3em] opacity-80">Last Session</span>
+              )}
+            </p>
+            <p className="text-xs mt-1">
+              {marketSessionMeta.marketClosed
+                ? 'Data reflects the last completed trading session.'
+                : 'Prices are updating slower during the extended session.'}{' '}
+              {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
+            </p>
+            {marketSessionMeta.note && <p className="text-[11px] mt-1 opacity-80">{marketSessionMeta.note}</p>}
+          </div>
+        )}
         <ChartPanel
           ticker={displayTicker}
           timeframe={timeframe}
@@ -765,6 +861,7 @@ function App() {
               ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
               : undefined
           }
+          sessionMeta={marketSessionMeta}
         />
         <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-2">
           <div className="flex items-center justify-between">
@@ -793,9 +890,17 @@ function App() {
           trades={trades}
           isLoading={false}
           label={displayTicker}
+          marketClosed={marketSessionMeta?.marketClosed}
+          afterHours={marketSessionMeta?.afterHours}
+          nextOpen={marketSessionMeta?.nextOpen ?? null}
         />
       </div>
       <div className="lg:col-span-3 min-w-0">
+        {marketSessionMeta?.marketClosed && (
+          <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 text-amber-100 px-4 py-2 text-xs">
+            Options quotes are paused — spreads reflect the last available snapshot.
+          </div>
+        )}
         <OptionsChainPanel
           ticker={displayTicker}
           groups={chainExpirations}

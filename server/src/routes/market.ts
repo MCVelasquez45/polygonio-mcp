@@ -63,9 +63,16 @@ router.get('/aggs', async (req, res, next) => {
     });
     res.json({
       ticker: aggregates.ticker,
+      interval: aggregates.interval,
+      marketClosed: aggregates.marketClosed,
+      afterHours: aggregates.afterHours,
+      usingLastSession: aggregates.usingLastSession,
+      resultGranularity: aggregates.resultGranularity,
+      marketStatus: aggregates.marketStatus,
       results: aggregates.results,
       fetchedAt: aggregates.fetchedAt,
-      cache: aggregates.fromCache ? 'hit' : 'miss'
+      cache: aggregates.cache,
+      note: aggregates.note
     });
   } catch (error) {
     next(error);
