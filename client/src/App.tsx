@@ -826,6 +826,15 @@ function App() {
     chainUnderlyingPrice ??
     (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying' ? underlyingSnapshot.price ?? null : null);
 
+  const resolvedUnderlyingPrice = useMemo(() => {
+    if (chainUnderlyingPrice != null) return chainUnderlyingPrice;
+    if (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying') {
+      return typeof underlyingSnapshot.price === 'number' ? underlyingSnapshot.price : null;
+    }
+    const latestBar = bars.at(-1);
+    return latestBar?.close ?? null;
+  }, [chainUnderlyingPrice, underlyingSnapshot, bars]);
+
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
@@ -912,7 +921,7 @@ function App() {
         <OptionsChainPanel
           ticker={displayTicker}
           groups={chainExpirations}
-          underlyingPrice={chainUnderlyingPrice}
+          underlyingPrice={resolvedUnderlyingPrice}
           loading={chainLoading}
           error={chainError}
           availableExpirations={mergedExpirations}
