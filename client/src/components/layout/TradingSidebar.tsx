@@ -218,6 +218,27 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
   }, [watchlistSymbolsKey]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ symbol?: string }>).detail;
+      const normalized = detail?.symbol?.trim().toUpperCase();
+      if (!normalized) return;
+      setWatchlist(prev => {
+        if (prev.some(entry => entry.symbol === normalized)) {
+          setFeedback(`${normalized} is already on the watchlist.`);
+          return prev;
+        }
+        setFeedback(`${normalized} added to the watchlist.`);
+        return [...prev, hydrateWatchlistEntry(normalized)];
+      });
+    };
+    window.addEventListener('watchlist:add', handler as EventListener);
+    return () => {
+      window.removeEventListener('watchlist:add', handler as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!watchlist.length) return;
     if (!selectedTicker && watchlist[0]) {
       const firstSymbol = watchlist[0].symbol;

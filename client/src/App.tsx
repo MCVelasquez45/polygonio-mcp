@@ -167,6 +167,12 @@ function App() {
   const displayTicker = normalizedTicker;
   const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
 
+  const addTickerToWatchlist = useCallback((symbol: string) => {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('watchlist:add', { detail: { symbol: normalized } }));
+  }, []);
+
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
     if (transcriptsRef.current[sessionId]) return;
     try {
@@ -335,11 +341,13 @@ function App() {
             setChainUnderlyingPrice(response?.underlyingPrice ?? null);
           } else {
             setChainExpirations(groups);
+            const snapshotTicker =
+              underlyingSnapshotRef.current && underlyingSnapshotRef.current.entryType === 'underlying'
+                ? underlyingSnapshotRef.current.ticker?.toUpperCase()
+                : null;
             const fallbackUnderlying =
               response?.underlyingPrice ??
-              (underlyingSnapshotRef.current?.entryType === 'underlying'
-                ? underlyingSnapshotRef.current.price ?? null
-                : null);
+              (snapshotTicker === normalizedTicker ? underlyingSnapshotRef.current?.price ?? null : null);
             setChainUnderlyingPrice(fallbackUnderlying);
           }
         }
@@ -935,6 +943,7 @@ function App() {
             setDesiredContract(null);
           }
         }}
+        onAddToWatchlist={addTickerToWatchlist}
         currentView={view}
         onViewChange={setView}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}

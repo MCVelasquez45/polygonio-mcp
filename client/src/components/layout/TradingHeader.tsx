@@ -1,11 +1,12 @@
-import { useState, type ReactNode } from 'react';
-import { Briefcase, Menu, MessageSquare, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Briefcase, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
 
 type View = 'trading' | 'scanner' | 'portfolio';
 
 type Props = {
   selectedTicker: string;
   onTickerSubmit: (ticker: string) => void;
+  onAddToWatchlist: (ticker: string) => void;
   currentView: View;
   onViewChange: (view: View) => void;
   onToggleSidebar: () => void;
@@ -22,6 +23,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
 export function TradingHeader({
   selectedTicker,
   onTickerSubmit,
+  onAddToWatchlist,
   currentView,
   onViewChange,
   onToggleSidebar,
@@ -30,11 +32,21 @@ export function TradingHeader({
 }: Props) {
   const [tickerInput, setTickerInput] = useState(selectedTicker);
 
+  useEffect(() => {
+    setTickerInput(selectedTicker);
+  }, [selectedTicker]);
+
   const handleSubmit = () => {
     const normalized = tickerInput.trim().toUpperCase();
     if (!normalized) return;
     if (normalized === selectedTicker) return;
     onTickerSubmit(normalized);
+  };
+
+  const handleAddTicker = () => {
+    const normalized = tickerInput.trim().toUpperCase() || selectedTicker;
+    if (!normalized) return;
+    onAddToWatchlist(normalized);
   };
 
   return (
@@ -88,6 +100,13 @@ export function TradingHeader({
           />
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleAddTicker}
+            className="inline-flex items-center gap-2 h-10 px-3 rounded-xl border border-gray-800 text-gray-200 text-sm font-semibold hover:border-emerald-500/60 hover:text-white"
+          >
+            <Plus className="h-4 w-4" /> Watchlist
+          </button>
           <button
             type="button"
             onClick={handleSubmit}
