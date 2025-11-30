@@ -25,9 +25,13 @@ import type {
 import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 const TIMEFRAME_MAP = {
-  '1/day': { multiplier: 1, timespan: 'day' as const },
-  '1/hour': { multiplier: 1, timespan: 'hour' as const },
-  '5/minute': { multiplier: 5, timespan: 'minute' as const },
+  '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 240 },
+  '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 240 },
+  '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 240 },
+  '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 240 },
+  '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 240 },
+  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 180 },
+  '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 },
 };
 
 const SMA_WINDOW = 50;
@@ -91,7 +95,7 @@ function App() {
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('1/day');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('5/minute');
   const [bars, setBars] = useState<AggregateBar[]>([]);
   const [indicators, setIndicators] = useState<IndicatorBundle>();
   const [chartLoading, setChartLoading] = useState(false);
@@ -518,14 +522,14 @@ function App() {
     const scheduleFetch = () => {
       chartRequestIdRef.current += 1;
       const requestId = chartRequestIdRef.current;
-      const config = TIMEFRAME_MAP[timeframe];
+      const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
 
       const fetchAggregates = async () => {
         const response = await marketApi.getAggregates({
           ticker: symbol,
           multiplier: config.multiplier,
           timespan: config.timespan,
-          window: 180,
+          window: config.window ?? 180,
         });
         return response;
       };

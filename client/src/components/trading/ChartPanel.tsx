@@ -31,9 +31,13 @@ type Props = {
 };
 
 const TIMEFRAMES: TimeframeOption[] = [
-  { label: '1D', value: '1/day' },
-  { label: '1H', value: '1/hour' },
+  { label: '1M', value: '1/minute' },
+  { label: '3M', value: '3/minute' },
   { label: '5M', value: '5/minute' },
+  { label: '15M', value: '15/minute' },
+  { label: '30M', value: '30/minute' },
+  { label: '1H', value: '1/hour' },
+  { label: '1D', value: '1/day' },
 ];
 
 type ChartDatum = {

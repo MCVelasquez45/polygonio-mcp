@@ -3,7 +3,6 @@ import {
   getMassiveQuotes,
   getMassiveIndicators,
   getMassiveTrades,
-  getOptionAggregates,
   getMassiveOptionContract,
   listMassiveOptionContracts,
   getMassiveOptionsChain,
@@ -18,6 +17,7 @@ import {
 import { fetchWithCache } from '../services/marketCache';
 import { getLatestSelection, saveSelection } from '../services/selectionStore';
 import { getCachedChainSnapshot, saveChainSnapshot } from '../services/optionsChainStore';
+import { resolveAggregates } from '../services/aggregatesService';
 
 const router = Router();
 const STABLE_CHAIN_MAX_AGE_MS = 10 * 60 * 1000;
@@ -53,30 +53,20 @@ router.get('/aggs', async (req, res, next) => {
     const multiplier = Number(req.query.multiplier ?? 1) || 1;
     const timespan = String(req.query.timespan ?? 'day');
     const window = Number(req.query.window ?? 120) || 120;
-    const params = {
+    const aggregates = await resolveAggregates({
       ticker,
       multiplier,
-      timespan,
+      timespan: timespan === 'minute' || timespan === 'hour' || timespan === 'day' ? (timespan as 'minute' | 'hour' | 'day') : 'day',
       window,
-      from: req.query.from ?? null,
-      to: req.query.to ?? null
-    };
-    const { data, fetchedAt, fromCache } = await fetchWithCache(
-      'aggregates',
-      params,
-      60_000,
-      () =>
-        getOptionAggregates(
-          ticker,
-          multiplier,
-          timespan,
-          window,
-          req.query.from as string | undefined,
-          req.query.to as string | undefined
-        ),
-      { ticker }
-    );
-    res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
+      from: typeof req.query.from === 'string' ? req.query.from : null,
+      to: typeof req.query.to === 'string' ? req.query.to : null
+    });
+    res.json({
+      ticker: aggregates.ticker,
+      results: aggregates.results,
+      fetchedAt: aggregates.fetchedAt,
+      cache: aggregates.fromCache ? 'hit' : 'miss'
+    });
   } catch (error) {
     next(error);
   }
