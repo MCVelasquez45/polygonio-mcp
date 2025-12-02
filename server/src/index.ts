@@ -8,6 +8,7 @@ import chatRouter from './routes/chat';
 import conversationsRouter from './routes/conversations';
 import marketRouter from './routes/market';
 import brokerRouter from './routes/broker';
+import analysisRouter from './routes/analysis';
 import { initMongo } from './services/mongo';
 import { ensureMarketCacheIndexes } from './services/marketCache';
 
@@ -30,6 +31,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/broker', brokerRouter);
+app.use('/api/analysis', analysisRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });

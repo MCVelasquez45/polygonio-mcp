@@ -86,9 +86,10 @@ type Props = {
   selectedTicker: string;
   onSelectTicker: (ticker: string, snapshot?: WatchlistSnapshot | null) => void;
   onSnapshotUpdate?: (ticker: string, snapshot: WatchlistSnapshot | null) => void;
+  onWatchlistChange?: (symbols: string[]) => void;
 };
 
-export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdate }: Props) {
+export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdate, onWatchlistChange }: Props) {
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
   const [tickerInput, setTickerInput] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -216,6 +217,10 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
       clearInterval(interval);
     };
   }, [watchlistSymbolsKey]);
+
+  useEffect(() => {
+    onWatchlistChange?.(watchlistSymbols);
+  }, [watchlistSymbolsKey, watchlistSymbols, onWatchlistChange]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

@@ -8,7 +8,7 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
-import { chatApi, marketApi } from './api';
+import { analysisApi, chatApi, marketApi } from './api';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -22,6 +22,7 @@ import type {
   TradePrint,
   WatchlistSnapshot,
 } from './types/market';
+import type { WatchlistReport } from './api/analysis';
 import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 const TIMEFRAME_MAP = {
@@ -166,12 +167,50 @@ function App() {
   const chartRequestIdRef = useRef(0);
   const displayTicker = normalizedTicker;
   const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
+  const [scannerReports, setScannerReports] = useState<WatchlistReport[]>([]);
+  const [scannerLoading, setScannerLoading] = useState(false);
 
   const addTickerToWatchlist = useCallback((symbol: string) => {
     const normalized = symbol.trim().toUpperCase();
     if (!normalized || typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent('watchlist:add', { detail: { symbol: normalized } }));
   }, []);
+
+  const handleWatchlistChange = useCallback((symbols: string[]) => {
+    setWatchlistSymbols(symbols);
+  }, []);
+
+  const watchlistSignature = watchlistSymbols.join(',');
+
+  useEffect(() => {
+    if (!watchlistSignature) {
+      setScannerReports([]);
+      setScannerLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setScannerLoading(true);
+    analysisApi
+      .getWatchlistReports(watchlistSymbols)
+      .then(response => {
+        if (cancelled) return;
+        setScannerReports(response.reports ?? []);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.warn('Failed to load watchlist reports', error);
+        setScannerReports([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setScannerLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [watchlistSignature, watchlistSymbols]);
 
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
     if (transcriptsRef.current[sessionId]) return;
@@ -788,6 +827,7 @@ function App() {
         setUnderlyingSnapshot(snapshot ?? null);
         underlyingSnapshotRef.current = snapshot ?? null;
       }}
+      onWatchlistChange={handleWatchlistChange}
     />
   );
 
@@ -985,6 +1025,8 @@ function App() {
             {view === 'scanner' && (
               <div className="pb-24">
                 <OptionsScanner
+                  reports={scannerReports}
+                  isLoading={scannerLoading}
                   onTickerSelect={value => {
                     setTicker(value);
                     setView('trading');
