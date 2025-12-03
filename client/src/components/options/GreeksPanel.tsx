@@ -29,6 +29,14 @@ type RiskSlice = {
 
 const riskColors = ['#10b981', '#f97316', '#facc15', '#38bdf8', '#a855f7'];
 
+const EMPTY_GREEKS: Record<GreekKey, number | null> = {
+  delta: null,
+  gamma: null,
+  theta: null,
+  vega: null,
+  rho: null,
+};
+
 export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
@@ -48,10 +56,13 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
       : null;
   const resolvedVolume =
     extractDayNumber(contract?.day, 'volume') ?? (typeof leg?.volume === 'number' ? leg.volume : null);
-  const resolvedGreeks = metrics.reduce<Record<GreekKey, number | null>>((acc, metric) => {
-    acc[metric.key] = resolveGreekValue(contract, leg, metric.key);
-    return acc;
-  }, {});
+  const resolvedGreeks = metrics.reduce<Record<GreekKey, number | null>>(
+    (acc, metric) => {
+      acc[metric.key] = resolveGreekValue(contract, leg, metric.key);
+      return acc;
+    },
+    { ...EMPTY_GREEKS }
+  );
   const resolvedPremium = pickNumber(
     leg?.mark,
     leg?.mid,
@@ -250,7 +261,11 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
   );
 }
 
-function resolveGreekValue(contract?: OptionContractDetail | null, leg?: OptionLeg | null, key: GreekKey) {
+function resolveGreekValue(
+  contract: OptionContractDetail | null | undefined,
+  leg: OptionLeg | null | undefined,
+  key: GreekKey
+) {
   if (contract?.greeks && typeof (contract.greeks as any)[key] === 'number') {
     return Number((contract.greeks as any)[key]);
   }
