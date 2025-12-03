@@ -164,6 +164,7 @@ function App() {
     >
   >(new Map());
   const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chartRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartRequestIdRef = useRef(0);
   const displayTicker = normalizedTicker;
   const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
@@ -599,6 +600,10 @@ function App() {
       clearTimeout(chartFetchTimeoutRef.current);
       chartFetchTimeoutRef.current = null;
     }
+    if (chartRefreshIntervalRef.current) {
+      clearInterval(chartRefreshIntervalRef.current);
+      chartRefreshIntervalRef.current = null;
+    }
     const cacheKey = `${symbol}-${timeframe}`;
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
@@ -612,7 +617,7 @@ function App() {
     setChartLoading(true);
     setMarketError(null);
 
-    const scheduleFetch = () => {
+    const triggerFetch = () => {
       chartRequestIdRef.current += 1;
       const requestId = chartRequestIdRef.current;
       const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
@@ -691,12 +696,24 @@ function App() {
         });
     };
 
-    chartFetchTimeoutRef.current = setTimeout(scheduleFetch, 200);
+    chartFetchTimeoutRef.current = setTimeout(triggerFetch, 200);
+    const refreshConfig = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
+    const refreshMs =
+      refreshConfig.timespan === 'minute'
+        ? Math.max(30_000, refreshConfig.multiplier * 60_000)
+        : refreshConfig.timespan === 'hour'
+        ? refreshConfig.multiplier * 3_600_000
+        : 300_000;
+    chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
 
     return () => {
       if (chartFetchTimeoutRef.current) {
         clearTimeout(chartFetchTimeoutRef.current);
         chartFetchTimeoutRef.current = null;
+      }
+      if (chartRefreshIntervalRef.current) {
+        clearInterval(chartRefreshIntervalRef.current);
+        chartRefreshIntervalRef.current = null;
       }
     };
   }, [normalizedTicker, timeframe]);

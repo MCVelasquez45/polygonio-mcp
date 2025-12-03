@@ -1,0 +1,63 @@
+# API Reference
+
+This repo exposes a small REST surface so the dashboard, FastAPI brain, and background jobs can stay in sync. Below is the current contract for every HTTP entry point that this build depends on.
+
+> Base URL: `http://localhost:4000`
+
+## Market Data
+
+### `GET /api/market/watchlist`
+Fetches live watchlist snapshots (underlyings + contracts). Pass `tickers=SPY,AAPL` to scope the list. Each entry surface fields for price, change, IV, open interest, and the reference contract ticker which the sidebar uses for auto-highlighting.
+
+### `GET /api/market/watchlist?tickers=<symbols>`
+Explicit variant used by the trading sidebar when the user toggles symbols. Identical schema to the default route.
+
+### `GET /api/market/aggs`
+Parameters: `ticker`, `multiplier`, `timespan`, `window`. Always returns normalized candles with ISO timestamps plus `sessionMeta` fields (`marketClosed`, `usingLastSession`, etc.). The backend only pulls 1‑minute Massive bars and aggregates 3/5/15/30 locally, so keep the interval choices aligned with the UI options: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `1d`.
+
+### `GET /api/market/options/chain/:ticker`
+Resolves the option chain grouped by expiration. Response embeds strikes, legs (calls/puts), and contract metadata (volume, OI, greeks, IV). Used by the chain panel and the entry checklist.
+
+### `GET /api/market/options/expirations/:ticker`
+Returns available expiration dates for a ticker so the selectors stay in sync with Massive constraints.
+
+### `POST /api/market/options/selection`
+Body: `{ ticker, contract, expiration, strike, type, userId }`. Persists the active contract for the default user session so the backend can hydrate trades/quotes on refresh.
+
+### `GET /api/market/options/selection`
+Returns the currently selected contract payload (used for reloads / hydration).
+
+### `GET /api/market/quotes/:contract`
+Streams the latest NBBO snapshot (`bid`, `ask`, `mid`, `spread`, `timestamp`).
+
+### `GET /api/market/trades/:contract`
+Recent prints for the active option, capped at 100.
+
+### `GET /api/market/watchlist?tickers=<list>`
+Same contract as above but used by the watchlist scanner to hydrate multiple names at once.
+
+## Analysis & AI
+
+### `POST /api/analysis/watchlist`
+Body: `{ symbols: string[] }`. Compiles context (snapshot + cached bars) and calls the FastAPI agent for scanner notes. Falls back to `FALLBACK_ROWS` when FastAPI is offline.
+
+### `GET /api/conversations`
+Lists AI desk conversations (title, last updated).
+
+### `GET /api/conversations/:id`
+Fetches a single conversation transcript.
+
+### `POST /api/conversations`
+Body: `{ title }` to seed a chat thread.
+
+### `POST /api/conversations/:id/messages`
+Body: `{ role, content }`. Proxies to the FastAPI/Codex stack and streams assistant responses back to the UI.
+
+## Background Worker (optional)
+
+- `server/src/services/aggregatesWorker.ts` runs when `AGG_WORKER_ENABLED=true`. It pre-warms 1m caches for heavy names and respects Massive rate limits.
+
+## Notes
+
+- All option/aggregate data flows through Mongo caches so that Massive endpoints are shielded from burst traffic.
+- Every response includes `fetchedAt` and `cache` metadata so the client can decide whether to show the “Market Closed” banner or frozen state.

@@ -91,6 +91,39 @@ function normalizeBars(bars: StoredAggregateBar[]): NormalizedAggregateBar[] {
     }));
 }
 
+function aggregateMinuteBars(bars: StoredAggregateBar[], targetMultiplier: number): StoredAggregateBar[] {
+  if (targetMultiplier <= 1 || !bars.length) return bars;
+  const bucketMs = targetMultiplier * TIMESPAN_MS.minute;
+  const sorted = bars.slice().sort((a, b) => a.timestamp - b.timestamp);
+  const buckets = new Map<number, StoredAggregateBar>();
+  for (const bar of sorted) {
+    const bucketStart = Math.floor(bar.timestamp / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketStart);
+    if (!existing) {
+      buckets.set(bucketStart, {
+        timestamp: bucketStart,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        vwap: bar.vwap ?? null,
+        transactions: bar.transactions ?? null
+      });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
+      existing.close = bar.close;
+      existing.volume = (existing.volume ?? 0) + (bar.volume ?? 0);
+      if (bar.vwap != null) existing.vwap = bar.vwap;
+      if (bar.transactions != null) {
+        existing.transactions = (existing.transactions ?? 0) + (bar.transactions ?? 0);
+      }
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
+
 function isWeekend(date: Date): boolean {
   const day = date.getUTCDay();
   return day === 0 || day === 6;
@@ -219,19 +252,28 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
 
   const status = await getMarketStatusSnapshot();
 
+  const needsMinuteAggregation = timespan === 'minute' && multiplier > 1;
+  const baseMultiplier = needsMinuteAggregation ? 1 : multiplier;
+  const baseTimespan: SupportedTimespan = needsMinuteAggregation ? 'minute' : timespan;
+  const baseWindow = needsMinuteAggregation ? window * multiplier : window;
+
   if (params.from || params.to) {
     const remote = await getOptionAggregates(
       ticker,
-      multiplier,
-      timespan,
-      window,
+      needsMinuteAggregation ? 1 : multiplier,
+      baseTimespan,
+      needsMinuteAggregation ? window * multiplier : window,
       params.from ?? undefined,
       params.to ?? undefined
     );
     if (remote.results.length) {
-      await upsertAggregateBars(ticker, multiplier, timespan, remote.results, { source: 'massive' });
+      await upsertAggregateBars(ticker, needsMinuteAggregation ? 1 : multiplier, baseTimespan, remote.results, {
+        source: 'massive'
+      });
     }
-    const normalized = normalizeBars(remote.results);
+    const finalBars = needsMinuteAggregation ? aggregateMinuteBars(remote.results, multiplier) : remote.results;
+    const trimmed = finalBars.length > window ? finalBars.slice(finalBars.length - window) : finalBars;
+    const normalized = normalizeBars(trimmed);
     if (!normalized.length) {
       throw Object.assign(new Error('Aggregates unavailable for requested range'), { status: 404 });
     }
@@ -249,10 +291,10 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
     };
   }
 
-  const durationMs = TIMESPAN_MS[timespan] * multiplier * window;
+  const durationMs = TIMESPAN_MS[baseTimespan] * baseMultiplier * baseWindow;
   const [cachedBars, sessionPlan] = await Promise.all([
-    getRecentAggregateBars(ticker, multiplier, timespan, window),
-    Promise.resolve(buildSessionPlan({ status, durationMs, timespan }))
+    getRecentAggregateBars(ticker, baseMultiplier, baseTimespan, baseWindow),
+    Promise.resolve(buildSessionPlan({ status, durationMs, timespan: baseTimespan }))
   ]);
 
   let selectedBars: StoredAggregateBar[] = [];
@@ -263,7 +305,13 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
 
   for (const attempt of sessionPlan.attempts) {
     try {
-      const remoteBars = await fetchRemoteBars({ ticker, multiplier, timespan, window, attempt });
+      const remoteBars = await fetchRemoteBars({
+        ticker,
+        multiplier: baseMultiplier,
+        timespan: baseTimespan,
+        window: baseWindow,
+        attempt
+      });
       if (remoteBars.length) {
         selectedBars = remoteBars;
         usingLastSession = attempt.usingLastSession;
@@ -300,7 +348,11 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
     throw Object.assign(new Error('Aggregates unavailable'), { status: 503 });
   }
 
-  const normalized = normalizeBars(selectedBars);
+  let finalBars = needsMinuteAggregation ? aggregateMinuteBars(selectedBars, multiplier) : selectedBars;
+  if (finalBars.length > window) {
+    finalBars = finalBars.slice(finalBars.length - window);
+  }
+  const normalized = normalizeBars(finalBars);
 
   return {
     ticker,

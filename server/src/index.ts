@@ -11,6 +11,7 @@ import brokerRouter from './routes/broker';
 import analysisRouter from './routes/analysis';
 import { initMongo } from './services/mongo';
 import { ensureMarketCacheIndexes } from './services/marketCache';
+import { startAggregatesWorker } from './services/aggregatesWorker';
 
 const app = express();
 app.use(cors());
@@ -61,6 +62,7 @@ async function start() {
   try {
     await initMongo(mongoUri);
     await ensureMarketCacheIndexes();
+    startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);
     process.exit(1);

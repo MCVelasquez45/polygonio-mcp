@@ -10,7 +10,7 @@ const metrics = [
   { key: 'rho', label: 'Rho' },
 ] as const;
 
-type GreekKey = typeof metrics[number]['key'];
+type GreekKey = (typeof metrics)[number]['key'];
 
 type Props = {
   contract?: OptionContractDetail | null;
@@ -46,7 +46,8 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
       : typeof leg?.openInterest === 'number'
       ? leg.openInterest
       : null;
-  const resolvedVolume = extractDayNumber(contract?.day, 'volume') ?? (typeof leg?.volume === 'number' ? leg.volume : null);
+  const resolvedVolume =
+    extractDayNumber(contract?.day, 'volume') ?? (typeof leg?.volume === 'number' ? leg.volume : null);
   const resolvedGreeks = metrics.reduce<Record<GreekKey, number | null>>((acc, metric) => {
     acc[metric.key] = resolveGreekValue(contract, leg, metric.key);
     return acc;
@@ -84,8 +85,25 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
     { label: 'Implied Vol', value: resolvedIV != null ? `${(resolvedIV * 100).toFixed(1)}%` : '—' },
     { label: 'Open Interest', value: resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—' },
   ];
-  const riskProfile = buildRiskProfile(resolvedGreeks, { iv: resolvedIV, openInterest: resolvedOpenInterest, volume: resolvedVolume });
+  const riskProfile = buildRiskProfile(resolvedGreeks, {
+    iv: resolvedIV,
+    openInterest: resolvedOpenInterest,
+    volume: resolvedVolume,
+  });
   const totalRiskValue = riskProfile.slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
+  const spread = resolveSpread(leg, contract);
+  const itmProbability = typeof resolvedGreeks.delta === 'number' ? Math.abs(resolvedGreeks.delta) * 100 : null;
+  const checklistEntries = buildEntryChecklist({
+    strike: resolvedStrike,
+    premium: resolvedPremium,
+    breakeven: breakevenPrice,
+    underlyingPrice,
+    delta: resolvedGreeks.delta,
+    iv: resolvedIV,
+    theta: resolvedGreeks.theta,
+    openInterest: resolvedOpenInterest,
+    spread,
+  });
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
@@ -95,11 +113,13 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
           <p className="text-lg font-semibold text-gray-100">{displayName}</p>
         </div>
         {(contract?.type ?? leg?.type) && (
-          <span className={`px-3 py-1 text-xs rounded-full border ${
-            (contract?.type ?? leg?.type) === 'call'
-              ? 'border-emerald-500/40 text-emerald-300'
-              : 'border-red-500/40 text-red-300'
-          }`}>
+          <span
+            className={`px-3 py-1 text-xs rounded-full border ${
+              (contract?.type ?? leg?.type) === 'call'
+                ? 'border-emerald-500/40 text-emerald-300'
+                : 'border-red-500/40 text-red-300'
+            }`}
+          >
             {(contract?.type ?? leg?.type)?.toUpperCase()}
           </span>
         )}
@@ -143,6 +163,22 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
         ))}
       </div>
 
+      <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
+        <div className="space-y-3">
+          {checklistEntries.map(entry => (
+            <div
+              key={entry.key}
+              className={`rounded-xl border px-3 py-2 text-sm ${toneToBorder(entry.tone)} ${toneToBackground(entry.tone)}`}
+            >
+              <p className="font-semibold text-white">{entry.label}</p>
+              <p className="text-gray-200">{entry.primary}</p>
+              <p className="text-xs text-gray-400 mt-1">{entry.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div>
@@ -152,6 +188,13 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
             </p>
             <p className="text-xs text-gray-400 max-w-xl">{riskProfile.description}</p>
           </div>
+          {itmProbability != null && (
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-emerald-200">ITM odds</p>
+              <p className="text-lg font-semibold text-emerald-200">{itmProbability.toFixed(0)}%</p>
+              <p className="text-[11px] text-emerald-100/80">Delta-based chance this contract expires in the money.</p>
+            </div>
+          )}
         </div>
         {riskProfile.slices.length ? (
           <div className="flex flex-col lg:flex-row gap-4">
@@ -248,59 +291,57 @@ function buildRiskProfile(
       label: 'Directional',
       value: directional,
       color: riskColors[0],
-      description: 'Delta exposure vs. underlying trend.',
+      description: 'Higher = trade behaves like stock (delta heavy).',
     },
     {
       id: 'convexity',
       label: 'Convexity',
       value: convexity,
       color: riskColors[1],
-      description: 'Gamma swings if the underlying gaps.',
+      description: 'Measures how jumpy the contract is on gaps (gamma).',
     },
     {
       id: 'decay',
       label: 'Time Decay',
       value: decay,
       color: riskColors[2],
-      description: 'Daily theta bleed against the position.',
+      description: 'Daily theta bleed pressure.',
     },
     {
       id: 'volatility',
       label: 'Volatility',
       value: volatility,
       color: riskColors[3],
-      description: 'Sensitivity to implied volatility shocks.',
+      description: 'How much IV swings drive P/L.',
     },
     {
       id: 'liquidity',
       label: 'Liquidity',
       value: liquidity,
       color: riskColors[4],
-      description: 'Depth/exit quality from open interest + volume.',
+      description: 'Lower scores mean better depth + tighter spreads.',
     },
   ].filter(slice => slice.value > 0.01);
 
   if (!slices.length) {
-    return { slices: [], score: null, label: 'No Data', description: 'Awaiting Greeks, IV, or volume before scoring risk.' };
+    return { slices: [], score: null, label: 'No Data', description: 'Waiting for Greeks or volume before scoring risk.' };
   }
 
-  const score = clamp01(
-    directional * 0.3 + convexity * 0.15 + decay * 0.2 + volatility * 0.2 + liquidity * 0.15
-  );
+  const score = clamp01(directional * 0.3 + convexity * 0.15 + decay * 0.2 + volatility * 0.2 + liquidity * 0.15);
   const classification =
     score < 0.35
       ? {
           label: 'Defensive',
-          description: 'Premium profile skews low risk with manageable Greeks and solid depth.',
+          description: 'Low stress: Greeks and liquidity are balanced.',
         }
       : score < 0.65
       ? {
           label: 'Balanced',
-          description: 'Risk is diversified across delta, decay, and liquidity—monitor IV swings.',
+          description: 'Risk is spread out—keep an eye on IV swings.',
         }
       : {
           label: 'Aggressive',
-          description: 'Elevated directional/volatility risk; size accordingly or hedge.',
+          description: 'Elevated directional/IV risk. Size smaller or hedge.',
         };
 
   return {
@@ -316,6 +357,170 @@ function clamp01(value: number) {
   return Math.min(Math.max(value, 0), 1);
 }
 
+type ChecklistEntry = {
+  key: string;
+  label: string;
+  primary: string;
+  detail: string;
+  tone: 'good' | 'warn' | 'alert' | 'neutral';
+};
+
+function buildEntryChecklist(args: {
+  strike: number | null;
+  premium: number | null;
+  breakeven: number | null;
+  underlyingPrice: number | null | undefined;
+  delta: number | null;
+  iv: number | null;
+  theta: number | null;
+  openInterest: number | null;
+  spread: number | null;
+}): ChecklistEntry[] {
+  const entries: ChecklistEntry[] = [];
+  const { breakeven, underlyingPrice, delta, iv, theta, openInterest, spread } = args;
+  if (breakeven != null && typeof underlyingPrice === 'number') {
+    const diff = breakeven - underlyingPrice;
+    const moveNeeded = diff > 0 ? `$${Math.abs(diff).toFixed(2)} higher` : `$${Math.abs(diff).toFixed(2)} cushion`;
+    entries.push({
+      key: 'breakeven',
+      label: 'Break-even vs. Spot',
+      primary:
+        diff > 0
+          ? `Needs ${moveNeeded} to clear $${breakeven.toFixed(2)}`
+          : `Already beyond break-even by ${moveNeeded}`,
+      detail:
+        diff > 0
+          ? 'Only enter if price is accelerating toward this level—momentum + volume confirm follow-through.'
+          : 'When price is above break-even, focus on trailing risk and locking gains.',
+      tone: diff > 0 ? 'warn' : 'good',
+    });
+  } else {
+    entries.push({
+      key: 'breakeven',
+      label: 'Break-even vs. Spot',
+      primary: 'Need underlying + premium data to compare.',
+      detail: 'Select an option with a live underlying snapshot so we can gauge distance to break-even.',
+      tone: 'neutral',
+    });
+  }
+
+  if (typeof delta === 'number') {
+    const probability = Math.abs(delta) * 100;
+    entries.push({
+      key: 'delta',
+      label: 'Contract Delta',
+      primary: `Behaves like ${delta.toFixed(2)} shares (~${probability.toFixed(0)}% ITM odds).`,
+      detail:
+        probability >= 50
+          ? 'This is “stock-like” exposure—expect responsive P/L. Desk rule: stay above 0.50 for intraday scalps.'
+          : 'Below 0.50 delta trades slower and needs more time. Size smaller or pick a closer strike.',
+      tone: probability >= 50 ? 'good' : 'warn',
+    });
+  } else {
+    entries.push({
+      key: 'delta',
+      label: 'Contract Delta',
+      primary: 'Delta unavailable.',
+      detail: 'Cannot estimate chance of profit without delta. Reload the chain or pick another strike.',
+      tone: 'alert',
+    });
+  }
+
+  if (typeof iv === 'number') {
+    const ivPercent = iv * 100;
+    entries.push({
+      key: 'iv',
+      label: 'Implied Volatility',
+      primary: `IV at ${ivPercent.toFixed(1)}%.`,
+      detail:
+        ivPercent <= 35
+          ? 'Attractive levels—buying premium is efficient while IV trends lower.'
+          : 'Elevated IV: price can fall even if underlying rallies. Prefer entries after IV cools or use spreads.',
+      tone: ivPercent <= 35 ? 'good' : 'warn',
+    });
+  } else {
+    entries.push({
+      key: 'iv',
+      label: 'Implied Volatility',
+      primary: 'IV snapshot missing.',
+      detail: 'Wait for Massive to return IV or avoid entering blind—vol crush risk is real.',
+      tone: 'neutral',
+    });
+  }
+
+  if (typeof theta === 'number') {
+    entries.push({
+      key: 'theta',
+      label: 'Theta Decay',
+      primary: `Loses ${theta.toFixed(2)} per day if price stalls.`,
+      detail:
+        theta > -0.2
+          ? 'Time decay is manageable thanks to extra duration.'
+          : 'Aggressive theta bleed—intraday only unless you can actively manage risk.',
+      tone: theta > -0.2 ? 'good' : 'warn',
+    });
+  } else {
+    entries.push({
+      key: 'theta',
+      label: 'Theta Decay',
+      primary: 'Theta data unavailable.',
+      detail: 'Without theta we cannot track daily bleed—confirm the contract before entering.',
+      tone: 'neutral',
+    });
+  }
+
+  if (typeof openInterest === 'number' || typeof spread === 'number') {
+    const oi = openInterest ?? 0;
+    const spreadText = typeof spread === 'number' ? `$${spread.toFixed(2)}` : 'unknown';
+    const tightSpread = typeof spread === 'number' ? spread <= 0.1 : false;
+    entries.push({
+      key: 'liquidity',
+      label: 'Liquidity + Exit',
+      primary: `${oi.toLocaleString()} OI · Spread ${spreadText}.`,
+      detail: tightSpread
+        ? 'Depth looks healthy—fills should be smooth.'
+        : 'Wide spreads eat P/L immediately. Use limit orders or switch strikes.',
+      tone: oi >= 500 && tightSpread ? 'good' : oi < 200 ? 'alert' : 'warn',
+    });
+  } else {
+    entries.push({
+      key: 'liquidity',
+      label: 'Liquidity + Exit',
+      primary: 'Need OI and bid/ask data.',
+      detail: 'Never enter without confirming liquidity—slippage destroys trades.',
+      tone: 'alert',
+    });
+  }
+
+  return entries;
+}
+
+function toneToBorder(tone: ChecklistEntry['tone']) {
+  switch (tone) {
+    case 'good':
+      return 'border-emerald-500/40';
+    case 'warn':
+      return 'border-amber-500/40';
+    case 'alert':
+      return 'border-red-500/50';
+    default:
+      return 'border-gray-900';
+  }
+}
+
+function toneToBackground(tone: ChecklistEntry['tone']) {
+  switch (tone) {
+    case 'good':
+      return 'bg-emerald-500/10';
+    case 'warn':
+      return 'bg-amber-500/10';
+    case 'alert':
+      return 'bg-red-500/10';
+    default:
+      return 'bg-gray-950';
+  }
+}
+
 function pickNumber(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -327,8 +532,10 @@ function pickNumber(...values: Array<number | null | undefined>): number | null 
 
 function resolveQuoteMid(quote: Record<string, unknown> | undefined | null): number | null {
   if (!quote) return null;
-  const bid = typeof (quote as any).bid === 'number' ? (quote as any).bid : (quote as any).bidPrice ?? (quote as any).bid_price;
-  const ask = typeof (quote as any).ask === 'number' ? (quote as any).ask : (quote as any).askPrice ?? (quote as any).ask_price;
+  const bid =
+    typeof (quote as any).bid === 'number' ? (quote as any).bid : (quote as any).bidPrice ?? (quote as any).bid_price;
+  const ask =
+    typeof (quote as any).ask === 'number' ? (quote as any).ask : (quote as any).askPrice ?? (quote as any).ask_price;
   if (typeof (quote as any).mid === 'number') return (quote as any).mid;
   if (typeof bid === 'number' && typeof ask === 'number') {
     return (bid + ask) / 2;
@@ -338,4 +545,32 @@ function resolveQuoteMid(quote: Record<string, unknown> | undefined | null): num
 
 function formatCurrency(value: number) {
   return `$${value.toFixed(2)}`;
+}
+
+function resolveSpread(leg?: OptionLeg | null, contract?: OptionContractDetail | null): number | null {
+  const legBid = typeof leg?.bid === 'number' ? leg.bid : null;
+  const legAsk = typeof leg?.ask === 'number' ? leg.ask : null;
+  const quote = contract?.lastQuote as Record<string, unknown> | undefined;
+  const quoteBid =
+    typeof (quote as any)?.bid === 'number'
+      ? (quote as any).bid
+      : typeof (quote as any)?.bidPrice === 'number'
+      ? (quote as any).bidPrice
+      : typeof (quote as any)?.bid_price === 'number'
+      ? (quote as any).bid_price
+      : null;
+  const quoteAsk =
+    typeof (quote as any)?.ask === 'number'
+      ? (quote as any).ask
+      : typeof (quote as any)?.askPrice === 'number'
+      ? (quote as any).askPrice
+      : typeof (quote as any)?.ask_price === 'number'
+      ? (quote as any).ask_price
+      : null;
+  const bid = legBid ?? quoteBid;
+  const ask = legAsk ?? quoteAsk;
+  if (typeof bid === 'number' && typeof ask === 'number' && ask >= bid) {
+    return ask - bid;
+  }
+  return null;
 }
