@@ -1,4 +1,4 @@
-import type { WatchlistReport } from '../../api/analysis';
+import type { ChecklistResult, WatchlistReport } from '../../api/analysis';
 import { formatExpirationDate } from '../../utils/expirations';
 
 const FALLBACK_ROWS: WatchlistReport[] = [
@@ -35,6 +35,8 @@ type Props = {
   reports?: WatchlistReport[];
   isLoading?: boolean;
   onTickerSelect?: (ticker: string) => void;
+  highlights?: Record<string, ChecklistResult>;
+  highlightLoading?: boolean;
 };
 
 function formatSentimentLabel(sentiment?: string | null) {
@@ -49,7 +51,7 @@ function formatSentimentLabel(sentiment?: string | null) {
   return { label: sentiment, color: 'text-gray-300', ring: 'border-gray-800' };
 }
 
-export function OptionsScanner({ reports, isLoading, onTickerSelect }: Props) {
+export function OptionsScanner({ reports, isLoading, onTickerSelect, highlights, highlightLoading }: Props) {
   const rows = reports && reports.length ? reports : FALLBACK_ROWS;
 
   return (
@@ -66,14 +68,29 @@ export function OptionsScanner({ reports, isLoading, onTickerSelect }: Props) {
         </div>
       ) : (
         <div className="space-y-3">
+          {highlightLoading && (
+            <div className="rounded-2xl border border-gray-900 bg-gray-950 p-3 text-xs text-gray-500">
+              Running checklist scan across watchlist…
+            </div>
+          )}
           {rows.map(row => {
             const sentimentBadge = formatSentimentLabel(row.sentiment);
+            const symbolKey = row.symbol?.toUpperCase();
+            const highlight = symbolKey && highlights ? highlights[symbolKey] : undefined;
+            const failing =
+              highlight?.factors?.filter(factor => !factor.passed).map(factor => factor.label) ?? [];
             return (
               <button
                 key={`${row.symbol}-${row.contract ?? row.headline ?? row.summary}`}
                 type="button"
                 onClick={() => onTickerSelect?.(row.symbol)}
-                className="w-full text-left rounded-2xl border border-gray-900 bg-gray-950 p-4 hover:border-emerald-500/50 transition-colors"
+                className={`w-full text-left rounded-2xl border p-4 transition-colors ${
+                  highlight
+                    ? highlight.qualifies
+                      ? 'border-emerald-500/60 bg-emerald-500/10'
+                      : 'border-amber-500/50 bg-amber-500/10'
+                    : 'border-gray-900 bg-gray-950 hover:border-emerald-500/50'
+                }`}
               >
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div>
@@ -99,6 +116,23 @@ export function OptionsScanner({ reports, isLoading, onTickerSelect }: Props) {
                   <div className="text-sm text-gray-300 flex-1 min-w-full border-t border-gray-900 pt-3">
                     {row.summary ?? row.headline ?? 'No summary available.'}
                   </div>
+                  {highlight && (
+                    <div className="flex items-center justify-between w-full text-xs mt-2">
+                      <span
+                        className={`font-semibold ${
+                          highlight.qualifies ? 'text-emerald-200' : 'text-amber-200'
+                        }`}
+                      >
+                        {highlight.qualifies ? 'Checklist ✅ High-ROI ready' : 'Checklist ⚠ Needs review'}
+                      </span>
+                      {failing.length > 0 && (
+                        <span className="text-gray-300">
+                          Missing: {failing.slice(0, 3).join(', ')}
+                          {failing.length > 3 ? '…' : ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </button>
             );

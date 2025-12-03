@@ -11,6 +11,7 @@ This document summarizes how the desk should use the latest build. Share it with
 1. Use the sidebar search (supports equities or `O:` contracts).  
 2. Add to watchlist; the client immediately calls `GET /api/market/watchlist` to hydrate price, change, IV, and reference contracts.  
 3. Every watchlist change triggers `POST /api/analysis/watchlist`, so the AI scanner displays fresh desk notes. If FastAPI is offline we render the hardcoded fallback rows.
+4. In parallel the server runs `POST /api/analysis/checklist` for the same tickers. Any symbol that clears the full options entry checklist is highlighted as “High-ROI Ready” in the scanner and trading view.
 
 ## 3. Charting & Timeframes
 - Default timeframe is `1/day` to guarantee context at load.  
@@ -27,6 +28,7 @@ This document summarizes how the desk should use the latest build. Share it with
    - Raw Greeks.  
    - Entry Checklist (break-even gap, delta ITM odds, IV condition, theta bleed, liquidity).  
    - Risk donut (directional/convexity/decay/vol/liquidity mix) with a delta-based ITM probability badge.
+4. The “Entry Checklist” card above the Greeks panel mirrors the backend status (green when all auto rules pass, amber when factors are missing).
 
 ## 5. Market Closed Experience
 - When `marketClosed=true`, the UI displays a banner, freezes the last candle with a lock badge, and pauses live polling.  

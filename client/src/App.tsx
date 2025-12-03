@@ -22,7 +22,7 @@ import type {
   TradePrint,
   WatchlistSnapshot,
 } from './types/market';
-import type { WatchlistReport } from './api/analysis';
+import type { ChecklistResult, WatchlistReport } from './api/analysis';
 import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 const TIMEFRAME_MAP = {
@@ -171,6 +171,9 @@ function App() {
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [scannerReports, setScannerReports] = useState<WatchlistReport[]>([]);
   const [scannerLoading, setScannerLoading] = useState(false);
+  const [checklistHighlights, setChecklistHighlights] = useState<Record<string, ChecklistResult>>({});
+  const [checklistLoading, setChecklistLoading] = useState(false);
+  const [currentChecklist, setCurrentChecklist] = useState<ChecklistResult | null>(null);
 
   const addTickerToWatchlist = useCallback((symbol: string) => {
     const normalized = symbol.trim().toUpperCase();
@@ -188,6 +191,7 @@ function App() {
     if (!watchlistSignature) {
       setScannerReports([]);
       setScannerLoading(false);
+      setChecklistHighlights({});
       return;
     }
     let cancelled = false;
@@ -212,6 +216,66 @@ function App() {
       cancelled = true;
     };
   }, [watchlistSignature, watchlistSymbols]);
+
+  useEffect(() => {
+    if (!watchlistSignature) {
+      setChecklistHighlights({});
+      return;
+    }
+    let cancelled = false;
+    setChecklistLoading(true);
+    analysisApi
+      .runChecklist(watchlistSymbols)
+      .then(response => {
+        if (cancelled) return;
+        const nextMap: Record<string, ChecklistResult> = {};
+        (response.results ?? []).forEach(result => {
+          if (!result?.symbol) return;
+          nextMap[result.symbol.toUpperCase()] = result;
+        });
+        setChecklistHighlights(nextMap);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.warn('Failed to load checklist highlights', error);
+        setChecklistHighlights({});
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChecklistLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [watchlistSignature, watchlistSymbols]);
+
+  useEffect(() => {
+    const key = displayTicker?.toUpperCase();
+    if (!key) {
+      setCurrentChecklist(null);
+      return;
+    }
+    if (checklistHighlights[key]) {
+      setCurrentChecklist(checklistHighlights[key]);
+      return;
+    }
+    let cancelled = false;
+    analysisApi
+      .runChecklist([key])
+      .then(response => {
+        if (cancelled) return;
+        setCurrentChecklist(response.results?.[0] ?? null);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.warn('Failed to fetch checklist for ticker', key, error);
+        setCurrentChecklist(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayTicker, checklistHighlights]);
 
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
     if (transcriptsRef.current[sessionId]) return;
@@ -955,6 +1019,46 @@ function App() {
             {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
           </p>
         </div>
+        {currentChecklist && (
+          <div
+            className={`border rounded-2xl p-4 ${
+              currentChecklist.qualifies ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-amber-500/40 bg-amber-500/5'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
+                <p className="text-sm text-gray-200">
+                  {currentChecklist.qualifies
+                    ? 'All non-negotiables satisfied — sized entries allowed.'
+                    : 'Waiting on confirmations before green-lighting this setup.'}
+                </p>
+              </div>
+              <span
+                className={`text-xs font-semibold ${
+                  currentChecklist.qualifies ? 'text-emerald-300' : 'text-amber-200'
+                }`}
+              >
+                {currentChecklist.qualifies ? 'High-ROI Ready' : 'Needs Review'}
+              </span>
+            </div>
+            <ul className="mt-3 space-y-1 text-xs">
+              {currentChecklist.factors.slice(0, 3).map(factor => (
+                <li
+                  key={factor.key}
+                  className={`flex items-start gap-2 ${
+                    factor.passed ? 'text-emerald-200' : 'text-amber-200'
+                  }`}
+                >
+                  <span className="text-base leading-none">{factor.passed ? '✔' : '!'}</span>
+                  <span>
+                    {factor.label} · {factor.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
@@ -1044,6 +1148,8 @@ function App() {
                 <OptionsScanner
                   reports={scannerReports}
                   isLoading={scannerLoading}
+                  highlights={checklistHighlights}
+                  highlightLoading={checklistLoading}
                   onTickerSelect={value => {
                     setTicker(value);
                     setView('trading');

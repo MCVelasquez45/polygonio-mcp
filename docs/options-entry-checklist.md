@@ -2,6 +2,14 @@
 Use this checklist BEFORE entering any call or put contract.  
 This ensures each trade matches professional risk standards.
 
+## 🔄 Backend Automation (MERN + FastAPI)
+- **Trend + EMA checks** – Node server pulls 60 days of Massive aggregates, stores them in Mongo, and computes 21/50-day EMAs.
+- **Support & resistance** – The same bars drive automated level detection (last 30 highs/lows) so the UI can highlight distance-to-support/resistance without manual charting.
+- **Greeks, IV, liquidity** – The reference option contract (highest volume) is fetched via Massive’s reference API; delta, IV, OI, and bid/ask spread drive the “Greeks & IV Window” rule.
+- **Sentiment data** – FastAPI endpoints provide per-ticker sentiment labels/scores so the checklist can warn when news flow is negative.
+- **Fed / macro calendar** – FastAPI also streams upcoming Fed events. Trades are blocked (flagged) if a high-impact event is within 2 trading days.
+- **Storage** – Results are cached in Mongo (`options_entry_checklist`) and exposed via `/api/analysis/checklist`, letting the frontend highlight “High ROI ready” tickers in the watchlist + trading view.
+
 ---
 
 ## ✅ 1. UNDERLYING TREND CHECK
@@ -131,4 +139,3 @@ This ensures each trade matches professional risk standards.
 
 # ✔️ SUMMARY
 This checklist is designed to level your workflow up to **professional trader standards**, helping you avoid weak entries, IV traps, poor liquidity contracts, and emotional trades.
-

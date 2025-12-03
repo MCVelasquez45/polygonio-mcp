@@ -41,6 +41,12 @@ Same contract as above but used by the watchlist scanner to hydrate multiple nam
 ### `POST /api/analysis/watchlist`
 Body: `{ symbols: string[] }`. Compiles context (snapshot + cached bars) and calls the FastAPI agent for scanner notes. Falls back to `FALLBACK_ROWS` when FastAPI is offline.
 
+### `POST /api/analysis/checklist`
+Body: `{ tickers: string[], force?: boolean }`. Runs the professional options entry checklist for every ticker provided. The Node service gathers Massive aggregates, computes EMAs/support/resistance, inspects the liquid reference contract for Greeks/IV/spread, fetches sentiment + Fed calendar intel from FastAPI (when configured), stores the results in Mongo, and returns `{ results: ChecklistResult[] }`.
+
+### `GET /api/analysis/checklist/:symbol`
+Returns the latest cached checklist document for a symbol so the UI (or tooling) can inspect the pass/fail factors without re-running the analysis.
+
 ### `GET /api/conversations`
 Lists AI desk conversations (title, last updated).
 
