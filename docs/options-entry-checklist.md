@@ -102,6 +102,35 @@ This ensures each trade matches professional risk standards.
 
 ---
 
+## 🧮 Automated Scoring Engine
+The dashboard now scores every ticker across **eight professional lenses**:
+
+| Category | Logic |
+| --- | --- |
+| Trend Structure | EMA stack (21/50/200), VWAP, multi-timeframe higher highs |
+| Momentum | RSI, MACD histogram, volume surge, bullish candles |
+| Liquidity | Spread %, bid/ask depth, delta window, open interest |
+| Market Context | SPY/QQQ trend alignment, VIX direction, relative strength |
+| Support / Resistance | Distance to support, room to breakout |
+| Volume Profile | Above VWAP, healthy volume shelf beneath price |
+| Entry Trigger | Break-and-retest, 5m/15m confirmation candles |
+| Risk Management | Defined stop, reward ≥ 2× risk |
+
+Each category awards 1 point per satisfied condition. Scores roll up into a 0–100% rating.
+
+### Grade Scale
+
+| Grade | Score | Guidance |
+| --- | --- | --- |
+| **A+** | 90–100% | Institutional-quality setup. Press advantage when risk plan is solid. |
+| **A** | 80–89% | Great setup. Confirm liquidity + macro alignment. |
+| **B** | 60–79% | Decent idea but patience required; momentum or structure missing. |
+| **C** | < 60% | Avoid. Checklist forces you to wait for a cleaner setup. |
+
+Scores are cached in Mongo (`options_entry_checklist`) and surfaced everywhere: scanner highlights, trading view card, Greeks panel, and the order ticket guardrails.
+
+---
+
 ## 🏁 FINAL ENTRY DECISION
 ### ✔ ONLY ENTER IF:
 - All sections are **Strong** or **Good**

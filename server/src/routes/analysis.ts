@@ -4,15 +4,20 @@ import { evaluateChecklistBatch, getStoredChecklist } from '../services/optionsC
 
 const router = Router();
 
+function normalizeTickers(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(value => value.toUpperCase());
+}
+
 router.post('/watchlist', async (req, res, next) => {
   try {
-    const tickers = Array.isArray(req.body?.tickers)
-      ? req.body.tickers.filter((value: any) => typeof value === 'string' && value.trim().length)
-      : [];
+    const tickers = normalizeTickers(req.body?.tickers);
     if (!tickers.length) {
       return res.status(400).json({ error: 'tickers array is required' });
     }
-    const limited = Array.from(new Set(tickers.map((ticker: string) => ticker.toUpperCase()))).slice(0, 12);
+    const limited = Array.from(new Set(tickers)).slice(0, 12);
     const { reports, source } = await getWatchlistReports(limited);
     res.json({
       reports,
@@ -27,14 +32,7 @@ router.post('/watchlist', async (req, res, next) => {
 router.post('/checklist', async (req, res, next) => {
   try {
     const payload = req.body ?? {};
-    const tickersPayload = Array.isArray(payload?.tickers)
-      ? payload.tickers
-      : typeof payload?.ticker === 'string'
-      ? [payload.ticker]
-      : [];
-    const tickers = tickersPayload
-      .filter((value: any) => typeof value === 'string' && value.trim().length)
-      .map((value: string) => value.toUpperCase());
+    const tickers = normalizeTickers(payload?.tickers ?? (payload?.ticker ? [payload.ticker] : []));
     if (!tickers.length) {
       return res.status(400).json({ error: 'tickers array is required' });
     }

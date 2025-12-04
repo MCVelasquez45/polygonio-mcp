@@ -29,11 +29,27 @@ export type ChecklistFactor = {
   passed: boolean;
 };
 
+export type ChecklistItem = {
+  label: string;
+  passed: boolean;
+};
+
+export type ChecklistCategory = {
+  key: string;
+  label: string;
+  score: number;
+  max: number;
+  items: ChecklistItem[];
+};
+
+export type ChecklistGrade = 'A+' | 'A' | 'B' | 'C';
+
 export type ChecklistResult = {
   symbol: string;
   referenceContract?: string | null;
   price: number | null;
   emaShort: number | null;
+  emaMedium: number | null;
   emaLong: number | null;
   support: number | null;
   resistance: number | null;
@@ -46,6 +62,10 @@ export type ChecklistResult = {
   };
   sentiment?: { label?: string | null; score?: number | null } | null;
   fedEvent?: { name?: string; title?: string; date?: string; impact?: string } | null;
+  categories: ChecklistCategory[];
+  totalScore: number;
+  maxScore: number;
+  grade: ChecklistGrade;
   factors: ChecklistFactor[];
   qualifies: boolean;
   updatedAt: string;

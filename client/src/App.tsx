@@ -8,6 +8,7 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
+import { EntryChecklistPanel } from './components/trading/EntryChecklistPanel';
 import { analysisApi, chatApi, marketApi } from './api';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
@@ -1019,46 +1020,7 @@ function App() {
             {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
           </p>
         </div>
-        {currentChecklist && (
-          <div
-            className={`border rounded-2xl p-4 ${
-              currentChecklist.qualifies ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-amber-500/40 bg-amber-500/5'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
-                <p className="text-sm text-gray-200">
-                  {currentChecklist.qualifies
-                    ? 'All non-negotiables satisfied — sized entries allowed.'
-                    : 'Waiting on confirmations before green-lighting this setup.'}
-                </p>
-              </div>
-              <span
-                className={`text-xs font-semibold ${
-                  currentChecklist.qualifies ? 'text-emerald-300' : 'text-amber-200'
-                }`}
-              >
-                {currentChecklist.qualifies ? 'High-ROI Ready' : 'Needs Review'}
-              </span>
-            </div>
-            <ul className="mt-3 space-y-1 text-xs">
-              {currentChecklist.factors.slice(0, 3).map(factor => (
-                <li
-                  key={factor.key}
-                  className={`flex items-start gap-2 ${
-                    factor.passed ? 'text-emerald-200' : 'text-amber-200'
-                  }`}
-                >
-                  <span className="text-base leading-none">{factor.passed ? '✔' : '!'}</span>
-                  <span>
-                    {factor.label} · {factor.detail}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <EntryChecklistPanel result={currentChecklist} loading={checklistLoading} />
         <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
