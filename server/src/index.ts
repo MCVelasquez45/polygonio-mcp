@@ -3,15 +3,15 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import analyzeRouter from './routes/analyze';
-import chatRouter from './routes/chat';
-import conversationsRouter from './routes/conversations';
-import marketRouter from './routes/market';
-import brokerRouter from './routes/broker';
-import analysisRouter from './routes/analysis';
-import { initMongo } from './services/mongo';
-import { ensureMarketCacheIndexes } from './services/marketCache';
-import { startAggregatesWorker } from './services/aggregatesWorker';
+// Central application entrypoint wiring platform feature routers + shared middleware.
+import { analyzeRouter } from './features/assistant';
+import { chatRouter, conversationsRouter } from './features/conversations';
+import { marketRouter } from './features/market';
+import { brokerRouter } from './features/broker';
+import { analysisRouter } from './features/analysis';
+import { initMongo } from './shared/db/mongo';
+import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
+import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
 
 const app = express();
 app.use(cors());
