@@ -169,6 +169,11 @@ function resolveRetryDelay(error: unknown, attempt: number) {
   return Math.min(backoff, MASSIVE_RETRY_MAX_MS);
 }
 
+/**
+ * Generic Massive GET helper. Handles parameter normalization, request
+ * deduping, caching, and automatic retries with exponential backoff. Most
+ * feature modules call this instead of touching axios directly.
+ */
 export async function massiveGet<T = any>(
   path: string,
   params: Record<string, any> = {},
@@ -254,6 +259,11 @@ function isNotFoundError(error: unknown) {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+/**
+ * Convenience wrapper for `/v2/aggs/ticker/...` tailored for option symbols.
+ * Automatically backfills missing date ranges by computing a default `from`
+ * window when callers omit dates.
+ */
 export async function getOptionAggregates(
   optionSymbol: string,
   multiplier: number,
@@ -314,6 +324,10 @@ export async function getOptionAggregates(
   return { ticker: symbol, results };
 }
 
+/**
+ * Fetches raw option trades from Massive. No caching because trades are highly
+ * time-sensitive.
+ */
 export async function getMassiveTrades(optionSymbol: string, limit = 50, order: 'asc' | 'desc' = 'desc') {
   const symbol = optionSymbol.toUpperCase();
   const payload = await massiveGet(
@@ -362,6 +376,10 @@ type QuoteEntry = {
   midpoint: number | null;
 };
 
+/**
+ * Retrieves the latest option quotes. Returns both the active quote and the
+ * recent history so UIs can render depth.
+ */
 export async function getMassiveQuotes(optionSymbol: string, opts?: { limit?: number; order?: SortDirection }) {
   const symbol = optionSymbol.toUpperCase();
   const limitParam = Number(opts?.limit ?? 1) || 1;
@@ -413,6 +431,10 @@ export async function getMassiveQuotes(optionSymbol: string, opts?: { limit?: nu
   };
 }
 
+/**
+ * Fetches metadata for a specific option contract (strike, expiration,
+ * greeks). Used when hydrating selections or chains.
+ */
 export async function getMassiveOptionContract(optionSymbol: string) {
   const symbol = optionSymbol.toUpperCase();
   const payload = await massiveGet(`/v3/reference/options/contracts/${symbol}`, {}, { cacheTtlMs: 120_000 });
@@ -440,6 +462,10 @@ type OptionContractQuery = {
   cursor?: string;
 };
 
+/**
+ * Lists option contracts with filtering/pagination. Primarily consumed when
+ * building option chains server-side.
+ */
 export async function listMassiveOptionContracts(options: OptionContractQuery = {}) {
   const limitParam = Number(options.limit ?? 50) || 50;
   const limit = Math.min(Math.max(limitParam, 1), 1000);
@@ -489,6 +515,10 @@ export async function listMassiveOptionContracts(options: OptionContractQuery = 
   };
 }
 
+/**
+ * Returns the set of expirations available for an underlying by scanning the
+ * reference contracts endpoint.
+ */
 export async function listOptionExpirations(
   underlying: string,
   opts: { limit?: number; maxPages?: number } = {}
@@ -537,6 +567,10 @@ export async function listOptionExpirations(
   };
 }
 
+/**
+ * Lists known option exchanges. Handy for populating dropdowns or debugging
+ * quotes.
+ */
 export async function listOptionExchanges(params: { asset_class?: string; locale?: string } = {}) {
   const payload = await massiveGet('/v3/reference/exchanges', {
     asset_class: params.asset_class ?? 'options',
@@ -545,6 +579,9 @@ export async function listOptionExchanges(params: { asset_class?: string; locale
   return Array.isArray(payload?.results) ? payload.results : payload?.exchanges ?? [];
 }
 
+/**
+ * Lists trade/quote condition codes so the UI can label unusual prints.
+ */
 export async function listOptionConditions(params: { asset_class?: string; limit?: number; order?: string; sort?: string } = {}) {
   const payload = await massiveGet('/v3/reference/conditions', {
     asset_class: params.asset_class ?? 'options',
@@ -691,6 +728,10 @@ function parseMassiveNextUrl(nextUrl: string | null | undefined): { path: string
   }
 }
 
+/**
+ * Builds a normalized option chain by combining Massive snapshots and
+ * reference contracts. Handles pagination, expiration filters, and caching.
+ */
 export async function getMassiveOptionsChain(
   underlying: string,
   limit = 100,
@@ -1349,6 +1390,10 @@ export function extractCursor(nextUrl: string | null | undefined) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+/**
+ * Retrieves Massive's option snapshot for an underlying. Used to seed the
+ * watchlist/checklist modules with top-volume contracts and greeks.
+ */
 export async function getMassiveOptionsSnapshot(underlying: string) {
   const symbol = underlying.toUpperCase();
   let payload: any;
@@ -1428,6 +1473,9 @@ export async function getMassiveOptionsSnapshot(underlying: string) {
   return snapshotResult;
 }
 
+/**
+ * Fetches the snapshot for a specific contract (bid/ask/last, greeks, etc.).
+ */
 export async function getMassiveOptionContractSnapshot(contractTicker: string) {
   const contractSymbol = contractTicker.toUpperCase();
   const contractDetail = await getMassiveOptionContract(contractSymbol);
@@ -1550,6 +1598,10 @@ async function fetchIndicatorSeries(
   };
 }
 
+/**
+ * Pulls indicator/time-series metadata for a contract. Used for the indicators
+ * panel when available.
+ */
 export async function getMassiveIndicators(optionSymbol: string, window = 50) {
   const symbol = optionSymbol.toUpperCase();
   const baseParams = {
