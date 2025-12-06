@@ -8,11 +8,14 @@ import {
 } from './services/alpaca';
 
 const router = Router();
+
+// Simple in-memory caches to avoid calling Alpaca more than ~once every 10s.
 const CACHE_TTL_MS = 10_000;
 
 let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
 
+// GET /api/broker/alpaca/account – fetches account snapshot (buying power, etc.).
 router.get('/alpaca/account', async (_req, res, next) => {
   try {
     const now = Date.now();
@@ -27,6 +30,7 @@ router.get('/alpaca/account', async (_req, res, next) => {
   }
 });
 
+// GET /api/broker/alpaca/options/positions – returns option positions with a short cache.
 router.get('/alpaca/options/positions', async (_req, res, next) => {
   try {
     const now = Date.now();
@@ -52,6 +56,7 @@ router.get('/alpaca/options/orders', async (req, res, next) => {
   }
 });
 
+// POST /api/broker/alpaca/options/orders – normalizes legs and forwards to Alpaca.
 router.post('/alpaca/options/orders', async (req, res, next) => {
   try {
     const body = req.body ?? {};
@@ -60,6 +65,7 @@ router.post('/alpaca/options/orders', async (req, res, next) => {
     if (!legs.length) {
       return res.status(400).json({ error: 'At least one leg is required' });
     }
+    // Normalize each leg, applying defaults and validation before hitting Alpaca.
     const normalizedLegs = legs.map((leg: any) => {
       const symbol = typeof leg.symbol === 'string' ? leg.symbol.trim().toUpperCase() : '';
       const qty = Number(leg.qty ?? leg.quantity ?? 0);
