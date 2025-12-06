@@ -1,5 +1,8 @@
 import { massiveGet } from '../../../shared/data/massive';
 
+// Lightweight wrapper around Massive's market status endpoint with a short TTL
+// cache so we don't spam the upstream service.
+
 export type MarketStatusSnapshot = {
   market: string;
   serverTime: Date;
@@ -32,6 +35,7 @@ function toDate(value?: string | number | Date | null): Date {
   return new Date(timestamp);
 }
 
+// Normalizes the raw API response into the shape the frontend expects.
 function coerceSnapshot(raw: RawMarketStatus | null | undefined): MarketStatusSnapshot {
   const serverTime = toDate(raw?.server_time);
   return {
@@ -46,6 +50,10 @@ function coerceSnapshot(raw: RawMarketStatus | null | undefined): MarketStatusSn
   };
 }
 
+/**
+ * Returns the latest market status, falling back to a best-effort snapshot if
+ * Massive is unreachable. Results are cached for `STATUS_TTL_MS` milliseconds.
+ */
 export async function getMarketStatusSnapshot(): Promise<MarketStatusSnapshot> {
   const now = Date.now();
   if (cachedStatus && cachedStatus.expiresAt > now) {

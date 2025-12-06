@@ -171,6 +171,8 @@ function buildMarketState(status: MarketStatusSnapshot): MarketStatusSummary {
   };
 }
 
+// Determines which session windows to attempt (regular, after-hours, previous)
+// based on current market state. Helps the fetcher gracefully degrade.
 function buildSessionPlan(args: {
   status: MarketStatusSnapshot;
   durationMs: number;
@@ -228,6 +230,7 @@ function buildSessionPlan(args: {
   return { attempts, marketClosed, afterHours };
 }
 
+// Helper that fetches bars for the given attempt + writes them to Mongo.
 async function fetchRemoteBars(args: {
   ticker: string;
   multiplier: number;
@@ -245,6 +248,11 @@ async function fetchRemoteBars(args: {
   return remote.results;
 }
 
+/**
+ * Entry point used by the router. Applies caching, fallback, and session-aware
+ * logic so callers always get a consistent candle set even when Massive is
+ * throttled. Returns normalized bars plus metadata for downstream UI.
+ */
 export async function resolveAggregates(params: AggregatesParams): Promise<AggregatesResponse> {
   const ticker = params.ticker?.trim().toUpperCase();
   if (!ticker) {

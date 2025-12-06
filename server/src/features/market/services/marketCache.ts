@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { Collection } from 'mongodb';
 import { getCollection } from '../../../shared/db/mongo';
 
+// Mongo-backed cache for rate-limited Massive endpoints. Each cache entry is
+// keyed by a deterministic hash of the request parameters so different callers
+// hitting the same endpoint reuse the same document.
+
 type MarketCacheDocument<T = any> = {
   key: string;
   type: string;
@@ -25,6 +29,8 @@ function marketCacheCollection(): Collection<MarketCacheDocument> {
   return getCollection<MarketCacheDocument>(COLLECTION_NAME);
 }
 
+// Ensures params objects have stable ordering before hashing, so `{a:1,b:2}`
+// and `{b:2,a:1}` generate the same key.
 function normalizeValue(value: any): any {
   if (Array.isArray(value)) {
     return value.map(entry => normalizeValue(entry));
@@ -47,6 +53,7 @@ function createParamsHash(value: Record<string, any>): string {
   return createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
 }
 
+// Lazily creates the TTL + unique indexes that keep the cache bounded.
 export async function ensureMarketCacheIndexes(): Promise<void> {
   if (indexesEnsured) return;
   const collection = marketCacheCollection();
@@ -55,6 +62,12 @@ export async function ensureMarketCacheIndexes(): Promise<void> {
   indexesEnsured = true;
 }
 
+/**
+ * Wraps a fetcher with cache semantics. If a fresh document exists, returns it.
+ * Otherwise the fetcher is executed, stored, and returned. Callers pass a
+ * `type` (e.g., `trades`), the original params payload, a TTL, and a function
+ * that performs the remote fetch.
+ */
 export async function fetchWithCache<T>(
   type: string,
   params: Record<string, any>,

@@ -48,6 +48,7 @@ function requireOptionTicker(ticker: string, res: any) {
   return true;
 }
 
+// GET /api/market/aggs – high-level candle endpoint used by the chart.
 router.get('/aggs', async (req, res, next) => {
   try {
     logMarketRequest(req);
@@ -84,6 +85,7 @@ router.get('/aggs', async (req, res, next) => {
   }
 });
 
+// GET /api/market/trades/:ticker – thin proxy to Massive trades with caching.
 router.get('/trades/:ticker', async (req, res, next) => {
   try {
     logMarketRequest(req);
@@ -104,6 +106,7 @@ router.get('/trades/:ticker', async (req, res, next) => {
   }
 });
 
+// GET /api/market/quotes/:ticker – retrieves latest quote snapshot.
 router.get('/quotes/:ticker', async (req, res, next) => {
   try {
     logMarketRequest(req);
@@ -130,6 +133,7 @@ router.get('/quotes/:ticker', async (req, res, next) => {
   }
 });
 
+// GET /api/market/options/chain/:ticker – fetches/caches large option chains.
 router.get('/options/chain/:ticker', async (req, res, next) => {
   try {
     logMarketRequest(req);

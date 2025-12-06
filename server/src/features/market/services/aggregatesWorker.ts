@@ -2,6 +2,9 @@ import { getOptionAggregates } from '../../../shared/data/massive';
 import { upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot } from './marketStatus';
 
+// Optional worker that periodically hydrates local aggregate caches so the UI
+// can instantly render without waiting for Massive.
+
 type WorkerInterval = {
   multiplier: number;
   timespan: 'minute' | 'hour' | 'day';
@@ -24,6 +27,7 @@ function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Fetches live bars for a given ticker + interval and writes them to Mongo.
 async function fetchAndStore(ticker: string, config: WorkerInterval) {
   try {
     const { results } = await getOptionAggregates(
@@ -53,6 +57,8 @@ async function fetchAndStore(ticker: string, config: WorkerInterval) {
   }
 }
 
+// Executes a single pass over all configured tickers. Skips minute bars when
+// the regular market is closed to avoid wasting quota.
 async function runCycle() {
   if (!TICKERS.length) return;
   try {
@@ -74,6 +80,7 @@ async function runCycle() {
   }
 }
 
+// Public entry: starts the polling loop when `AGG_WORKER_ENABLED=true`.
 export function startAggregatesWorker() {
   if (!ENABLED) {
     console.log('[AGG-WORKER] disabled (set AGG_WORKER_ENABLED=true to enable background ingestion)');
