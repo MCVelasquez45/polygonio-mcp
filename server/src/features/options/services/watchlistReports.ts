@@ -1,5 +1,7 @@
 import axios from 'axios';
-// Builds summary reports for watchlist tickers using Massive snapshots + agent insights.
+// Builds summary reports for watchlist tickers. Prefers AI-generated summaries
+// (agent service) but falls back to deterministic Massive snapshots when the
+// agent is offline.
 import { getMassiveOptionsSnapshot } from '../../../shared/data/massive';
 import { getRecentAggregateBars } from '../../market/services/aggregatesStore';
 
@@ -29,6 +31,8 @@ type WatchlistContext = {
   events?: { name: string; date: string; impact?: string }[];
 };
 
+// Normalized bars keep timestamps/fields consistent for prompts + fallbacks.
+
 function normalizeBars(bars: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }[]) {
   return bars
     .slice()
@@ -44,6 +48,8 @@ function normalizeBars(bars: { timestamp: number; open: number; high: number; lo
 }
 
 // Builds the structured JSON passed to the agent (if enabled).
+// Builds structured JSON describing each ticker (snapshot, recent bars, metrics)
+// so the agent has context to generate richer narratives.
 async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContext[]> {
   return Promise.all(
     tickers.map(async symbol => {
@@ -72,6 +78,8 @@ async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContex
 }
 
 // Invokes the agent to generate more opinionated reports if available; returns null on failure.
+// Attempts to use the MCP/AI agent to generate human-friendly summaries. If
+// parsing fails or the agent errors, returns null so we can fall back.
 async function fetchAgentReports(tickers: string[]): Promise<WatchlistReport[] | null> {
   if (!AGENT_API_URL) return null;
   if (!tickers.length) return [];
@@ -117,6 +125,8 @@ function formatNumber(value: number | null | undefined, options: Intl.NumberForm
 }
 
 // Fallback when the agent is offline: derive summary text directly from Massive snapshots.
+// Deterministic fallback: derive brief summary from Massive snapshot alone so
+// the UI never goes blank when the agent is unavailable.
 async function buildSnapshotReports(tickers: string[]): Promise<WatchlistReport[]> {
   const reports = await Promise.all(
     tickers.map(async symbol => {

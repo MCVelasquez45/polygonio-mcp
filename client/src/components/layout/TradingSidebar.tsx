@@ -21,6 +21,8 @@ type WatchlistEntry = {
   change: number;
 };
 
+// Hard-coded seed data used when the user has no stored watchlist yet. These
+// values get overwritten once Massive snapshots are fetched.
 const WATCHLIST_DATA: Record<string, Omit<WatchlistEntry, 'symbol'>> = {
   SPY: { name: 'S&P 500 ETF', price: 512.4, change: 0.36 },
   AAPL: { name: 'Apple', price: 227.1, change: -0.42 },
@@ -41,6 +43,8 @@ const defaultWatchlist: WatchlistEntry[] = ['SPY', 'AAPL', 'TSLA', 'NVDA', 'MSFT
 
 const WATCHLIST_STORAGE_KEY = 'market-copilot.watchlist';
 
+// Resolves a symbol to a watchlist entry, falling back to mock data when we
+// haven't fetched a live snapshot yet.
 function hydrateWatchlistEntry(symbol: string, overrides?: Partial<WatchlistEntry>): WatchlistEntry {
   const upper = symbol.toUpperCase();
   const base = WATCHLIST_DATA[upper];
@@ -61,6 +65,7 @@ function hydrateWatchlistEntry(symbol: string, overrides?: Partial<WatchlistEntr
   };
 }
 
+// Placeholder desk alerts/intel panel content.
 const alerts = [
   {
     id: 'cpi',
@@ -90,9 +95,11 @@ type Props = {
 };
 
 export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdate, onWatchlistChange }: Props) {
+  // Local UI mode (watchlist vs intel alerts).
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
   const [tickerInput, setTickerInput] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  // Hydrate watchlist from localStorage so the user's custom list persists.
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -125,6 +132,7 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
   );
   const watchlistSymbolsKey = watchlistSymbols.join(',');
 
+  // Persist the watchlist whenever it changes.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
@@ -134,6 +142,7 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
     }
   }, [watchlist]);
 
+  // Adds a new ticker to the list (basic validation and duplicate guard).
   const handleAddTicker = (event?: React.FormEvent) => {
     event?.preventDefault();
     const normalized = tickerInput.trim().toUpperCase();
@@ -164,6 +173,8 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
     }
   };
 
+  // Fetches live snapshots for the watchlist whenever the set of symbols changes
+  // or the user forces a refresh. Keeps a per-symbol cache for quick lookups.
   useEffect(() => {
     if (!watchlistSymbolsKey) return;
     let cancelled = false;
