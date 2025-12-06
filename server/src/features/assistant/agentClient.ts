@@ -1,10 +1,14 @@
 import axios from 'axios';
 // Shared HTTP client used by both analyze/chat routes to reach the external MCP agent service.
 
+// Base URL for the FastAPI agent (defaults to local dev port 5001).
 const PYTHON_URL = process.env.PYTHON_URL || 'http://localhost:5001';
 
 /**
  * Sends analysis prompts to the Python agent and returns its structured response.
+ * The payload mirrors what the FastAPI service expects: `{ query: string }`.
+ * Any transport error is logged and re-thrown so Express error middleware can
+ * produce the appropriate HTTP status.
  */
 export async function agentAnalyze(query: string) {
   console.log('[SERVER] agentClient.analyze -> POST', `${PYTHON_URL}/analyze`, query);
@@ -20,7 +24,9 @@ export async function agentAnalyze(query: string) {
 
 /**
  * Sends a conversational prompt to the agent; optionally keeps the conversation grouped
- * via `sessionName` so the downstream service can preserve context.
+ * via `sessionName` so the downstream service can preserve context. The API
+ * contract follows OpenAI's Chat Completions style (`messages`, `model`, etc.).
+ * Returns the parsed reply text along with the raw response for auditing.
  */
 export async function agentChat(message: string, sessionName?: string) {
   const endpoint = `${PYTHON_URL}/v1/chat/completions`;
