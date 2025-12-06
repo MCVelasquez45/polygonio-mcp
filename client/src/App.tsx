@@ -26,6 +26,7 @@ import type {
 import type { ChecklistResult, WatchlistReport } from './api/analysis';
 import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
+// Map timeframe choices in the UI to the aggregate query parameters expected by the API.
 const TIMEFRAME_MAP = {
   '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 240 },
   '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 240 },
@@ -36,8 +37,10 @@ const TIMEFRAME_MAP = {
   '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 },
 };
 
+// Default lookback window for the simple moving average indicator.
 const SMA_WINDOW = 50;
 
+// Compute a rolling SMA series for the supplied aggregate bars.
 function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries {
   if (!bars.length || window <= 0) {
     return { latest: null, trend: undefined, values: [] };
@@ -63,6 +66,7 @@ function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries 
   return { latest: typeof latest === 'number' ? latest : null, trend, values };
 }
 
+// Bundle any indicators we currently support so the chart can render overlays.
 function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBundle | undefined {
   if (!bars.length) return undefined;
   return {
@@ -73,8 +77,10 @@ function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBu
 
 type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
+// Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
 
+// Snapshot of the trading session state returned by aggregate endpoints.
 type MarketSessionMeta = {
   marketClosed: boolean;
   afterHours: boolean;
@@ -87,6 +93,7 @@ type MarketSessionMeta = {
   fetchedAt?: string;
 };
 
+// Convert ISO timestamps (next open/close) into small relative labels.
 function formatRelativeTime(value?: string | null): string | null {
   if (!value) return null;
   const target = Date.parse(value);
@@ -109,6 +116,8 @@ function formatRelativeTime(value?: string | null): string | null {
   return `in ${days}d ${remainingHours}h`;
 }
 
+// Root component controlling all trading/scanner/portfolio views. Manages data
+// fetching, caches, and cross-panel selection state.
 function App() {
   const [view, setView] = useState<View>('trading');
   const [ticker, setTicker] = useState('SPY');
@@ -116,6 +125,7 @@ function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Option chain state (expirations + selected leg/contract).
   const [chainExpirations, setChainExpirations] = useState<OptionChainExpirationGroup[]>([]);
   const [chainUnderlyingPrice, setChainUnderlyingPrice] = useState<number | null>(null);
   const [chainLoading, setChainLoading] = useState(false);
@@ -131,6 +141,7 @@ function App() {
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
+  // Chart + indicator caches for the selected underlying.
   const [timeframe, setTimeframe] = useState<TimeframeKey>('1/day');
   const [bars, setBars] = useState<AggregateBar[]>([]);
   const [indicators, setIndicators] = useState<IndicatorBundle>();
@@ -141,6 +152,7 @@ function App() {
   const [underlyingSnapshot, setUnderlyingSnapshot] = useState<WatchlistSnapshot | null>(null);
   const underlyingSnapshotRef = useRef<WatchlistSnapshot | null>(null);
 
+  // Conversation/chat state (AI insights dock).
   const [marketError, setMarketError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [transcripts, setTranscripts] = useState<Record<string, ChatMessage[]>>({});
@@ -152,6 +164,7 @@ function App() {
   const selectionHydratedRef = useRef(false);
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
+  // Cache chart payloads per ticker/timeframe so we can reuse fresh fetches.
   const chartCacheRef = useRef<
     Map<
       string,
@@ -176,18 +189,26 @@ function App() {
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [currentChecklist, setCurrentChecklist] = useState<ChecklistResult | null>(null);
 
+  // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
     const normalized = symbol.trim().toUpperCase();
     if (!normalized || typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent('watchlist:add', { detail: { symbol: normalized } }));
   }, []);
 
+  // Track watchlist changes pushed from sidebar/watchlist component.
   const handleWatchlistChange = useCallback((symbols: string[]) => {
     setWatchlistSymbols(symbols);
   }, []);
 
   const watchlistSignature = watchlistSymbols.join(',');
 
+  // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
+  // Fetch the option chain whenever the ticker or selected expiration changes.
+  // Reset derived state when the user changes tickers (fresh bars, selection, etc.).
+  // Persist the currently selected leg so it can be restored on next load.
+  // Fetch aggregate bars/indicators for the active ticker/timeframe with caching + polling.
+  // Poll trades + quote snapshots for the currently selected option contract.
   useEffect(() => {
     if (!watchlistSignature) {
       setScannerReports([]);
@@ -218,6 +239,7 @@ function App() {
     };
   }, [watchlistSignature, watchlistSymbols]);
 
+  // Run the entry checklist for the current watchlist to highlight notable setups.
   useEffect(() => {
     if (!watchlistSignature) {
       setChecklistHighlights({});
@@ -251,6 +273,7 @@ function App() {
     };
   }, [watchlistSignature, watchlistSymbols]);
 
+  // Keep the checklist card for the focused ticker up to date.
   useEffect(() => {
     const key = displayTicker?.toUpperCase();
     if (!key) {
@@ -278,6 +301,7 @@ function App() {
     };
   }, [displayTicker, checklistHighlights]);
 
+  // Lazily fetch conversation transcripts when the user re-opens a chat session.
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
     if (transcriptsRef.current[sessionId]) return;
     try {
@@ -296,6 +320,7 @@ function App() {
     }
   }, []);
 
+  // Merge expirations returned from the API with anything the user entered manually.
   const mergedExpirations = useMemo(() => {
     const merged = new Set<string>();
     availableExpirations.forEach(value => merged.add(value));
@@ -310,6 +335,7 @@ function App() {
     });
   }, [availableExpirations, customExpirations]);
 
+  // Load the user's AI conversations (remote first, falling back to local storage).
   const hydrateConversations = useCallback(async () => {
     try {
       const payloads = await chatApi.listConversations();
@@ -362,10 +388,12 @@ function App() {
     }
   }, [ensureTranscriptLoaded]);
 
+  // Kick off initial conversation fetch on mount.
   useEffect(() => {
     hydrateConversations();
   }, [hydrateConversations]);
 
+  // Restore any persisted ticker/contract selection the user had previously saved.
   useEffect(() => {
     if (selectionHydratedRef.current) return;
     selectionHydratedRef.current = true;
@@ -394,16 +422,19 @@ function App() {
     };
   }, []);
 
+  // Mirror the active conversation id in a ref so async callbacks can read the latest value.
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
   }, [activeConversationId]);
 
+  // If the API returns conversations but nothing is selected, default to the first.
   useEffect(() => {
     if (!activeConversationId && conversations.length) {
       setActiveConversationId(conversations[0].id);
     }
   }, [conversations, activeConversationId]);
 
+  // Persist conversation metadata locally so we can boot offline.
   useEffect(() => {
     if (!conversations.length || typeof window === 'undefined') return;
     try {
@@ -506,11 +537,13 @@ function App() {
     }
   }, [normalizedTicker]);
 
+  // Each underlying owns its own list of temporary expirations; clear on ticker change.
   useEffect(() => {
     setCustomExpirations([]);
     invalidExpirationsRef.current.clear();
   }, [normalizedTicker]);
 
+  // Load the current underlying's expirations list for the expiration selector.
   useEffect(() => {
     if (!normalizedTicker) {
       setAvailableExpirations([]);
@@ -559,6 +592,8 @@ function App() {
     };
   }, [normalizedTicker]);
 
+  // When a pending contract symbol is provided, auto-select that leg from the chain.
+  // Ensure the expiration selector follows the desired contract's expiry.
   useEffect(() => {
     if (!desiredContract) return;
     if (!chainExpirations.length) return;
@@ -611,10 +646,11 @@ function App() {
       .catch(error => console.warn('Failed to persist option selection', error));
   }, [selectedLeg, normalizedTicker]);
 
+  // Pull an underlying snapshot (quote + percent changes) unless we are on an option symbol.
   useEffect(() => {
     if (!normalizedTicker || normalizedTicker.startsWith('O:')) {
       setUnderlyingSnapshot(null);
-       underlyingSnapshotRef.current = null;
+      underlyingSnapshotRef.current = null;
       return;
     }
     let cancelled = false;
@@ -640,12 +676,14 @@ function App() {
     };
   }, [normalizedTicker]);
 
+  // Clear previous market errors when we have an active contract symbol again.
   useEffect(() => {
     if (activeContractSymbol) {
       setMarketError(null);
     }
   }, [activeContractSymbol]);
 
+  // Keep the Greeks panel detail in sync with the selected leg.
   useEffect(() => {
     if (!selectedLeg) {
       setContractDetail(null);
@@ -835,6 +873,7 @@ function App() {
     };
   }, [activeContractSymbol, marketSessionMeta?.marketClosed]);
 
+  // Spawn a brand new chat session in the dock and make it active.
   function startNewConversation() {
     const convo = createConversation();
     setConversations(prev => [convo, ...prev]);
@@ -850,6 +889,7 @@ function App() {
     setLatestInsight('');
   }
 
+  // Switch active chat sessions and lazily hydrate transcripts as required.
   async function handleConversationSelect(id: string) {
     setActiveConversationId(id);
     const convo = conversations.find(c => c.id === id);
@@ -859,6 +899,7 @@ function App() {
     }
   }
 
+  // Allow dock components to push latest messages into the transcript cache.
   function handleMessagesChange(sessionId: string, nextMessages: ChatMessage[]) {
     setTranscripts(prev => {
       const next = {
@@ -870,6 +911,7 @@ function App() {
     });
   }
 
+  // When the assistant replies, refresh metadata + previews so the list stays sorted.
   function handleConversationUpdate(payload: ConversationPayload) {
     const normalized = normalizeConversation(payload);
     setConversations(prev => {
@@ -879,6 +921,7 @@ function App() {
     setLatestInsight(normalized.preview);
   }
 
+  // Sidebar component handles watchlist interactions + ticker selection.
   const sidebar = (
     <TradingSidebar
       selectedTicker={normalizedTicker}
@@ -913,6 +956,7 @@ function App() {
     />
   );
 
+  // When the user chooses a contract in the chain, sync selection + expiration state.
   const handleContractSelection = useCallback(
     (leg: OptionLeg | null) => {
       setSelectedLeg(leg);
@@ -934,6 +978,7 @@ function App() {
     [normalizedTicker]
   );
 
+  // Update the selected expiration and reset leg selection when dropdown changes.
   const handleExpirationChange = useCallback((value: string | null) => {
     pendingSelectionRef.current.expiration = null;
     if (value) {
@@ -944,10 +989,12 @@ function App() {
     setDesiredContract(null);
   }, []);
 
+  // Prefer the latest chain price for Greeks panel, fall back to watchlist snapshot.
   const greeksUnderlyingPrice =
     chainUnderlyingPrice ??
     (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying' ? underlyingSnapshot.price ?? null : null);
 
+  // Determine the best available underlying price for options chain calculations.
   const resolvedUnderlyingPrice = useMemo(() => {
     if (chainUnderlyingPrice != null) return chainUnderlyingPrice;
     if (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying') {
@@ -957,6 +1004,7 @@ function App() {
     return latestBar?.close ?? null;
   }, [chainUnderlyingPrice, underlyingSnapshot, bars]);
 
+  // Main trading workspace layout (chart, insights, greeks, and options chain).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
@@ -1150,6 +1198,7 @@ function App() {
 
 export default App;
 
+// Initialize a new blank conversation entry the dock can display immediately.
 function createConversation(
   title = 'New chat',
   preview = 'Ask the desk anything to get started.'
@@ -1166,6 +1215,7 @@ function createConversation(
   };
 }
 
+// Clean API payloads to ensure the rest of the app sees consistent conversation data.
 function normalizeConversation(payload: ConversationPayload): ConversationMeta {
   return {
     id: payload.sessionId,
@@ -1177,6 +1227,7 @@ function normalizeConversation(payload: ConversationPayload): ConversationMeta {
   };
 }
 
+// Transform raw conversation response objects into the simplified chat message model.
 function mapMessages(response: ConversationResponse): ChatMessage[] {
   return (response.messages ?? []).map(message => ({
     id: message.id,
@@ -1186,6 +1237,7 @@ function mapMessages(response: ConversationResponse): ChatMessage[] {
   }));
 }
 
+// Walk all expiration groups/strikes to locate a matching option leg.
 function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): OptionLeg | null {
   const normalized = ticker.toUpperCase();
   for (const group of groups) {
@@ -1197,6 +1249,7 @@ function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): 
   return null;
 }
 
+// Convert an option leg returned by the chain API into the richer Details shape.
 function optionLegToContractDetail(leg: OptionLeg): OptionContractDetail {
   const greeks = {
     ...(leg.greeks ?? {}),
@@ -1238,6 +1291,7 @@ function optionLegToContractDetail(leg: OptionLeg): OptionContractDetail {
   };
 }
 
+// Extract YYYY-MM-DD expiration dates from OCC-formatted symbols (O:XYZ...).
 function parseOptionExpirationFromTicker(symbol: string | null | undefined): string | null {
   if (!symbol) return null;
   const match = symbol.toUpperCase().match(/O:[A-Z0-9\.]+(\d{6})([CP])/);
