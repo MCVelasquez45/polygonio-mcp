@@ -96,6 +96,7 @@ function collection(): Collection<ChecklistDocument> {
   return checklistCollection;
 }
 
+// Sets up symbol + updatedAt indexes once per process so lookups are fast.
 async function ensureIndexes() {
   if (indexesEnsured) return;
   await collection().createIndex({ symbol: 1 }, { unique: true, name: 'symbol_unique' });
@@ -202,6 +203,7 @@ function aggregateBars(bars: StoredAggregateBar[], multiplier: number): StoredAg
   return Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
 }
 
+// Tries Massive's sentiment endpoint first (cheaper/faster) before falling back to our agent.
 async function fetchMassiveSentiment(symbol: string): Promise<SentimentSnapshot | null> {
   try {
     const payload = await massiveGet(
@@ -298,6 +300,7 @@ function flattenCategories(categories: ChecklistCategory[]): ChecklistFactor[] {
   );
 }
 
+// Loads/syncs daily bars, backfilling from Massive if local cache is stale.
 async function loadDailyBars(symbol: string, window: number): Promise<StoredAggregateBar[]> {
   const upper = symbol.toUpperCase();
   let bars = await getRecentAggregateBars(upper, 1, 'day', window);
@@ -328,6 +331,7 @@ async function loadDailyBars(symbol: string, window: number): Promise<StoredAggr
   return bars;
 }
 
+// Loads minute bars with fallback to Massive. Used for intraday analytics.
 async function loadMinuteBars(symbol: string, window: number): Promise<StoredAggregateBar[]> {
   const upper = symbol.toUpperCase();
   let bars = await getRecentAggregateBars(upper, 1, 'minute', window);
@@ -559,6 +563,7 @@ function checkSequentialHigher(bars: StoredAggregateBar[]) {
   return true;
 }
 
+// Pulls Massive snapshots for TARGET, SPY, QQQ, VIX to enrich the checklist.
 async function fetchContextSnapshots(targetSymbol: string) {
   const symbols = Array.from(new Set(['TARGET', ...CONTEXT_SYMBOLS]));
   const entries = await Promise.all(
@@ -577,6 +582,11 @@ async function fetchContextSnapshots(targetSymbol: string) {
   return Object.fromEntries(entries) as Record<string, Awaited<ReturnType<typeof getMassiveOptionsSnapshot>> | null>;
 }
 
+/**
+ * Main checklist entry point. Attempts to reuse cached documents unless
+ * `force` is true or the TTL has expired. Computes every category and stores
+ * the result for subsequent requests.
+ */
 export async function evaluateChecklist(symbolInput: string, opts: { force?: boolean } = {}): Promise<ChecklistResult> {
   const symbol = symbolInput.toUpperCase();
   await ensureIndexes();
@@ -682,6 +692,7 @@ export async function evaluateChecklist(symbolInput: string, opts: { force?: boo
   };
 }
 
+// Convenience helper for `/api/analysis/checklist` to fetch multiple symbols.
 export async function evaluateChecklistBatch(
   tickers: string[],
   options: { force?: boolean } = {}

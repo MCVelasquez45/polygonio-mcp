@@ -43,6 +43,7 @@ function normalizeBars(bars: { timestamp: number; open: number; high: number; lo
     }));
 }
 
+// Builds the structured JSON passed to the agent (if enabled).
 async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContext[]> {
   return Promise.all(
     tickers.map(async symbol => {
@@ -70,6 +71,7 @@ async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContex
   );
 }
 
+// Invokes the agent to generate more opinionated reports if available; returns null on failure.
 async function fetchAgentReports(tickers: string[]): Promise<WatchlistReport[] | null> {
   if (!AGENT_API_URL) return null;
   if (!tickers.length) return [];
@@ -114,6 +116,7 @@ function formatNumber(value: number | null | undefined, options: Intl.NumberForm
   return new Intl.NumberFormat('en-US', options).format(value);
 }
 
+// Fallback when the agent is offline: derive summary text directly from Massive snapshots.
 async function buildSnapshotReports(tickers: string[]): Promise<WatchlistReport[]> {
   const reports = await Promise.all(
     tickers.map(async symbol => {
@@ -167,6 +170,10 @@ async function buildSnapshotReports(tickers: string[]): Promise<WatchlistReport[
   return reports;
 }
 
+/**
+ * Public entry used by `/api/analysis/watchlist`. Returns agent-driven reports
+ * when available, otherwise snapshot-based summaries.
+ */
 export async function getWatchlistReports(
   tickers: string[]
 ): Promise<{ reports: WatchlistReport[]; source: 'agent' | 'snapshot' | 'empty' }> {

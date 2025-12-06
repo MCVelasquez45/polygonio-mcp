@@ -1,6 +1,8 @@
 import { Collection } from 'mongodb';
 import { getCollection } from '../../../shared/db/mongo';
 
+// Persists the last per-user option selection so the UI can restore context.
+
 export type OptionSelectionDocument = {
   userId: string;
   ticker: string;

@@ -1,6 +1,8 @@
 import { Collection } from 'mongodb';
 import { getCollection } from '../../../shared/db/mongo';
 
+// Stores option chain snapshots per underlying/expiration so requests are fast.
+
 export type OptionChainSnapshotDocument = {
   underlying: string;
   expiration: string;
@@ -22,6 +24,7 @@ function getSnapshotsCollection() {
   return collection;
 }
 
+// TTL indexes keep documents fresh; background job not required.
 async function ensureSnapshotIndexes() {
   if (indexesEnsured) return;
   const col = getSnapshotsCollection();
