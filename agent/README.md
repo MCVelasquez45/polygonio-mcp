@@ -55,6 +55,7 @@ Type `exit` (or press `Ctrl+D`) inside the CLI to terminate the session.
 
 ```bash
 cd agent
+source venv/bin/activate
 uv run uvicorn api:app --reload --port 5001
 ```
 

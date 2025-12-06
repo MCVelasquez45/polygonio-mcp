@@ -69,14 +69,22 @@ export function ChartPanel({
 }: Props) {
   const chartData = useMemo<ChartDatum[]>(() => {
     if (!data.length) return [];
+    const unit = timeframe.split('/')[1] ?? 'day';
+    const isDailyView = unit === 'day';
     const smaMap = new Map(indicators?.sma?.values?.map(point => [point.timestamp, point.value]));
-    return data.map(bar => ({
-      time: new Date(bar.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      close: bar.close,
-      volume: bar.volume,
-      sma: smaMap.get(bar.timestamp) ?? null,
-    }));
-  }, [data, indicators]);
+    return data.map(bar => {
+      const date = new Date(bar.timestamp);
+      const label = isDailyView
+        ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      return {
+        time: label,
+        close: bar.close,
+        volume: bar.volume,
+        sma: smaMap.get(bar.timestamp) ?? null,
+      };
+    });
+  }, [data, indicators, timeframe]);
 
   const currentPrice = chartData.at(-1)?.close ?? null;
   const openPrice = chartData.at(0)?.close ?? null;
