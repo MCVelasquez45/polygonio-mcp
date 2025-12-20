@@ -1,20 +1,51 @@
 # Vite React TypeScript Client
 
-## Start
+This SPA renders the trading experience (watchlist, chart panels, options chain,
+AI features). It communicates with the Node server via REST/WebSocket calls.
+
+## Getting Started
+
 ```bash
 cd client
+npm install
 npm run dev
 ```
 
+Navigate to `http://localhost:5173`. The dev server automatically proxies API
+requests to `http://localhost:4000`.
+
 ## Environment
 
-* `VITE_API_URL=http://localhost:4000`
+| Variable | Description |
+| --- | --- |
+| `VITE_API_URL` | Base URL for the backend (defaults to `http://localhost:4000`). |
+
+## Architecture
+
+- **Entry point**: `src/App.tsx` orchestrates global view state (trading vs
+  scanner vs portfolio) and manages data fetching via `marketApi`.
+- **Components**: grouped by domain under `src/components` (e.g.,
+  `components/trading`, `components/options`, `components/layout`). Each module
+  focuses on presentation and uses callbacks from `App.tsx` for data updates.
+- **APIs**: `src/api` contains lightweight wrappers around REST endpoints.
+- **Types**: shared TypeScript models live under `src/types`.
 
 ## Logging
 
-* `[CLIENT]` API requests and chart updates print to browser console
-* `[CLIENT]` WebSocket events show real-time messages
+- `[CLIENT]` entries in the browser console show API requests/responses and
+  WebSocket activity. Useful for debugging fetch loops.
 
-## Trading UI
+## Data Flow
 
-The top navigation exposes a second view called **Trading Desk** that streams Massive option data (aggregates, SMA, quotes, trades, contract detail). Enter an underlying (e.g., `SPY`), click any contract in the chain, and the chart/quote panels will load live data for that leg. Set `MASSIVE_API_KEY` in `server/.env` so `/api/market/*` endpoints respond.
+1. A user selects a ticker or option contract.
+2. `App.tsx` triggers API calls (aggregates, chain, watchlist, checklists).
+3. Responses are cached in component state or refs to avoid redundant calls.
+4. Components receive props/state updates and render charts, tables, or watchlist
+   summaries accordingly.
+
+## Trading UI quickstart
+
+Switch to the **Trading Desk** view in the header, enter an underlying (e.g.,
+`SPY`), and select a contract from the options chain. The chart, quote, and
+order ticket panels will load live data as long as the backend has access to
+Massive (`MASSIVE_API_KEY` set inside `server/.env`).
