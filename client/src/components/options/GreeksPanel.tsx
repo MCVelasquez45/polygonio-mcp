@@ -209,8 +209,8 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
         </div>
         {riskProfile.slices.length ? (
           <div className="flex flex-col lg:flex-row gap-4">
-            <div className="w-full lg:w-1/2 h-44">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full lg:w-1/2 h-44 min-w-0" style={{ minWidth: 220 }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={176}>
                 <PieChart>
                   <Pie
                     data={riskProfile.slices}

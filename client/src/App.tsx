@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
 import { ChartPanel } from './components/trading/ChartPanel';
@@ -10,6 +11,7 @@ import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { EntryChecklistPanel } from './components/trading/EntryChecklistPanel';
 import { analysisApi, chatApi, marketApi } from './api';
+import { API_BASE_URL } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -39,6 +41,9 @@ const TIMEFRAME_MAP = {
 
 // Default lookback window for the simple moving average indicator.
 const SMA_WINDOW = 50;
+const MAX_TRADE_HISTORY = 200;
+const LIVE_STALE_TTL_MS = 60_000;
+const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
 
 // Compute a rolling SMA series for the supplied aggregate bars.
 function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries {
@@ -188,6 +193,11 @@ function App() {
   const [checklistHighlights, setChecklistHighlights] = useState<Record<string, ChecklistResult>>({});
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [currentChecklist, setCurrentChecklist] = useState<ChecklistResult | null>(null);
+  const [liveSocketConnected, setLiveSocketConnected] = useState(false);
+  const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
+  const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
+  const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -208,6 +218,99 @@ function App() {
   // Reset derived state when the user changes tickers (fresh bars, selection, etc.).
   // Persist the currently selected leg so it can be restored on next load.
   // Fetch aggregate bars/indicators for the active ticker/timeframe with caching + polling.
+  // Establish Socket.IO connection for live Massive feed.
+  useEffect(() => {
+    const socket = io(API_BASE_URL, {
+      transports: ['websocket', 'polling'],
+      withCredentials: false,
+      path: '/socket.io'
+    });
+    socketRef.current = socket;
+    socket.on('connect', () => {
+      setLiveSocketConnected(true);
+    });
+    socket.on('disconnect', () => {
+      setLiveSocketConnected(false);
+      setLiveSubscriptionActive(false);
+    });
+    socket.on('live:error', payload => {
+      console.warn('[CLIENT] live feed error', payload);
+    });
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+      setLiveSocketConnected(false);
+      setLiveSubscriptionActive(false);
+    };
+  }, []);
+
+  // Manage live feed subscription for the selected contract.
+  useEffect(() => {
+    const socket = socketRef.current;
+    const symbol = activeContractSymbol?.toUpperCase();
+    if (!socket || !liveSocketConnected || !symbol || !symbol.startsWith('O:')) {
+      setLiveSubscriptionActive(false);
+      return;
+    }
+    let mounted = true;
+
+    const normalizeSymbol = (value: any) =>
+      typeof value === 'string' ? value.toUpperCase() : typeof value?.symbol === 'string' ? value.symbol.toUpperCase() : null;
+
+    const handleSubscribed = (payload: any) => {
+      const ackSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (!mounted || ackSymbol !== symbol) return;
+      setLiveSubscriptionActive(true);
+    };
+
+    const handleUnsubscribed = (payload: any) => {
+      const ackSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (!mounted || ackSymbol !== symbol) return;
+      setLiveSubscriptionActive(false);
+    };
+
+    const handleQuote = (payload: any) => {
+      const eventSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (eventSymbol !== symbol) return;
+      const normalized = normalizeLiveQuote(payload);
+      if (normalized) {
+        setQuote(normalized);
+        setLastLiveQuoteAt(Date.now());
+        setLiveSubscriptionActive(true);
+      }
+    };
+
+    const handleTrade = (payload: any) => {
+      const eventSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (eventSymbol !== symbol) return;
+      const normalized = normalizeLiveTrade(payload);
+      if (normalized) {
+        setTrades(prev => {
+          if (prev.length > 0 && prev[0]?.id === normalized.id) return prev;
+          return [normalized, ...prev].slice(0, MAX_TRADE_HISTORY);
+        });
+        setLastLiveTradeAt(Date.now());
+        setLiveSubscriptionActive(true);
+      }
+    };
+
+    socket.on('live:subscribed', handleSubscribed);
+    socket.on('live:unsubscribed', handleUnsubscribed);
+    socket.on('live:quote', handleQuote);
+    socket.on('live:trades', handleTrade);
+    socket.emit('live:subscribe', { symbol });
+
+    return () => {
+      mounted = false;
+      socket.emit('live:unsubscribe', { symbol });
+      socket.off('live:subscribed', handleSubscribed);
+      socket.off('live:unsubscribed', handleUnsubscribed);
+      socket.off('live:quote', handleQuote);
+      socket.off('live:trades', handleTrade);
+      setLiveSubscriptionActive(false);
+    };
+  }, [activeContractSymbol, liveSocketConnected]);
+
   // Poll trades + quote snapshots for the currently selected option contract.
   useEffect(() => {
     if (!watchlistSignature) {
@@ -692,8 +795,25 @@ function App() {
     setContractDetail(optionLegToContractDetail(selectedLeg));
   }, [selectedLeg]);
 
+  const chartTicker = useMemo(() => {
+    if (!normalizedTicker) return null;
+    if (!normalizedTicker.startsWith('O:')) {
+      return normalizedTicker;
+    }
+    const legUnderlying = selectedLeg?.underlying?.toUpperCase();
+    if (legUnderlying) return legUnderlying;
+    const detailUnderlying = contractDetail?.underlying?.toUpperCase();
+    if (detailUnderlying) return detailUnderlying;
+    const parsed = extractUnderlyingFromOptionTicker(normalizedTicker);
+    if (parsed) return parsed;
+    if (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying') {
+      return underlyingSnapshot.ticker.toUpperCase();
+    }
+    return normalizedTicker.slice(2);
+  }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
+
   useEffect(() => {
-    const symbol = normalizedTicker;
+    const symbol = chartTicker;
     if (!symbol) {
       setBars([]);
       setIndicators(undefined);
@@ -819,7 +939,7 @@ function App() {
         chartRefreshIntervalRef.current = null;
       }
     };
-  }, [normalizedTicker, timeframe]);
+  }, [chartTicker, timeframe]);
 
   useEffect(() => {
     if (!activeContractSymbol) {
@@ -827,51 +947,67 @@ function App() {
       setTrades([]);
       return;
     }
-    const symbol = activeContractSymbol!;
+    const symbol = activeContractSymbol.toUpperCase();
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const shouldPoll = !marketSessionMeta?.marketClosed;
+    let fetching = false;
 
-    const loadSnapshots = async () => {
+    const loadSnapshots = async (reason: 'initial' | 'fallback') => {
+      if (cancelled || fetching) return;
+      fetching = true;
       try {
         const [tradesPayload, quotePayload] = await Promise.all([
           marketApi.getTrades(symbol),
           marketApi.getQuote(symbol),
         ]);
-        console.log('[CLIENT] trades response', {
-          ticker: symbol,
-          count: tradesPayload?.trades?.length ?? 0,
-          sample: tradesPayload?.trades?.[0]
-        });
-        console.log('[CLIENT] quote response', {
-          ticker: symbol,
-          bid: quotePayload?.bidPrice,
-          ask: quotePayload?.askPrice,
-          midpoint: quotePayload?.midpoint,
-          updated: quotePayload?.updated
-        });
         if (!cancelled) {
-          setTrades(tradesPayload.trades ?? []);
+          setTrades((tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
           setQuote(quotePayload);
+          if (reason === 'fallback') {
+            console.debug('[CLIENT] fallback snapshot refreshed', { symbol, trades: tradesPayload.trades?.length ?? 0 });
+          }
         }
       } catch (error: any) {
         if (!cancelled) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load market snapshots';
           setMarketError(message);
         }
+      } finally {
+        fetching = false;
       }
     };
 
-    loadSnapshots();
-    if (shouldPoll) {
-      timer = setInterval(loadSnapshots, 60_000);
-    }
+    const shouldFallback = () => {
+      const marketClosed = Boolean(marketSessionMeta?.marketClosed);
+      const allowFallbackWhileClosed = !marketClosed || !liveSubscriptionActive;
+      if (!allowFallbackWhileClosed) return false;
+      if (!liveSocketConnected || !liveSubscriptionActive) return true;
+      const now = Date.now();
+      const lastUpdate = Math.max(lastLiveQuoteAt ?? 0, lastLiveTradeAt ?? 0);
+      if (!lastUpdate) return true;
+      return now - lastUpdate > LIVE_STALE_TTL_MS;
+    };
+
+    const interval = setInterval(() => {
+      if (cancelled) return;
+      if (shouldFallback()) {
+        void loadSnapshots('fallback');
+      }
+    }, LIVE_HEALTH_CHECK_INTERVAL_MS);
+
+    void loadSnapshots('initial');
 
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      clearInterval(interval);
     };
-  }, [activeContractSymbol, marketSessionMeta?.marketClosed]);
+  }, [
+    activeContractSymbol,
+    liveSocketConnected,
+    liveSubscriptionActive,
+    lastLiveQuoteAt,
+    lastLiveTradeAt,
+    marketSessionMeta?.marketClosed
+  ]);
 
   // Spawn a brand new chat session in the dock and make it active.
   function startNewConversation() {
@@ -1305,4 +1441,99 @@ function parseOptionExpirationFromTicker(symbol: string | null | undefined): str
   }
   const fullYear = 2000 + year;
   return `${fullYear}-${month}-${day}`;
+}
+
+function extractUnderlyingFromOptionTicker(symbol: string | null | undefined): string | null {
+  if (!symbol) return null;
+  const match = symbol.toUpperCase().match(/^O:([A-Z0-9\.]+)\d{6}[CP]/);
+  if (match) return match[1];
+  if (symbol.startsWith('O:')) {
+    return symbol.slice(2).replace(/\d.*$/, '') || null;
+  }
+  return null;
+}
+
+function normalizeLiveQuote(event: any): QuoteSnapshot | null {
+  if (!event) return null;
+  const ticker = normalizeLiveSymbol(event);
+  if (!ticker) return null;
+  const bidPrice = coerceNumber(event.bp ?? event.bidPrice);
+  const askPrice = coerceNumber(event.ap ?? event.askPrice);
+  const bidSize = coerceNumber(event.bs ?? event.bidSize);
+  const askSize = coerceNumber(event.as ?? event.askSize);
+  const timestamp = coerceTimestamp(event.t ?? event.ts ?? event.timestamp ?? event.receivedAt);
+  const spread = bidPrice != null && askPrice != null ? Math.max(0, askPrice - bidPrice) : null;
+  const midpoint =
+    bidPrice != null && askPrice != null ? (bidPrice + askPrice) / 2 : bidPrice ?? askPrice ?? null;
+
+  return {
+    ticker,
+    timestamp,
+    bidPrice,
+    askPrice,
+    bidSize,
+    askSize,
+    bidExchange: event.bx ?? event.bidExchange ?? undefined,
+    askExchange: event.ax ?? event.askExchange ?? undefined,
+    spread,
+    midpoint,
+    updated: timestamp,
+    quotes: undefined,
+  };
+}
+
+function normalizeLiveTrade(event: any): TradePrint | null {
+  if (!event) return null;
+  const ticker = normalizeLiveSymbol(event);
+  if (!ticker) return null;
+  const price = coerceNumber(event.p ?? event.price);
+  if (price == null) return null;
+  const size = coerceNumber(event.s ?? event.size) ?? 0;
+  const timestamp = coerceTimestamp(event.t ?? event.ts ?? event.timestamp ?? event.receivedAt);
+  const exchange = event.x ?? event.exchange ?? null;
+  const idSource = event.i ?? event.id ?? `${ticker}-${timestamp}-${price}-${size}`;
+  const conditionsSource = Array.isArray(event.c) ? event.c : Array.isArray(event.conditions) ? event.conditions : null;
+
+  return {
+    id: String(idSource),
+    price,
+    size,
+    timestamp,
+    exchange: exchange != null ? String(exchange) : undefined,
+    conditions: conditionsSource ? conditionsSource.map((value: any) => String(value)) : undefined,
+  };
+}
+
+function normalizeLiveSymbol(event: any): string | null {
+  if (!event) return null;
+  const candidate = event.symbol ?? event.sym ?? event.ticker;
+  if (typeof candidate !== 'string') return null;
+  const normalized = candidate.trim().toUpperCase();
+  return normalized ? normalized : null;
+}
+
+function coerceNumber(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function coerceTimestamp(value: any): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    }
+  }
+  return Date.now();
 }

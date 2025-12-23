@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#__next {
+    background-color: #13192c;
+    font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+    height: 100%;
+}
+
+#tradingview_widget_wrapper,
+#tradingview_widget_wrapper > div:first-child {
+    height: 100%;
+}
+
+#tradingview_widget_wrapper > div:nth-child(2) {
+    visibility: hidden;
+}

@@ -1,4 +1,4 @@
-import { getOptionAggregates } from '../../../shared/data/massive';
+import { getMassiveOptionsSnapshot, getOptionAggregates } from '../../../shared/data/massive';
 import { getRecentAggregateBars, StoredAggregateBar, upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot, MarketStatusSnapshot } from './marketStatus';
 
@@ -358,6 +358,20 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
   }
 
   if (!selectedBars.length) {
+    const snapshotSymbol = ticker.startsWith('O:') ? extractUnderlyingSymbol(ticker) : ticker;
+    if (snapshotSymbol) {
+      const snapshotBar = await buildSnapshotFallbackBar(snapshotSymbol);
+      if (snapshotBar) {
+        selectedBars = [snapshotBar];
+        granularity = 'daily';
+        usingLastSession = true;
+        cacheState = 'fresh';
+        note = note ?? 'Massive aggregates unavailable; displaying latest underlying snapshot.';
+      }
+    }
+  }
+
+  if (!selectedBars.length) {
     throw Object.assign(new Error('Aggregates unavailable'), { status: 503 });
   }
 
@@ -380,4 +394,58 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
     note,
     marketStatus: buildMarketState(status)
   };
+}
+
+function extractUnderlyingSymbol(optionTicker: string): string | null {
+  const match = optionTicker.toUpperCase().match(/^O:([A-Z0-9\.]+)\d{6}[CP]/);
+  if (match) return match[1];
+  if (optionTicker?.startsWith('O:')) {
+    return optionTicker.slice(2).replace(/\d.*$/, '');
+  }
+  return optionTicker?.startsWith('O:') ? optionTicker.slice(2) : optionTicker;
+}
+
+async function buildSnapshotFallbackBar(underlying: string): Promise<StoredAggregateBar | null> {
+  try {
+    const snapshot: any = await getMassiveOptionsSnapshot(underlying);
+    const underlyingAsset = snapshot?.underlying_asset ?? snapshot?.underlying ?? snapshot ?? {};
+    const day = underlyingAsset?.day ?? {};
+    const lastQuote = underlyingAsset?.last_quote ?? {};
+    const lastTrade = underlyingAsset?.last_trade ?? {};
+    const price =
+      coerceNumber(lastQuote?.midpoint) ??
+      coerceNumber(lastQuote?.mid) ??
+      coerceNumber(lastTrade?.price) ??
+      coerceNumber(underlyingAsset?.price) ??
+      coerceNumber(day?.close);
+    if (price == null) return null;
+    const open = coerceNumber(day?.open) ?? price;
+    const high = coerceNumber(day?.high) ?? price;
+    const low = coerceNumber(day?.low) ?? price;
+    const close = coerceNumber(day?.close) ?? price;
+    const volume = coerceNumber(day?.volume) ?? coerceNumber(underlyingAsset?.volume) ?? 0;
+    const vwap = coerceNumber(day?.vwap);
+    return {
+      timestamp: Date.now(),
+      open,
+      high,
+      low,
+      close,
+      volume,
+      vwap,
+      transactions: null
+    };
+  } catch (error) {
+    console.warn('[AGGS] snapshot fallback failed', { underlying, error: (error as Error)?.message });
+    return null;
+  }
+}
+
+function coerceNumber(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }

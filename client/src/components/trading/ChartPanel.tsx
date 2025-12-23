@@ -151,8 +151,8 @@ export function ChartPanel({
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Select a contract to load chart data.</div>
         ) : (
           <div className="h-full flex flex-col gap-4">
-            <div className="w-full flex-1 min-h-[320px]">
-              <ResponsiveContainer width="100%" height={320}>
+            <div className="w-full flex-1 min-h-[320px] min-w-0" style={{ minWidth: 280 }}>
+              <ResponsiveContainer width="100%" height={320} minWidth={280} minHeight={240}>
                 <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -18, bottom: 5 }}>
                   <defs>
                     <linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1">
@@ -173,8 +173,8 @@ export function ChartPanel({
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-            <div className="h-28">
-              <ResponsiveContainer width="100%" height={110}>
+            <div className="h-28 min-w-0" style={{ minWidth: 200 }}>
+              <ResponsiveContainer width="100%" height={110} minWidth={280} minHeight={110}>
                 <BarChart data={chartData} barSize={6}>
                   <CartesianGrid vertical={false} stroke="#1f2937" opacity={0.3} />
                   <XAxis dataKey="time" hide />

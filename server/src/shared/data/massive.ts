@@ -235,6 +235,10 @@ async function executeMassiveRequest<T>(
       params: {
         apiKey: MASSIVE_API_KEY,
         ...normalizedParams
+      },
+      headers: {
+        Authorization: `Bearer ${MASSIVE_API_KEY}`,
+        'X-API-Key': MASSIVE_API_KEY
       }
     });
     return (data as any) ?? {};
