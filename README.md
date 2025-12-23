@@ -1,10 +1,10 @@
-# Polygon.io Examples & Demos
+# Massive.com Examples & Demos
 
 <div align="center">
-  <img src="./images/logo.png" alt="Project Logo" width="100%"/>
+  <img src="./images/massive.logo.png" alt="Massive.com Logo" width="100%"/>
 </div>
 
-This repository contains official examples and demos built by the Polygon.io team. These examples showcase how to use our REST and WebSocket APIs to access market data across stocks, options, crypto, forex, and more.
+This repository contains official examples and demos built by the Massive.com team. These projects showcase how to use our REST and WebSocket APIs to access market data across equities, options, crypto, forex, and more.
 
 ## What's Included
 
@@ -15,10 +15,10 @@ This repository contains official examples and demos built by the Polygon.io tea
 
 ## Getting Started
 
-Most examples require a Polygon.io API key. If you need an API key, [sign up here](https://polygon.io) to get started. Set it using an environment variable:
+Most examples require a Massive.com API key. If you need an API key, [sign up here](https://massive.com) to get started. Set it using an environment variable:
 
 ```bash
-export POLYGON_API_KEY=your-api-key-here
+export MASSIVE_API_KEY=your-api-key-here
 ```
 
 Then follow the README in each example folder for setup instructions.
@@ -81,4 +81,4 @@ This project is licensed under the [MIT License](../LICENSE).
 
 ## Questions?
 
-For product support or technical help, contact us at [polygon.io/contact](https://polygon.io/contact).
+For product support or technical help, contact us at [massive.com/contact](https://massive.com/contact).
