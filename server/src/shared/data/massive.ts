@@ -294,10 +294,12 @@ export async function getOptionAggregates(
   const endpoint = `/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${from
     .toISOString()
     .slice(0, 10)}/${to.toISOString().slice(0, 10)}`;
+  const isIntraday = timespan === 'minute' || timespan === 'hour';
+  const cacheTtlMs = isIntraday ? 5_000 : 60_000;
   const payload = await massiveGet(
     endpoint,
     { adjusted: true, sort: 'asc', limit: window },
-    { cacheTtlMs: 30_000 }
+    { cacheTtlMs }
   );
 
   const results = Array.isArray(payload.results)

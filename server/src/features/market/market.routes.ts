@@ -48,6 +48,10 @@ function requireOptionTicker(ticker: string, res: any) {
   return true;
 }
 
+function setNoStore(res: any) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+}
+
 // GET /api/market/aggs – high-level candle endpoint used by the chart.
 router.get('/aggs', async (req, res, next) => {
   try {
@@ -67,6 +71,7 @@ router.get('/aggs', async (req, res, next) => {
       from: typeof req.query.from === 'string' ? req.query.from : null,
       to: typeof req.query.to === 'string' ? req.query.to : null
     });
+    setNoStore(res);
     res.json({
       ticker: aggregates.ticker,
       interval: aggregates.interval,
@@ -96,10 +101,11 @@ router.get('/trades/:ticker', async (req, res, next) => {
     const { data, fetchedAt, fromCache } = await fetchWithCache(
       'trades',
       { ticker, limit, order },
-      5_000,
+      2_000,
       () => getMassiveTrades(ticker, limit, order),
       { ticker }
     );
+    setNoStore(res);
     res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
   } catch (error) {
     next(error);
@@ -117,7 +123,7 @@ router.get('/quotes/:ticker', async (req, res, next) => {
     const { data, fetchedAt, fromCache } = await fetchWithCache(
       'quotes',
       { ticker, limit, order },
-      3_000,
+      1_500,
       async () => {
         const quote = await getMassiveQuotes(ticker, { limit, order });
         if (!quote) {
@@ -127,6 +133,7 @@ router.get('/quotes/:ticker', async (req, res, next) => {
       },
       { ticker }
     );
+    setNoStore(res);
     res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
   } catch (error) {
     next(error);

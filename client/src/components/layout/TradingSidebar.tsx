@@ -366,7 +366,9 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
                 (referenceContract ? referenceContract === normalizedSelected : false);
               const priceDisplay = hasPrice ? `$${Number(priceSource).toFixed(2)}` : '—';
               const formattedExpiration =
-                snapshot?.expiration ? formatExpirationDate(snapshot.expiration) : '';
+                snapshot && snapshot.entryType === 'contract' && snapshot.expiration
+                  ? formatExpirationDate(snapshot.expiration)
+                  : '';
               const secondaryLine =
                 snapshot?.entryType === 'contract'
                   ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''}$ ${formattedExpiration}`

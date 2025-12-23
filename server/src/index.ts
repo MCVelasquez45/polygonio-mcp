@@ -12,6 +12,7 @@ import { analysisRouter } from './features/analysis';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
+import { initLiveFeed, registerLiveFeedHandlers } from './features/market/services/liveFeed';
 
 const app = express();
 app.use(cors());
@@ -47,10 +48,12 @@ const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: { origin: '*' }
 });
+initLiveFeed(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
   socket.emit('connected', { msg: 'WebSocket connected' });
+  registerLiveFeedHandlers(socket);
 
   socket.on('disconnect', reason => {
     console.log('[SERVER] WebSocket client disconnected:', socket.id, reason);
