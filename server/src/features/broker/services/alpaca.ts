@@ -10,10 +10,23 @@ if (!alpacaKey || !alpacaSecret) {
   console.warn('[ALPACA] Missing API credentials. Set ALPACA_API_KEY and ALPACA_API_SECRET to enable trading.');
 }
 
+function normalizeBaseUrl(url?: string | null) {
+  if (!url) return undefined;
+  let trimmed = url.trim();
+  if (!trimmed) return undefined;
+  trimmed = trimmed.replace(/\/+$/, '');
+  if (trimmed.endsWith('/v2')) {
+    trimmed = trimmed.slice(0, -3);
+  }
+  return trimmed;
+}
+
 const alpaca = new Alpaca({
   keyId: alpacaKey,
   secretKey: alpacaSecret,
-  baseUrl: process.env.ALPACA_API_BASE ?? process.env.ALPACA_BASE_URL ?? process.env.APCA_API_BASE_URL,
+  baseUrl:
+    normalizeBaseUrl(process.env.ALPACA_API_BASE ?? process.env.ALPACA_BASE_URL ?? process.env.APCA_API_BASE_URL) ??
+    undefined,
   dataBaseUrl: process.env.ALPACA_DATA_BASE_URL ?? process.env.APCA_DATA_BASE_URL,
   paper: (process.env.ALPACA_PAPER ?? 'true').toLowerCase() !== 'false',
   feed: process.env.ALPACA_DATA_FEED,
@@ -68,15 +81,58 @@ export async function listAlpacaOptionPositions() {
   }
 }
 
+function normalizeOptionSymbol(symbol: string) {
+  return symbol.startsWith('O:') ? symbol.slice(2) : symbol;
+}
+
+function mapOrderClass(orderClass: 'simple' | 'multi-leg' | undefined, legCount: number): 'simple' | 'mleg' {
+  const resolved = orderClass ?? (legCount > 1 ? 'multi-leg' : 'simple');
+  return resolved === 'multi-leg' ? 'mleg' : 'simple';
+}
+
+function mapPositionIntent(side: 'buy' | 'sell') {
+  return side === 'sell' ? 'sell_to_open' : 'buy_to_open';
+}
+
 export async function submitAlpacaOptionsOrder(payload: AlpacaOptionsOrderRequest) {
-  const normalized: AlpacaOptionsOrderRequest = {
-    ...payload,
-    order_class: payload.order_class ?? (payload.legs.length > 1 ? 'multi-leg' : 'simple'),
-    order_type: payload.order_type ?? payload.limit_price != null ? 'limit' : 'market'
+  const normalizedType: 'limit' | 'market' =
+    payload.order_type ?? (payload.limit_price != null ? 'limit' : 'market');
+  const normalizedClass = mapOrderClass(payload.order_class, payload.legs.length);
+  const qty = Number(payload.quantity ?? 1);
+  const limitPrice =
+    payload.limit_price != null && Number.isFinite(Number(payload.limit_price))
+      ? Math.abs(Number(payload.limit_price))
+      : undefined;
+  const baseOrder: Record<string, any> = {
+    order_class: normalizedClass,
+    qty,
+    type: normalizedType,
+    time_in_force: payload.time_in_force,
+    client_order_id: payload.client_order_id,
+    limit_price: normalizedType === 'limit' ? limitPrice : undefined,
+    extended_hours:
+      typeof payload.extended_hours === 'boolean' ? payload.extended_hours : undefined
   };
-  return sendOptionsRequest('/options/orders', null, normalized, 'POST');
+
+  if (normalizedClass === 'mleg' || payload.legs.length > 1) {
+    baseOrder.legs = payload.legs.map(leg => ({
+      symbol: normalizeOptionSymbol(leg.symbol),
+      ratio_qty: leg.qty,
+      side: leg.side,
+      position_intent: mapPositionIntent(leg.side)
+    }));
+  } else {
+    const leg = payload.legs[0];
+    Object.assign(baseOrder, {
+      symbol: normalizeOptionSymbol(leg.symbol),
+      side: leg.side,
+      position_intent: mapPositionIntent(leg.side)
+    });
+  }
+
+  return sendOptionsRequest('/orders', null, baseOrder, 'POST');
 }
 
 export async function listAlpacaOptionOrders(params: { status?: string; limit?: number } = {}) {
-  return sendOptionsRequest('/options/orders', params);
+  return sendOptionsRequest('/orders', params);
 }

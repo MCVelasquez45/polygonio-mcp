@@ -11,7 +11,7 @@ import {
   ShoppingCart,
   Trash2
 } from 'lucide-react';
-import { submitOptionOrder } from '../../api/alpaca';
+import { submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
 
 type Props = {
   contract?: OptionContractDetail | null;
@@ -167,19 +167,21 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
     setSubmitting(true);
     setSubmissionResult(null);
     try {
-      const payload = {
+      const inferredOrderClass: 'simple' | 'multi-leg' = legs.length > 1 ? 'multi-leg' : 'simple';
+      const inferredOrderType: 'market' | 'limit' = orderType;
+      const payload: SubmitOptionsOrderPayload = {
         legs: legTotals.map(entry => ({
           symbol: entry.leg.symbol,
           qty: entry.leg.ratio,
           side: entry.leg.action,
-          type: orderType,
-          ...(orderType === 'limit' && entry.price != null ? { limit_price: Number(entry.price.toFixed(2)) } : {})
+          type: inferredOrderType,
+          ...(inferredOrderType === 'limit' && entry.price != null ? { limit_price: Number(entry.price.toFixed(2)) } : {})
         })),
         quantity,
         time_in_force: timeInForce,
-        order_type: orderType,
-        order_class: legs.length > 1 ? 'multi-leg' : 'simple',
-        limit_price: orderType === 'limit' && workingPrice != null ? Number(workingPrice.toFixed(2)) : undefined,
+        order_type: inferredOrderType,
+        order_class: inferredOrderClass,
+        limit_price: inferredOrderType === 'limit' && workingPrice != null ? Number(workingPrice.toFixed(2)) : undefined,
         client_order_id: `mcp-${Date.now()}`
       };
       console.log('[CLIENT] submitting Alpaca options order', payload);
