@@ -21,6 +21,13 @@ const CHECKLIST_TTL_MS = Number(process.env.CHECKLIST_TTL_MS ?? 10 * 60 * 1000);
 const FED_BLOCK_WINDOW_MS = Number(process.env.CHECKLIST_FED_BLOCK_WINDOW_MS ?? 2 * 24 * 60 * 60 * 1000);
 const MINUTE_WINDOW = Number(process.env.CHECKLIST_MINUTE_WINDOW ?? 240); // 4h of 1m bars
 const DAILY_WINDOW = Number(process.env.CHECKLIST_DAILY_WINDOW ?? 200);
+const CHECKLIST_ALLOW_MINUTE_AGGS = !['false', '0', 'no'].includes(
+  String(process.env.CHECKLIST_ALLOW_MINUTE_AGGS ?? 'true').toLowerCase()
+);
+const MINUTE_AGGS_BLOCK_TTL_MS = (() => {
+  const value = Number(process.env.CHECKLIST_MINUTE_AGGS_BLOCK_TTL_MS ?? 15 * 60 * 1000);
+  return Number.isFinite(value) ? value : 15 * 60 * 1000;
+})();
 const CONTEXT_SYMBOLS = ['SPY', 'QQQ', 'VIX'];
 
 export type ChecklistItem = {
@@ -88,12 +95,22 @@ type FedEventSnapshot = {
 
 let checklistCollection: Collection<ChecklistDocument> | null = null;
 let indexesEnsured = false;
+let minuteAggsBlockedUntil = 0;
 
 function collection(): Collection<ChecklistDocument> {
   if (!checklistCollection) {
     checklistCollection = getCollection<ChecklistDocument>(CHECKLIST_COLLECTION);
   }
   return checklistCollection;
+}
+
+function isMinuteAggsBlocked() {
+  return MINUTE_AGGS_BLOCK_TTL_MS > 0 && minuteAggsBlockedUntil > Date.now();
+}
+
+function blockMinuteAggs() {
+  if (MINUTE_AGGS_BLOCK_TTL_MS <= 0) return;
+  minuteAggsBlockedUntil = Date.now() + MINUTE_AGGS_BLOCK_TTL_MS;
 }
 
 // Sets up symbol + updatedAt indexes once per process so lookups are fast.
@@ -336,28 +353,64 @@ async function loadMinuteBars(symbol: string, window: number): Promise<StoredAgg
   const upper = symbol.toUpperCase();
   let bars = await getRecentAggregateBars(upper, 1, 'minute', window);
   if (bars.length >= window) return bars;
-  try {
-    const remote = await getOptionAggregates(upper, 1, 'minute', window);
-    if (Array.isArray(remote?.results) && remote.results.length) {
-      await upsertAggregateBars(
-        upper,
-        1,
-        'minute',
-        remote.results.map(row => ({
-          timestamp: row.timestamp,
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          close: row.close,
-          volume: row.volume ?? 0,
-          vwap: row.vwap ?? null,
-          transactions: row.transactions ?? null
-        }))
-      );
-      bars = await getRecentAggregateBars(upper, 1, 'minute', window);
+  const shouldAttemptRemote = CHECKLIST_ALLOW_MINUTE_AGGS && !isMinuteAggsBlocked();
+  if (shouldAttemptRemote) {
+    try {
+      const remote = await getOptionAggregates(upper, 1, 'minute', window);
+      if (Array.isArray(remote?.results) && remote.results.length) {
+        await upsertAggregateBars(
+          upper,
+          1,
+          'minute',
+          remote.results.map(row => ({
+            timestamp: row.timestamp,
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+            volume: row.volume ?? 0,
+            vwap: row.vwap ?? null,
+            transactions: row.transactions ?? null
+          })),
+          { source: 'massive' }
+        );
+        bars = await getRecentAggregateBars(upper, 1, 'minute', window);
+      }
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (status === 403) {
+        blockMinuteAggs();
+        console.warn('[CHECKLIST] minute aggregates unauthorized; blocking retries', {
+          symbol: upper,
+          status,
+          ttlMs: MINUTE_AGGS_BLOCK_TTL_MS
+        });
+      } else {
+        console.warn('[CHECKLIST] failed to backfill minute aggregates', { symbol: upper, error });
+      }
     }
-  } catch (error) {
-    console.warn('[CHECKLIST] failed to backfill minute aggregates', { symbol: upper, error });
+  }
+  if (!bars.length) {
+    try {
+      const snapshot = await getMassiveOptionsSnapshot(upper);
+      const price = snapshot?.price;
+      if (typeof price === 'number' && Number.isFinite(price)) {
+        const bar: StoredAggregateBar = {
+          timestamp: Date.now(),
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: 0,
+          vwap: null,
+          transactions: null
+        };
+        await upsertAggregateBars(upper, 1, 'minute', [bar], { source: 'synthetic' });
+        bars = [bar];
+      }
+    } catch (snapError) {
+      console.warn('[CHECKLIST] snapshot fallback failed', { symbol: upper, error: snapError });
+    }
   }
   return bars;
 }

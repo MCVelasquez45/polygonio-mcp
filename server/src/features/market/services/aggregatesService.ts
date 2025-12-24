@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { getMassiveOptionsSnapshot, getOptionAggregates } from '../../../shared/data/massive';
 import { getRecentAggregateBars, StoredAggregateBar, upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot, MarketStatusSnapshot } from './marketStatus';
@@ -16,6 +17,14 @@ const TIMESPAN_MS: Record<SupportedTimespan, number> = {
 };
 
 const MARKET_CLOSE_UTC_HOUR = 21; // 4:00 PM ET (approx, ignores DST but good enough for fallback displays)
+const MARKET_ALLOW_INTRADAY_AGGS = !['false', '0', 'no'].includes(
+  String(process.env.MARKET_ALLOW_INTRADAY_AGGS ?? 'true').toLowerCase()
+);
+const MARKET_INTRADAY_BLOCK_TTL_MS = (() => {
+  const value = Number(process.env.MARKET_INTRADAY_BLOCK_TTL_MS ?? 15 * 60 * 1000);
+  return Number.isFinite(value) ? value : 15 * 60 * 1000;
+})();
+let intradayBlockedUntil = 0;
 
 type AggregatesParams = {
   ticker: string;
@@ -78,6 +87,23 @@ function formatInterval(multiplier: number, timespan: SupportedTimespan): string
 
 function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function isIntradayBlocked(): boolean {
+  if (!MARKET_ALLOW_INTRADAY_AGGS) return true;
+  return MARKET_INTRADAY_BLOCK_TTL_MS > 0 && intradayBlockedUntil > Date.now();
+}
+
+function blockIntradayAggs(reason?: unknown) {
+  if (!MARKET_ALLOW_INTRADAY_AGGS) return;
+  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return;
+  const nextUntil = Date.now() + MARKET_INTRADAY_BLOCK_TTL_MS;
+  if (nextUntil <= intradayBlockedUntil) return;
+  intradayBlockedUntil = nextUntil;
+  console.warn('[AGGS] intraday aggregates blocked', {
+    ttlMs: MARKET_INTRADAY_BLOCK_TTL_MS,
+    reason
+  });
 }
 
 function normalizeBars(bars: StoredAggregateBar[]): NormalizedAggregateBar[] {
@@ -239,13 +265,25 @@ async function fetchRemoteBars(args: {
   attempt: SessionAttempt;
 }): Promise<StoredAggregateBar[]> {
   const { ticker, multiplier, timespan, window, attempt } = args;
+  if ((timespan === 'minute' || timespan === 'hour') && isIntradayBlocked()) {
+    return [];
+  }
   const from = formatDateOnly(attempt.fromDate);
   const to = formatDateOnly(attempt.toDate);
-  const remote = await getOptionAggregates(ticker, multiplier, timespan, window, from, to);
-  if (remote.results.length) {
-    await upsertAggregateBars(ticker, multiplier, timespan, remote.results, { source: 'massive' });
+  try {
+    const remote = await getOptionAggregates(ticker, multiplier, timespan, window, from, to);
+    if (remote.results.length) {
+      await upsertAggregateBars(ticker, multiplier, timespan, remote.results, { source: 'massive' });
+    }
+    return remote.results;
+  } catch (error: any) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
+      blockIntradayAggs({ ticker, status });
+      return [];
+    }
+    throw error;
   }
-  return remote.results;
 }
 
 /**
@@ -315,6 +353,9 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
   let usingLastSession = sessionPlan.marketClosed;
   let note: string | undefined;
   let cacheState: AggregatesResponse['cache'] = 'fresh';
+  if (timespan !== 'day' && isIntradayBlocked()) {
+    note = note ?? 'Intraday aggregates unavailable; using fallback data.';
+  }
 
   for (const attempt of sessionPlan.attempts) {
     try {

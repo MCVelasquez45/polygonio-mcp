@@ -22,7 +22,7 @@ type AggregateBarDocument = StoredAggregateBar & {
   multiplier: number;
   timespan: Timespan;
   updatedAt: Date;
-  source?: 'massive' | 'mongo';
+  source?: 'massive' | 'mongo' | 'synthetic';
 };
 
 const COLLECTION_NAME = 'option_aggregates';
@@ -54,7 +54,7 @@ export async function upsertAggregateBars(
   multiplier: number,
   timespan: Timespan,
   bars: StoredAggregateBar[],
-  options: { source?: 'massive' | 'mongo' } = {}
+  options: { source?: 'massive' | 'mongo' | 'synthetic' } = {}
 ): Promise<void> {
   if (!bars.length) return;
   await ensureAggregateIndexes();
