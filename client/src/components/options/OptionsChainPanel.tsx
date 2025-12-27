@@ -174,7 +174,9 @@ export function OptionsChainPanel({
         </div>
         <div className="relative w-full sm:w-auto">
           <select
-            className="appearance-none bg-gray-950 border border-gray-900 rounded-full pl-10 pr-9 py-2 text-sm w-full disabled:opacity-50"
+            className={`appearance-none bg-gray-950 border rounded-full pl-10 pr-9 py-2 text-sm w-full disabled:opacity-50 ${
+              selectedExpiration ? 'border-emerald-500/60 text-emerald-100' : 'border-gray-900'
+            }`}
             value={selectedExpiration ?? ''}
             onChange={event => onExpirationChange(event.target.value || null)}
             disabled={!expirationOptions.length}
@@ -186,8 +188,16 @@ export function OptionsChainPanel({
               </option>
             ))}
           </select>
-          <Calendar className="h-4 w-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <ChevronDown className="h-4 w-4 text-gray-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Calendar
+            className={`h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${
+              selectedExpiration ? 'text-emerald-400' : 'text-gray-500'
+            }`}
+          />
+          <ChevronDown
+            className={`h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
+              selectedExpiration ? 'text-emerald-400' : 'text-gray-500'
+            }`}
+          />
         </div>
       </div>
     </div>
@@ -246,7 +256,9 @@ export function OptionsChainPanel({
             }
           }}
           className={`cursor-pointer transition-colors ${
-            isSelected ? 'bg-gray-900/80' : 'hover:bg-gray-900/30'
+            isSelected
+              ? 'bg-emerald-500/10 border-l-4 border-emerald-500'
+              : 'hover:bg-gray-900/30'
           }`}
           data-strike={strike ?? undefined}
         >
@@ -290,7 +302,10 @@ export function OptionsChainPanel({
         </tr>
         {isSelected && (
           <tr>
-            <td colSpan={CHAIN_COLUMNS.length} className="px-4 py-4 bg-gray-900/50 border-t border-gray-900">
+            <td
+              colSpan={CHAIN_COLUMNS.length}
+              className="px-4 py-4 bg-emerald-500/5 border-t border-emerald-500/30"
+            >
               <div className="text-xs text-gray-400 mb-3">
                 {ticker} {strike != null ? `$${strike.toFixed(2)}` : ''} {leg.type.toUpperCase()} ·{' '}
                 {formatExpirationDate(leg.expiration)}
