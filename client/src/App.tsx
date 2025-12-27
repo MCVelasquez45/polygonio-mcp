@@ -11,7 +11,7 @@ import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { EntryChecklistPanel } from './components/trading/EntryChecklistPanel';
 import { analysisApi, chatApi, marketApi } from './api';
-import { API_BASE_URL } from './api/http';
+import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -220,14 +220,47 @@ function App() {
   // Fetch aggregate bars/indicators for the active ticker/timeframe with caching + polling.
   // Establish Socket.IO connection for live Massive feed.
   useEffect(() => {
-    const socket = io(API_BASE_URL, {
-      transports: ['websocket', 'polling'],
+    const baseUrl = getApiBaseUrl();
+    const parsed = typeof window !== 'undefined' ? new URL(baseUrl, window.location.href) : null;
+    const isMixedContent =
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      parsed?.protocol === 'http:';
+    const socket = io(baseUrl, {
+      transports: isMixedContent ? ['polling'] : ['websocket', 'polling'],
+      upgrade: !isMixedContent,
       withCredentials: false,
-      path: '/socket.io'
+      path: '/socket.io',
+      timeout: 10_000,
+      reconnection: true,
+      reconnectionDelay: 1_000,
+      reconnectionDelayMax: 5_000
     });
     socketRef.current = socket;
+
+    const forcePolling = () => {
+      const opts = socket.io.opts;
+      if (opts.transports?.length === 1 && opts.transports[0] === 'polling') return;
+      opts.transports = ['polling'];
+      opts.upgrade = false;
+      if (socket.connected) {
+        socket.disconnect();
+      }
+      socket.connect();
+    };
+
     socket.on('connect', () => {
       setLiveSocketConnected(true);
+    });
+    socket.on('connect_error', error => {
+      console.warn('[CLIENT] live feed connect error', {
+        message: error?.message,
+        description: error?.description
+      });
+      const shouldForcePolling = isMixedContent || String(error?.message ?? '').toLowerCase().includes('websocket');
+      if (shouldForcePolling) {
+        forcePolling();
+      }
     });
     socket.on('disconnect', () => {
       setLiveSocketConnected(false);

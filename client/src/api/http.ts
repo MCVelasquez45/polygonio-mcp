@@ -94,6 +94,10 @@ function getActiveBaseUrl(): string {
   return fallbackBaseUrl ?? API_BASE_URL;
 }
 
+export function getApiBaseUrl(): string {
+  return getActiveBaseUrl();
+}
+
 export const http = axios.create({
   baseURL: API_BASE_URL,
 });

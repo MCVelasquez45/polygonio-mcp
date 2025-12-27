@@ -1,5 +1,6 @@
 import type { OptionContractDetail, OptionLeg } from '../../types/market';
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell } from 'recharts';
+import { MeasuredContainer } from '../shared/MeasuredContainer';
 import { formatExpirationDate } from '../../utils/expirations';
 
 const metrics = [
@@ -209,9 +210,9 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
         </div>
         {riskProfile.slices.length ? (
           <div className="flex flex-col lg:flex-row gap-4">
-            <div className="w-full lg:w-1/2 h-44 min-w-0" style={{ minWidth: 220 }}>
-              <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={176}>
-                <PieChart>
+            <MeasuredContainer className="w-full lg:w-1/2 h-44 min-w-0" minWidth={220} minHeight={176} height={176}>
+              {({ width, height }) => (
+                <PieChart width={width} height={height}>
                   <Pie
                     data={riskProfile.slices}
                     dataKey="value"
@@ -236,8 +237,8 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
                     {(riskProfile.score ?? 0).toFixed(2)}
                   </text>
                 </PieChart>
-              </ResponsiveContainer>
-            </div>
+              )}
+            </MeasuredContainer>
             <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               {riskProfile.slices.map(slice => (
                 <div key={slice.id} className="rounded-xl border border-gray-900 bg-gray-950 p-3">

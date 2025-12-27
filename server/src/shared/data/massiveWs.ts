@@ -24,11 +24,12 @@ export class MassiveWsClient {
   private readonly onConnect?: () => void;
   private readonly subscriptions: SubscriptionSet = new Set();
   private connecting = false;
+  private reconnectAttempts = 0;
 
   constructor(options: MassiveWsOptions) {
-    this.url = options.url ?? 'wss://socket.massive.com/stocks';
     this.apiKey = options.apiKey;
     this.assetClass = options.assetClass ?? 'stocks';
+    this.url = options.url ?? `wss://socket.massive.com/${this.assetClass}`;
     this.onMessage = options.onMessage;
     this.onStatus = options.onStatus;
     this.onError = options.onError;
@@ -60,12 +61,16 @@ export class MassiveWsClient {
     });
 
     socket.on('close', () => {
+      this.connecting = false;
       this.ws = null;
       this.scheduleReconnect();
     });
 
     socket.on('error', error => {
       this.onError?.(error);
+      if (this.ws && this.ws.readyState !== WebSocket.CLOSING && this.ws.readyState !== WebSocket.CLOSED) {
+        this.ws.close();
+      }
     });
   }
 
@@ -84,6 +89,7 @@ export class MassiveWsClient {
   }
 
   subscribe(symbol: string) {
+    if (this.subscriptions.has(symbol)) return;
     this.subscriptions.add(symbol);
     this.send({
       action: 'subscribe',
@@ -118,16 +124,26 @@ export class MassiveWsClient {
 
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
+    this.reconnectAttempts += 1;
+    const attempt = this.reconnectAttempts;
+    const delayMs = 3000;
+    console.warn('[MassiveWS] scheduling reconnect', {
+      attempt,
+      delayMs,
+      url: this.url,
+      assetClass: this.assetClass
+    });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, 3000);
+    }, delayMs);
   }
 
   private handleEvent(event: any) {
     if (event?.ev === 'status') {
       this.onStatus?.(event);
       if (event?.status === 'auth_success') {
+        this.reconnectAttempts = 0;
         this.onConnect?.();
         this.resubscribeAll();
       }

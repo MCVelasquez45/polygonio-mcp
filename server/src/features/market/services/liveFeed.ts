@@ -78,8 +78,11 @@ function ensureWsClient() {
 
 function subscribeSymbol(symbol: string) {
   ensureWsClient();
-  symbolSubscriptions.set(symbol, getSymbolSockets(symbol));
-  wsClient?.subscribe(symbol);
+  const sockets = getSymbolSockets(symbol);
+  symbolSubscriptions.set(symbol, sockets);
+  if (sockets.size === 1) {
+    wsClient?.subscribe(symbol);
+  }
 }
 
 function unsubscribeSymbol(symbol: string) {
