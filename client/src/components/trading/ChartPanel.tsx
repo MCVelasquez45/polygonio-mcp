@@ -1,18 +1,6 @@
-import { useMemo } from 'react';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ReferenceLine,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { AggregateBar, IndicatorBundle } from '../../types/market';
 import { Lock, TrendingDown, TrendingUp } from 'lucide-react';
-import { MeasuredContainer } from '../shared/MeasuredContainer';
+import { TradingViewChart } from './TradingViewChart';
 
 type TimeframeOption = {
   label: string;
@@ -49,13 +37,6 @@ const TIMEFRAMES: TimeframeOption[] = [
   { label: '1D', value: '1/day' },
 ];
 
-type ChartDatum = {
-  time: string;
-  close: number;
-  volume: number;
-  sma?: number | null;
-};
-
 export function ChartPanel({
   ticker,
   timeframe,
@@ -67,27 +48,8 @@ export function ChartPanel({
   fallbackChange,
   sessionMeta,
 }: Props) {
-  const chartData = useMemo<ChartDatum[]>(() => {
-    if (!data.length) return [];
-    const unit = timeframe.split('/')[1] ?? 'day';
-    const isDailyView = unit === 'day';
-    const smaMap = new Map(indicators?.sma?.values?.map(point => [point.timestamp, point.value]));
-    return data.map(bar => {
-      const date = new Date(bar.timestamp);
-      const label = isDailyView
-        ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-        : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-      return {
-        time: label,
-        close: bar.close,
-        volume: bar.volume,
-        sma: smaMap.get(bar.timestamp) ?? null,
-      };
-    });
-  }, [data, indicators, timeframe]);
-
-  const currentPrice = chartData.at(-1)?.close ?? null;
-  const openPrice = chartData.at(0)?.close ?? null;
+  const currentPrice = data.at(-1)?.close ?? null;
+  const openPrice = data.at(0)?.close ?? null;
   const change = currentPrice != null && openPrice != null ? currentPrice - openPrice : null;
   const changePercent = change != null && openPrice ? (change / openPrice) * 100 : null;
   const displayPrice = fallbackPrice ?? currentPrice ?? null;
@@ -147,47 +109,10 @@ export function ChartPanel({
       <div className="flex-1 min-h-[300px]">
         {isLoading ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading bars…</div>
-        ) : chartData.length === 0 ? (
+        ) : data.length === 0 ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Select a contract to load chart data.</div>
         ) : (
-          <div className="h-full flex flex-col gap-4">
-            <MeasuredContainer className="w-full flex-1 min-h-[320px] min-w-0" minWidth={280} minHeight={240} height={320}>
-              {({ width, height }) => (
-                <AreaChart width={width} height={height} data={chartData} margin={{ top: 5, right: 5, left: -18, bottom: 5 }}>
-                  <defs>
-                    <linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34d399" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-                  <XAxis dataKey="time" stroke="#6b7280" tickLine={false} />
-                  <YAxis stroke="#6b7280" tickLine={false} tickFormatter={value => `$${Number(value).toFixed(2)}`} />
-                  <Tooltip
-                    contentStyle={{ background: '#0f172a', border: '1px solid #1f2937', borderRadius: 12 }}
-                    cursor={{ stroke: '#1f2937' }}
-                  />
-                  {openPrice && <ReferenceLine y={openPrice} stroke="#374151" strokeDasharray="4 4" />}
-                  <Area type="monotone" dataKey="close" stroke="#34d399" strokeWidth={2} fill="url(#priceArea)" />
-                  <Area type="monotone" dataKey="sma" stroke="#60a5fa" strokeWidth={1.5} dot={false} fillOpacity={0} />
-                </AreaChart>
-              )}
-            </MeasuredContainer>
-            <MeasuredContainer className="h-28 min-w-0" minWidth={280} minHeight={110} height={110}>
-              {({ width, height }) => (
-                <BarChart width={width} height={height} data={chartData} barSize={6}>
-                  <CartesianGrid vertical={false} stroke="#1f2937" opacity={0.3} />
-                  <XAxis dataKey="time" hide />
-                  <YAxis hide />
-                  <Tooltip
-                    contentStyle={{ background: '#0f172a', border: '1px solid #1f2937', borderRadius: 12 }}
-                    cursor={{ fill: '#1f2937' }}
-                  />
-                  <Bar dataKey="volume" fill="#4b5563" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              )}
-            </MeasuredContainer>
-          </div>
+          <TradingViewChart bars={data} timeframe={timeframe} />
         )}
       </div>
       {sessionMeta?.note && <p className="text-[11px] text-gray-500">{sessionMeta.note}</p>}
