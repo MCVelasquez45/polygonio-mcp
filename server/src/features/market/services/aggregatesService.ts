@@ -25,6 +25,7 @@ const MARKET_INTRADAY_BLOCK_TTL_MS = (() => {
   return Number.isFinite(value) ? value : 15 * 60 * 1000;
 })();
 const intradayBlockedUntilBySymbol = new Map<string, number>();
+const inflightAggregates = new Map<string, Promise<AggregatesResponse>>();
 
 type AggregatesParams = {
   ticker: string;
@@ -287,6 +288,13 @@ async function fetchRemoteBars(args: {
     return remote.results;
   } catch (error: any) {
     const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    console.warn('[AGGS] intraday fetch failed', {
+      ticker,
+      timespan,
+      multiplier,
+      status,
+      message: error?.message
+    });
     if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
       blockIntradayAggs(ticker, { status });
       return [];
@@ -309,141 +317,155 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
   assertTimespan(params.timespan);
   const timespan: SupportedTimespan = params.timespan;
   const window = Math.max(1, Number(params.window) || 1);
+  const inflightKey = `${ticker}:${multiplier}:${timespan}:${window}:${params.from ?? ''}:${params.to ?? ''}`;
+  const inflight = inflightAggregates.get(inflightKey);
+  if (inflight) {
+    return inflight;
+  }
 
-  const status = await getMarketStatusSnapshot();
+  const run = (async () => {
+    const status = await getMarketStatusSnapshot();
 
-  const needsMinuteAggregation = timespan === 'minute' && multiplier > 1;
-  const baseMultiplier = needsMinuteAggregation ? 1 : multiplier;
-  const baseTimespan: SupportedTimespan = needsMinuteAggregation ? 'minute' : timespan;
-  const baseWindow = needsMinuteAggregation ? window * multiplier : window;
+    const needsMinuteAggregation = timespan === 'minute' && multiplier > 1;
+    const baseMultiplier = needsMinuteAggregation ? 1 : multiplier;
+    const baseTimespan: SupportedTimespan = needsMinuteAggregation ? 'minute' : timespan;
+    const baseWindow = needsMinuteAggregation ? window * multiplier : window;
 
-  if (params.from || params.to) {
-    const remote = await getOptionAggregates(
-      ticker,
-      needsMinuteAggregation ? 1 : multiplier,
-      baseTimespan,
-      needsMinuteAggregation ? window * multiplier : window,
-      params.from ?? undefined,
-      params.to ?? undefined
-    );
-    if (remote.results.length) {
-      await upsertAggregateBars(ticker, needsMinuteAggregation ? 1 : multiplier, baseTimespan, remote.results, {
-        source: 'massive'
-      });
+    if (params.from || params.to) {
+      const remote = await getOptionAggregates(
+        ticker,
+        needsMinuteAggregation ? 1 : multiplier,
+        baseTimespan,
+        needsMinuteAggregation ? window * multiplier : window,
+        params.from ?? undefined,
+        params.to ?? undefined
+      );
+      if (remote.results.length) {
+        await upsertAggregateBars(ticker, needsMinuteAggregation ? 1 : multiplier, baseTimespan, remote.results, {
+          source: 'massive'
+        });
+      }
+      const finalBars = needsMinuteAggregation ? aggregateMinuteBars(remote.results, multiplier) : remote.results;
+      const trimmed = finalBars.length > window ? finalBars.slice(finalBars.length - window) : finalBars;
+      const normalized = normalizeBars(trimmed);
+      if (!normalized.length) {
+        throw Object.assign(new Error('Aggregates unavailable for requested range'), { status: 404 });
+      }
+      return {
+        ticker,
+        interval: formatInterval(multiplier, timespan),
+        marketClosed: status.market !== 'open',
+        afterHours: Boolean(status.afterHours),
+        usingLastSession: false,
+        resultGranularity: 'intraday',
+        results: normalized,
+        fetchedAt: new Date(),
+        cache: 'fresh',
+        marketStatus: buildMarketState(status)
+      };
     }
-    const finalBars = needsMinuteAggregation ? aggregateMinuteBars(remote.results, multiplier) : remote.results;
-    const trimmed = finalBars.length > window ? finalBars.slice(finalBars.length - window) : finalBars;
-    const normalized = normalizeBars(trimmed);
-    if (!normalized.length) {
-      throw Object.assign(new Error('Aggregates unavailable for requested range'), { status: 404 });
+
+    const durationMs = TIMESPAN_MS[baseTimespan] * baseMultiplier * baseWindow;
+    const [cachedBars, sessionPlan] = await Promise.all([
+      getRecentAggregateBars(ticker, baseMultiplier, baseTimespan, baseWindow),
+      Promise.resolve(buildSessionPlan({ status, durationMs, timespan: baseTimespan }))
+    ]);
+
+    let selectedBars: StoredAggregateBar[] = [];
+    let granularity: AggregatesResponse['resultGranularity'] = 'intraday';
+    let usingLastSession = sessionPlan.marketClosed;
+    let note: string | undefined;
+    let cacheState: AggregatesResponse['cache'] = 'fresh';
+    if (timespan !== 'day' && isIntradayBlocked(ticker)) {
+      note = note ?? 'Intraday aggregates unavailable; using fallback data.';
     }
+
+    for (const attempt of sessionPlan.attempts) {
+      try {
+        const remoteBars = await fetchRemoteBars({
+          ticker,
+          multiplier: baseMultiplier,
+          timespan: baseTimespan,
+          window: baseWindow,
+          attempt
+        });
+        if (remoteBars.length) {
+          selectedBars = remoteBars;
+          usingLastSession = attempt.usingLastSession;
+          break;
+        }
+      } catch (error: any) {
+        note = error?.message ?? 'Failed to load live aggregates';
+      }
+    }
+
+    if (!selectedBars.length && cachedBars.length) {
+      selectedBars = cachedBars;
+      granularity = 'cache';
+      usingLastSession = true;
+      cacheState = 'hit';
+      note = note ?? 'Serving cached session due to upstream limits.';
+    }
+
+    if (!selectedBars.length && timespan !== 'day') {
+      try {
+        const dailyFallback = await getOptionAggregates(ticker, 1, 'day', Math.max(window, 5));
+        if (dailyFallback.results.length) {
+          selectedBars = dailyFallback.results;
+          granularity = 'daily';
+          usingLastSession = true;
+          note = note ?? 'No intraday data available; showing last daily session.';
+        }
+      } catch (error: any) {
+        note = note ?? error?.message ?? 'Failed to load daily aggregates';
+      }
+    }
+
+    if (!selectedBars.length) {
+      const snapshotSymbol = ticker.startsWith('O:') ? extractUnderlyingSymbol(ticker) : ticker;
+      if (snapshotSymbol) {
+        const snapshotBar = await buildSnapshotFallbackBar(snapshotSymbol);
+        if (snapshotBar) {
+          selectedBars = [snapshotBar];
+          granularity = 'daily';
+          usingLastSession = true;
+          cacheState = 'fresh';
+          note = note ?? 'Massive aggregates unavailable; displaying latest underlying snapshot.';
+        }
+      }
+    }
+
+    if (!selectedBars.length) {
+      throw Object.assign(new Error('Aggregates unavailable'), { status: 503 });
+    }
+
+    let finalBars = needsMinuteAggregation ? aggregateMinuteBars(selectedBars, multiplier) : selectedBars;
+    if (finalBars.length > window) {
+      finalBars = finalBars.slice(finalBars.length - window);
+    }
+    const normalized = normalizeBars(finalBars);
+
     return {
       ticker,
       interval: formatInterval(multiplier, timespan),
-      marketClosed: status.market !== 'open',
-      afterHours: Boolean(status.afterHours),
-      usingLastSession: false,
-      resultGranularity: 'intraday',
+      marketClosed: sessionPlan.marketClosed,
+      afterHours: sessionPlan.afterHours,
+      usingLastSession,
+      resultGranularity: granularity,
       results: normalized,
       fetchedAt: new Date(),
-      cache: 'fresh',
+      cache: cacheState,
+      note,
       marketStatus: buildMarketState(status)
     };
+  })();
+
+  inflightAggregates.set(inflightKey, run);
+  try {
+    return await run;
+  } finally {
+    inflightAggregates.delete(inflightKey);
   }
-
-  const durationMs = TIMESPAN_MS[baseTimespan] * baseMultiplier * baseWindow;
-  const [cachedBars, sessionPlan] = await Promise.all([
-    getRecentAggregateBars(ticker, baseMultiplier, baseTimespan, baseWindow),
-    Promise.resolve(buildSessionPlan({ status, durationMs, timespan: baseTimespan }))
-  ]);
-
-  let selectedBars: StoredAggregateBar[] = [];
-  let granularity: AggregatesResponse['resultGranularity'] = 'intraday';
-  let usingLastSession = sessionPlan.marketClosed;
-  let note: string | undefined;
-  let cacheState: AggregatesResponse['cache'] = 'fresh';
-  if (timespan !== 'day' && isIntradayBlocked(ticker)) {
-    note = note ?? 'Intraday aggregates unavailable; using fallback data.';
-  }
-
-  for (const attempt of sessionPlan.attempts) {
-    try {
-      const remoteBars = await fetchRemoteBars({
-        ticker,
-        multiplier: baseMultiplier,
-        timespan: baseTimespan,
-        window: baseWindow,
-        attempt
-      });
-      if (remoteBars.length) {
-        selectedBars = remoteBars;
-        usingLastSession = attempt.usingLastSession;
-        break;
-      }
-    } catch (error: any) {
-      note = error?.message ?? 'Failed to load live aggregates';
-    }
-  }
-
-  if (!selectedBars.length && timespan !== 'day') {
-    try {
-      const dailyFallback = await getOptionAggregates(ticker, 1, 'day', Math.max(window, 5));
-      if (dailyFallback.results.length) {
-        selectedBars = dailyFallback.results;
-        granularity = 'daily';
-        usingLastSession = true;
-        note = note ?? 'No intraday data available; showing last daily session.';
-      }
-    } catch (error: any) {
-      note = note ?? error?.message ?? 'Failed to load daily aggregates';
-    }
-  }
-
-  if (!selectedBars.length && cachedBars.length) {
-    selectedBars = cachedBars;
-    granularity = 'cache';
-    usingLastSession = true;
-    cacheState = 'hit';
-    note = note ?? 'Serving cached session due to upstream limits.';
-  }
-
-  if (!selectedBars.length) {
-    const snapshotSymbol = ticker.startsWith('O:') ? extractUnderlyingSymbol(ticker) : ticker;
-    if (snapshotSymbol) {
-      const snapshotBar = await buildSnapshotFallbackBar(snapshotSymbol);
-      if (snapshotBar) {
-        selectedBars = [snapshotBar];
-        granularity = 'daily';
-        usingLastSession = true;
-        cacheState = 'fresh';
-        note = note ?? 'Massive aggregates unavailable; displaying latest underlying snapshot.';
-      }
-    }
-  }
-
-  if (!selectedBars.length) {
-    throw Object.assign(new Error('Aggregates unavailable'), { status: 503 });
-  }
-
-  let finalBars = needsMinuteAggregation ? aggregateMinuteBars(selectedBars, multiplier) : selectedBars;
-  if (finalBars.length > window) {
-    finalBars = finalBars.slice(finalBars.length - window);
-  }
-  const normalized = normalizeBars(finalBars);
-
-  return {
-    ticker,
-    interval: formatInterval(multiplier, timespan),
-    marketClosed: sessionPlan.marketClosed,
-    afterHours: sessionPlan.afterHours,
-    usingLastSession,
-    resultGranularity: granularity,
-    results: normalized,
-    fetchedAt: new Date(),
-    cache: cacheState,
-    note,
-    marketStatus: buildMarketState(status)
-  };
 }
 
 function extractUnderlyingSymbol(optionTicker: string): string | null {

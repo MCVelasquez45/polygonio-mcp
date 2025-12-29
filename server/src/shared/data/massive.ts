@@ -4,6 +4,11 @@ import axios from 'axios';
 const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY;
 const MASSIVE_BASE_URL = process.env.MASSIVE_BASE_URL || 'https://api.massive.com';
 const MASSIVE_DEFAULT_CACHE_TTL_MS = Number(process.env.MASSIVE_CACHE_TTL_MS ?? 10_000);
+const MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS = Math.max(
+  0,
+  Number(process.env.MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS ?? 15_000)
+);
+const MASSIVE_TIMEOUT_MS = Math.max(1_000, Number(process.env.MASSIVE_TIMEOUT_MS ?? 10_000));
 const MASSIVE_MAX_CONCURRENT = Math.max(1, Number(process.env.MASSIVE_MAX_CONCURRENT ?? 1));
 const MASSIVE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.MASSIVE_MIN_INTERVAL_MS ?? 1_000));
 const MASSIVE_MAX_RETRIES = Math.max(0, Number(process.env.MASSIVE_MAX_RETRIES ?? 3));
@@ -16,7 +21,7 @@ export const MASSIVE_MAX_CHAIN_LIMIT = Math.min(Math.max(Number(process.env.MASS
 
 const client = axios.create({
   baseURL: MASSIVE_BASE_URL,
-  timeout: 10000
+  timeout: MASSIVE_TIMEOUT_MS
 });
 
 type MassiveResponse<T = any> = {
@@ -153,6 +158,9 @@ function parseRetryAfter(header: any): number | null {
 function shouldRetry(error: unknown, attempt: number) {
   if (attempt >= MASSIVE_MAX_RETRIES) return false;
   if (!axios.isAxiosError(error)) return false;
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+    return true;
+  }
   const status = error.response?.status;
   return typeof status === 'number' && retryableStatusCodes.has(status);
 }
@@ -299,7 +307,7 @@ export async function getOptionAggregates(
     .toISOString()
     .slice(0, 10)}/${to.toISOString().slice(0, 10)}`;
   const isIntraday = timespan === 'minute' || timespan === 'hour';
-  const cacheTtlMs = isIntraday ? 5_000 : 60_000;
+  const cacheTtlMs = isIntraday ? MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS : 60_000;
   const payload = await massiveGet(
     endpoint,
     { adjusted: true, sort: 'asc', limit: window },

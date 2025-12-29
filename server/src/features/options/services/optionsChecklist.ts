@@ -28,6 +28,7 @@ const MINUTE_AGGS_BLOCK_TTL_MS = (() => {
   const value = Number(process.env.CHECKLIST_MINUTE_AGGS_BLOCK_TTL_MS ?? 15 * 60 * 1000);
   return Number.isFinite(value) ? value : 15 * 60 * 1000;
 })();
+const CHECKLIST_MAX_CONCURRENT = Math.max(1, Number(process.env.CHECKLIST_MAX_CONCURRENT ?? 3));
 const CONTEXT_SYMBOLS = ['SPY', 'QQQ', 'VIX'];
 
 export type ChecklistItem = {
@@ -95,7 +96,7 @@ type FedEventSnapshot = {
 
 let checklistCollection: Collection<ChecklistDocument> | null = null;
 let indexesEnsured = false;
-let minuteAggsBlockedUntil = 0;
+const minuteAggsBlockedUntilBySymbol = new Map<string, number>();
 
 function collection(): Collection<ChecklistDocument> {
   if (!checklistCollection) {
@@ -104,13 +105,20 @@ function collection(): Collection<ChecklistDocument> {
   return checklistCollection;
 }
 
-function isMinuteAggsBlocked() {
-  return MINUTE_AGGS_BLOCK_TTL_MS > 0 && minuteAggsBlockedUntil > Date.now();
+function isMinuteAggsBlocked(symbol: string) {
+  if (MINUTE_AGGS_BLOCK_TTL_MS <= 0) return false;
+  const until = minuteAggsBlockedUntilBySymbol.get(symbol);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    minuteAggsBlockedUntilBySymbol.delete(symbol);
+    return false;
+  }
+  return true;
 }
 
-function blockMinuteAggs() {
+function blockMinuteAggs(symbol: string) {
   if (MINUTE_AGGS_BLOCK_TTL_MS <= 0) return;
-  minuteAggsBlockedUntil = Date.now() + MINUTE_AGGS_BLOCK_TTL_MS;
+  minuteAggsBlockedUntilBySymbol.set(symbol, Date.now() + MINUTE_AGGS_BLOCK_TTL_MS);
 }
 
 // Sets up symbol + updatedAt indexes once per process so lookups are fast.
@@ -353,7 +361,7 @@ async function loadMinuteBars(symbol: string, window: number): Promise<StoredAgg
   const upper = symbol.toUpperCase();
   let bars = await getRecentAggregateBars(upper, 1, 'minute', window);
   if (bars.length >= window) return bars;
-  const shouldAttemptRemote = CHECKLIST_ALLOW_MINUTE_AGGS && !isMinuteAggsBlocked();
+  const shouldAttemptRemote = CHECKLIST_ALLOW_MINUTE_AGGS && !isMinuteAggsBlocked(upper);
   if (shouldAttemptRemote) {
     try {
       const remote = await getOptionAggregates(upper, 1, 'minute', window);
@@ -379,7 +387,7 @@ async function loadMinuteBars(symbol: string, window: number): Promise<StoredAgg
     } catch (error) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       if (status === 403) {
-        blockMinuteAggs();
+        blockMinuteAggs(upper);
         console.warn('[CHECKLIST] minute aggregates unauthorized; blocking retries', {
           symbol: upper,
           status,
@@ -616,6 +624,27 @@ function checkSequentialHigher(bars: StoredAggregateBar[]) {
   return true;
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  handler: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const current = nextIndex;
+      nextIndex += 1;
+      results[current] = await handler(items[current]);
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // Pulls Massive snapshots for TARGET, SPY, QQQ, VIX to enrich the checklist.
 async function fetchContextSnapshots(targetSymbol: string) {
   const symbols = Array.from(new Set(['TARGET', ...CONTEXT_SYMBOLS]));
@@ -751,13 +780,11 @@ export async function evaluateChecklistBatch(
   options: { force?: boolean } = {}
 ): Promise<ChecklistResult[]> {
   const unique = Array.from(new Set(tickers.map(ticker => ticker.toUpperCase()))).filter(Boolean);
-  const results = await Promise.all(
-    unique.map(symbol =>
-      evaluateChecklist(symbol, options).catch(error => {
-        console.warn('[CHECKLIST] evaluation failed', { symbol, error });
-        return null;
-      })
-    )
+  const results = await mapWithConcurrency(unique, CHECKLIST_MAX_CONCURRENT, symbol =>
+    evaluateChecklist(symbol, options).catch(error => {
+      console.warn('[CHECKLIST] evaluation failed', { symbol, error });
+      return null;
+    })
   );
   return results.filter((entry): entry is ChecklistResult => Boolean(entry));
 }

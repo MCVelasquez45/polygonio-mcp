@@ -25,6 +25,8 @@ category of shared logic.
 | `MASSIVE_API_KEY` | Required API key. Requests fail fast if unset. |
 | `MASSIVE_BASE_URL` | Override the API host (default `https://api.massive.com`). |
 | `MASSIVE_CACHE_TTL_MS` | Default TTL for `massiveGet` cache entries. |
+| `MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS` | Cache TTL for intraday aggregate pulls (minute/hour). |
+| `MASSIVE_TIMEOUT_MS` | HTTP request timeout for Massive calls. |
 | `MASSIVE_MAX_CONCURRENT` | Maximum concurrent HTTP requests. |
 | `MASSIVE_MIN_INTERVAL_MS` | Minimum delay between requests (rate limiting). |
 | `MASSIVE_MAX_RETRIES` / `MASSIVE_RETRY_BASE_MS` / `MASSIVE_RETRY_MAX_MS` | Control exponential backoff. |

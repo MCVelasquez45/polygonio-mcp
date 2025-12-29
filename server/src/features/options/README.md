@@ -24,6 +24,9 @@ database access from `src/shared/db`. Massive client under `src/shared/data/mass
 | `FASTAPI_BASE_URL` / `AGENT_API_URL` | Optional. Enables sentiment/fed calendar lookups via the Python service. |
 | `CHECKLIST_TTL_MS` | Cache duration before re-running a checklist (default 10 min). |
 | `CHECKLIST_MINUTE_WINDOW`, `CHECKLIST_DAILY_WINDOW` | Number of bars fetched for calculations. |
+| `CHECKLIST_ALLOW_MINUTE_AGGS` | Toggle minute-bar fetching for the checklist. |
+| `CHECKLIST_MINUTE_AGGS_BLOCK_TTL_MS` | Cooldown before retrying minute aggregates after a failure. |
+| `CHECKLIST_MAX_CONCURRENT` | Max parallel checklist evaluations in batch mode. |
 
 ## Flow
 
