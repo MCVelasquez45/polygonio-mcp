@@ -24,7 +24,7 @@ const MARKET_INTRADAY_BLOCK_TTL_MS = (() => {
   const value = Number(process.env.MARKET_INTRADAY_BLOCK_TTL_MS ?? 15 * 60 * 1000);
   return Number.isFinite(value) ? value : 15 * 60 * 1000;
 })();
-let intradayBlockedUntil = 0;
+const intradayBlockedUntilBySymbol = new Map<string, number>();
 
 type AggregatesParams = {
   ticker: string;
@@ -89,18 +89,27 @@ function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function isIntradayBlocked(): boolean {
+function isIntradayBlocked(symbol: string): boolean {
   if (!MARKET_ALLOW_INTRADAY_AGGS) return true;
-  return MARKET_INTRADAY_BLOCK_TTL_MS > 0 && intradayBlockedUntil > Date.now();
+  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return false;
+  const until = intradayBlockedUntilBySymbol.get(symbol);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    intradayBlockedUntilBySymbol.delete(symbol);
+    return false;
+  }
+  return true;
 }
 
-function blockIntradayAggs(reason?: unknown) {
+function blockIntradayAggs(symbol: string, reason?: unknown) {
   if (!MARKET_ALLOW_INTRADAY_AGGS) return;
   if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return;
   const nextUntil = Date.now() + MARKET_INTRADAY_BLOCK_TTL_MS;
-  if (nextUntil <= intradayBlockedUntil) return;
-  intradayBlockedUntil = nextUntil;
+  const currentUntil = intradayBlockedUntilBySymbol.get(symbol) ?? 0;
+  if (nextUntil <= currentUntil) return;
+  intradayBlockedUntilBySymbol.set(symbol, nextUntil);
   console.warn('[AGGS] intraday aggregates blocked', {
+    symbol,
     ttlMs: MARKET_INTRADAY_BLOCK_TTL_MS,
     reason
   });
@@ -265,7 +274,7 @@ async function fetchRemoteBars(args: {
   attempt: SessionAttempt;
 }): Promise<StoredAggregateBar[]> {
   const { ticker, multiplier, timespan, window, attempt } = args;
-  if ((timespan === 'minute' || timespan === 'hour') && isIntradayBlocked()) {
+  if ((timespan === 'minute' || timespan === 'hour') && isIntradayBlocked(ticker)) {
     return [];
   }
   const from = formatDateOnly(attempt.fromDate);
@@ -279,7 +288,7 @@ async function fetchRemoteBars(args: {
   } catch (error: any) {
     const status = axios.isAxiosError(error) ? error.response?.status : undefined;
     if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
-      blockIntradayAggs({ ticker, status });
+      blockIntradayAggs(ticker, { status });
       return [];
     }
     throw error;
@@ -353,7 +362,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
   let usingLastSession = sessionPlan.marketClosed;
   let note: string | undefined;
   let cacheState: AggregatesResponse['cache'] = 'fresh';
-  if (timespan !== 'day' && isIntradayBlocked()) {
+  if (timespan !== 'day' && isIntradayBlocked(ticker)) {
     note = note ?? 'Intraday aggregates unavailable; using fallback data.';
   }
 
