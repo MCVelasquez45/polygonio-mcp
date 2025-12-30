@@ -269,9 +269,13 @@ function App() {
       setLiveSocketConnected(true);
     });
     socket.on('connect_error', error => {
+      const description =
+        typeof (error as { description?: unknown })?.description === 'string'
+          ? (error as { description?: string }).description
+          : undefined;
       console.warn('[CLIENT] live feed connect error', {
         message: error?.message,
-        description: error?.description
+        ...(description ? { description } : {})
       });
       const shouldForcePolling = isMixedContent || String(error?.message ?? '').toLowerCase().includes('websocket');
       if (shouldForcePolling) {
@@ -936,7 +940,7 @@ function App() {
             };
           })
           .filter((bar): bar is AggregateBar => Boolean(bar));
-        const indicatorBundle = buildIndicatorBundle(symbol, bars);
+        const indicatorBundle = buildIndicatorBundle(requestSymbol, bars);
         setBars(bars);
         setIndicators(indicatorBundle);
         const nextError =
@@ -1195,6 +1199,16 @@ function App() {
     setDesiredContract(null);
   }, []);
 
+  useEffect(() => {
+    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
+    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
+    if (!isIntraday || selectedLeg || !chainExpirations.length) return;
+    const candidate = findFirstAvailableLeg(chainExpirations, selectedExpiration);
+    if (candidate) {
+      handleContractSelection(candidate);
+    }
+  }, [timeframe, selectedLeg, chainExpirations, selectedExpiration, handleContractSelection]);
+
   // Prefer the latest chain price for Greeks panel, fall back to watchlist snapshot.
   const greeksUnderlyingPrice =
     chainUnderlyingPrice ??
@@ -1450,6 +1464,20 @@ function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): 
     for (const row of group.strikes) {
       if (row.call && row.call.ticker.toUpperCase() === normalized) return row.call;
       if (row.put && row.put.ticker.toUpperCase() === normalized) return row.put;
+    }
+  }
+  return null;
+}
+
+function findFirstAvailableLeg(groups: OptionChainExpirationGroup[], preferredExpiration?: string | null): OptionLeg | null {
+  if (!groups.length) return null;
+  const ordered = preferredExpiration
+    ? [...groups.filter(group => group.expiration === preferredExpiration), ...groups.filter(group => group.expiration !== preferredExpiration)]
+    : groups;
+  for (const group of ordered) {
+    for (const row of group.strikes) {
+      if (row.call) return row.call;
+      if (row.put) return row.put;
     }
   }
   return null;
