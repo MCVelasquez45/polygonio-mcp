@@ -73,13 +73,22 @@ export async function listAlpacaPositions() {
 export async function listAlpacaOptionPositions() {
   try {
     const payload: any = await sendOptionsRequest('/options/positions');
-    if (Array.isArray(payload)) return payload;
-    if (Array.isArray(payload?.positions)) return payload.positions;
-    return [];
+    const normalized = normalizeOptionPositions(payload);
+    if (normalized.length) return normalized;
+    const fallback = await listOptionPositionsFromAll();
+    if (fallback.length) {
+      console.warn('[ALPACA] options positions empty; falling back to /positions');
+    }
+    return fallback;
   } catch (error: any) {
     if (error?.response?.status === 404) {
-      console.warn('[ALPACA] options positions endpoint unavailable, returning empty list');
-      return [];
+      console.warn('[ALPACA] options positions endpoint unavailable, falling back to /positions');
+      try {
+        return await listOptionPositionsFromAll();
+      } catch (fallbackError) {
+        console.warn('[ALPACA] fallback /positions failed', fallbackError);
+        return [];
+      }
     }
     throw error;
   }
@@ -145,4 +154,19 @@ export async function listAlpacaOptionOrders(params: { status?: string; limit?: 
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.orders)) return payload.orders;
   return [];
+}
+
+function normalizeOptionPositions(payload: any) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.positions)) return payload.positions;
+  return [];
+}
+
+function isOptionSymbol(symbol: string) {
+  return /^[A-Z]+\\d{6}[CP]\\d{8}$/.test(symbol);
+}
+
+async function listOptionPositionsFromAll() {
+  const positions: any[] = await alpaca.getPositions();
+  return Array.isArray(positions) ? positions.filter(pos => isOptionSymbol(pos?.symbol ?? '')) : [];
 }
