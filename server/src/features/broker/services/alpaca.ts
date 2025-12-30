@@ -162,11 +162,37 @@ function normalizeOptionPositions(payload: any) {
   return [];
 }
 
+function normalizePositionSymbol(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function isOptionSymbol(symbol: string) {
   return /^[A-Z]+\\d{6}[CP]\\d{8}$/.test(symbol);
 }
 
+function isOptionPosition(pos: any) {
+  const rawSymbol = typeof pos?.symbol === 'string' ? pos.symbol : '';
+  const symbol = normalizePositionSymbol(rawSymbol);
+  const assetClass = String(pos?.asset_class ?? pos?.assetClass ?? pos?.class ?? '').toLowerCase();
+  if (assetClass.includes('option')) return true;
+  return Boolean(symbol) && isOptionSymbol(symbol);
+}
+
 async function listOptionPositionsFromAll() {
   const positions: any[] = await alpaca.getPositions();
-  return Array.isArray(positions) ? positions.filter(pos => isOptionSymbol(pos?.symbol ?? '')) : [];
+  if (!Array.isArray(positions)) return [];
+  const filtered = positions.filter(pos => isOptionPosition(pos));
+  if (!filtered.length && positions.length) {
+    console.warn('[ALPACA] no option positions matched filter', {
+      total: positions.length,
+      sample: positions.slice(0, 3).map(pos => ({
+        symbol: pos?.symbol,
+        asset_class: pos?.asset_class ?? pos?.assetClass ?? pos?.class
+      }))
+    });
+  }
+  return filtered.map(pos => {
+    const symbol = typeof pos?.symbol === 'string' ? normalizePositionSymbol(pos.symbol) : pos?.symbol;
+    return symbol ? { ...pos, symbol } : pos;
+  });
 }
