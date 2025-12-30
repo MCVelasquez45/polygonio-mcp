@@ -38,12 +38,28 @@ const TIMEFRAME_MAP = {
   '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 180 },
   '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 },
 };
+const AGG_TIMESTAMP_MS_THRESHOLD = 1_000_000_000_000;
 
 // Default lookback window for the simple moving average indicator.
 const SMA_WINDOW = 50;
 const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
+
+function parseAggregateTimestamp(value: string | number): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < AGG_TIMESTAMP_MS_THRESHOLD ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric < AGG_TIMESTAMP_MS_THRESHOLD ? numeric * 1000 : numeric;
+    }
+  }
+  return null;
+}
 
 // Compute a rolling SMA series for the supplied aggregate bars.
 function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries {
@@ -847,7 +863,19 @@ function App() {
 
   useEffect(() => {
     const symbol = chartTicker;
-    if (!symbol) {
+    const contractSymbol = activeContractSymbol?.trim().toUpperCase() ?? null;
+    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
+    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
+    const hasIntradayContract = Boolean(contractSymbol && contractSymbol.startsWith('O:'));
+    if (isIntraday && !hasIntradayContract) {
+      setMarketError('Intraday charts require an options contract. Select one in the chain.');
+      setBars([]);
+      setIndicators(undefined);
+      setChartLoading(false);
+      return;
+    }
+    const requestSymbol = isIntraday ? contractSymbol : symbol;
+    if (!requestSymbol) {
       setBars([]);
       setIndicators(undefined);
       return;
@@ -860,7 +888,7 @@ function App() {
       clearInterval(chartRefreshIntervalRef.current);
       chartRefreshIntervalRef.current = null;
     }
-    const cacheKey = `${symbol}-${timeframe}`;
+    const cacheKey = `${requestSymbol}-${timeframe}`;
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
       setBars(cached.bars);
@@ -876,11 +904,14 @@ function App() {
     const triggerFetch = () => {
       chartRequestIdRef.current += 1;
       const requestId = chartRequestIdRef.current;
-      const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
+      const intradayContractNote =
+        isIntraday && contractSymbol && requestSymbol === contractSymbol
+          ? `Intraday candles are rendered from ${contractSymbol}.`
+          : null;
 
       const fetchAggregates = async () => {
         const response = await marketApi.getAggregates({
-          ticker: symbol,
+          ticker: requestSymbol,
           multiplier: config.multiplier,
           timespan: config.timespan,
           window: config.window ?? 180,
@@ -891,25 +922,32 @@ function App() {
       const runFetch = async () => {
         const aggregates = await fetchAggregates();
         if (chartRequestIdRef.current !== requestId) return;
-        const bars = (aggregates.results ?? []).map(entry => ({
-          timestamp: Number.isFinite(Date.parse(entry.t)) ? Date.parse(entry.t) : Date.now(),
-          open: entry.o,
-          high: entry.h,
-          low: entry.l,
-          close: entry.c,
-          volume: entry.v
-        }));
+        const bars = (aggregates.results ?? [])
+          .map(entry => {
+            const timestamp = parseAggregateTimestamp(entry.t);
+            if (timestamp == null) return null;
+            return {
+              timestamp,
+              open: entry.o,
+              high: entry.h,
+              low: entry.l,
+              close: entry.c,
+              volume: entry.v
+            };
+          })
+          .filter((bar): bar is AggregateBar => Boolean(bar));
         const indicatorBundle = buildIndicatorBundle(symbol, bars);
         setBars(bars);
         setIndicators(indicatorBundle);
         const nextError =
-          aggregates.note ?? (bars.length === 0 ? `No aggregate data available for ${symbol} (${timeframe}).` : null);
+          aggregates.note ?? (bars.length === 0 ? `No aggregate data available for ${requestSymbol} (${timeframe}).` : null);
+        const note = nextError ?? intradayContractNote;
         const sessionMeta: MarketSessionMeta = {
           marketClosed: Boolean(aggregates.marketClosed),
           afterHours: Boolean(aggregates.afterHours),
           usingLastSession: Boolean(aggregates.usingLastSession),
           resultGranularity: aggregates.resultGranularity ?? 'intraday',
-          note: nextError,
+          note,
           state: aggregates.marketStatus?.state,
           nextOpen: aggregates.marketStatus?.nextOpen ?? null,
           nextClose: aggregates.marketStatus?.nextClose ?? null,
@@ -919,11 +957,11 @@ function App() {
           bars,
           indicators: indicatorBundle,
           timestamp: Date.now(),
-          note: nextError,
+          note,
           session: sessionMeta
         });
         setMarketSessionMeta(sessionMeta);
-        setMarketError(nextError);
+        setMarketError(note);
       };
 
       const safeRun = async () => {
@@ -953,12 +991,11 @@ function App() {
     };
 
     chartFetchTimeoutRef.current = setTimeout(triggerFetch, 200);
-    const refreshConfig = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
     const refreshMs =
-      refreshConfig.timespan === 'minute'
-        ? Math.max(30_000, refreshConfig.multiplier * 60_000)
-        : refreshConfig.timespan === 'hour'
-        ? refreshConfig.multiplier * 3_600_000
+      config.timespan === 'minute'
+        ? Math.max(30_000, config.multiplier * 60_000)
+        : config.timespan === 'hour'
+        ? config.multiplier * 3_600_000
         : 300_000;
     chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
 
@@ -972,7 +1009,7 @@ function App() {
         chartRefreshIntervalRef.current = null;
       }
     };
-  }, [chartTicker, timeframe]);
+  }, [chartTicker, timeframe, activeContractSymbol]);
 
   useEffect(() => {
     if (!activeContractSymbol) {

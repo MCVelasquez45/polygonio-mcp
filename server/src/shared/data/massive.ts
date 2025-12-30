@@ -18,6 +18,7 @@ const MASSIVE_REFERENCE_MAX_PAGES = Math.min(Math.max(Number(process.env.MASSIVE
 const MASSIVE_SNAPSHOT_MAX_PAGES = Math.min(Math.max(Number(process.env.MASSIVE_SNAPSHOT_MAX_PAGES ?? 25), 1), 50);
 const MASSIVE_SNAPSHOT_PAGE_LIMIT = Math.min(Math.max(Number(process.env.MASSIVE_SNAPSHOT_PAGE_LIMIT ?? 150), 1), 150);
 export const MASSIVE_MAX_CHAIN_LIMIT = Math.min(Math.max(Number(process.env.MASSIVE_MAX_CHAIN_LIMIT ?? 1000), 1), 1000);
+const AGG_TIMESTAMP_MS_THRESHOLD = 1_000_000_000_000;
 
 const client = axios.create({
   baseURL: MASSIVE_BASE_URL,
@@ -55,6 +56,21 @@ let activeRequests = 0;
 let nextAvailableTimestamp = Date.now();
 let scheduledDrain: NodeJS.Timeout | null = null;
 const retryableStatusCodes = new Set([429, 500, 502, 503, 504]);
+
+function normalizeAggTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < AGG_TIMESTAMP_MS_THRESHOLD ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric < AGG_TIMESTAMP_MS_THRESHOLD ? numeric * 1000 : numeric;
+    }
+  }
+  return null;
+}
 
 function stableSerialize(value: any): string {
   if (value === null || typeof value !== 'object') {
@@ -308,23 +324,30 @@ export async function getOptionAggregates(
     .slice(0, 10)}/${to.toISOString().slice(0, 10)}`;
   const isIntraday = timespan === 'minute' || timespan === 'hour';
   const cacheTtlMs = isIntraday ? MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS : 60_000;
+  const sortOrder = isIntraday ? 'desc' : 'asc';
   const payload = await massiveGet(
     endpoint,
-    { adjusted: true, sort: 'asc', limit: window },
+    { adjusted: true, sort: sortOrder, limit: window },
     { cacheTtlMs }
   );
 
   const results = Array.isArray(payload.results)
-    ? payload.results.map((row: any) => ({
-        timestamp: row.t ?? row.timestamp,
-        open: row.o ?? row.open,
-        high: row.h ?? row.high,
-        low: row.l ?? row.low,
-        close: row.c ?? row.close,
-        volume: row.v ?? row.volume ?? 0,
-        vwap: row.vw ?? row.vwap ?? null,
-        transactions: row.n ?? row.transactions ?? null
-      }))
+    ? payload.results
+        .map((row: any) => {
+          const timestamp = normalizeAggTimestamp(row.t ?? row.timestamp);
+          if (timestamp == null) return null;
+          return {
+            timestamp,
+            open: row.o ?? row.open,
+            high: row.h ?? row.high,
+            low: row.l ?? row.low,
+            close: row.c ?? row.close,
+            volume: row.v ?? row.volume ?? 0,
+            vwap: row.vw ?? row.vwap ?? null,
+            transactions: row.n ?? row.transactions ?? null
+          };
+        })
+        .filter((bar): bar is NonNullable<typeof bar> => Boolean(bar))
     : [];
 
   console.log('[MASSIVE] aggregates resolved', {

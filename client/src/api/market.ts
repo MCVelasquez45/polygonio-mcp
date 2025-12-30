@@ -20,7 +20,7 @@ type AggregatesResponse = MarketMeta & {
     nextClose?: string | null;
   };
   results: {
-    t: string;
+    t: string | number;
     o: number;
     h: number;
     l: number;
