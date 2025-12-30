@@ -11,12 +11,22 @@ let wsClient: MassiveWsClient | null = null;
 
 const MASSIVE_WS_URL = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
 const MASSIVE_WS_KEY = process.env.MASSIVE_API_KEY ?? '';
+const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q,AM';
+const OPTIONS_WS_ALLOWED_CHANNELS = new Set(['T', 'Q', 'AM', 'A']);
 
 function normalizeContractSymbol(value?: string | null) {
   if (!value) return null;
   const symbol = value.trim().toUpperCase();
   if (!symbol.startsWith('O:')) return null;
   return symbol;
+}
+
+function buildOptionsSubscriptionParams(symbol: string) {
+  const channels = MASSIVE_OPTIONS_WS_CHANNELS.split(',')
+    .map(entry => entry.trim().toUpperCase())
+    .filter(entry => entry.length > 0 && OPTIONS_WS_ALLOWED_CHANNELS.has(entry));
+  const resolved = channels.length ? channels : ['T', 'Q', 'AM'];
+  return resolved.map(channel => `${channel}.${symbol}`).join(',');
 }
 
 function getSocketSymbols(socketId: string) {
@@ -49,7 +59,7 @@ function handleWsMessage(event: any) {
     broadcast(symbol, 'live:quote', payload);
     return;
   }
-  if (type === 'AM') {
+  if (type === 'AM' || type === 'A') {
     broadcast(symbol, 'live:agg', payload);
     return;
   }
@@ -81,7 +91,7 @@ function subscribeSymbol(symbol: string) {
   const sockets = getSymbolSockets(symbol);
   symbolSubscriptions.set(symbol, sockets);
   if (sockets.size === 1) {
-    wsClient?.subscribe(symbol);
+    wsClient?.subscribe(buildOptionsSubscriptionParams(symbol));
   }
 }
 
@@ -89,7 +99,7 @@ function unsubscribeSymbol(symbol: string) {
   const sockets = symbolSubscriptions.get(symbol);
   if (sockets && sockets.size > 0) return;
   symbolSubscriptions.delete(symbol);
-  wsClient?.unsubscribe(symbol);
+  wsClient?.unsubscribe(buildOptionsSubscriptionParams(symbol));
 }
 
 export function initLiveFeed(io: Server) {

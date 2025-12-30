@@ -20,6 +20,8 @@ stable format (candles, chains, quotes, trades, metadata).
 | Variable | Description |
 | --- | --- |
 | `MASSIVE_API_KEY` / `MASSIVE_BASE_URL` | Credentials + host for Massive.com APIs. Required for live data. |
+| `MASSIVE_OPTIONS_WS_URL` | Override the Massive options WS endpoint (default `wss://socket.massive.com/options`). |
+| `MASSIVE_OPTIONS_WS_CHANNELS` | Comma-separated WS channels (e.g. `T,Q,AM`) for option subscriptions. |
 | `AGG_WORKER_ENABLED` | When `true`, `aggregatesWorker` polls tickers in the background. |
 | `AGG_WORKER_TICKERS`, `AGG_WORKER_INTERVAL_MS`, `AGG_WORKER_REQUEST_DELAY_MS` | Fine-tune the worker's behavior. |
 

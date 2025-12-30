@@ -88,21 +88,21 @@ export class MassiveWsClient {
     this.subscriptions.clear();
   }
 
-  subscribe(symbol: string) {
-    if (this.subscriptions.has(symbol)) return;
-    this.subscriptions.add(symbol);
+  subscribe(params: string) {
+    if (this.subscriptions.has(params)) return;
+    this.subscriptions.add(params);
     this.send({
       action: 'subscribe',
-      params: symbol
+      params
     });
   }
 
-  unsubscribe(symbol: string) {
-    if (!this.subscriptions.has(symbol)) return;
-    this.subscriptions.delete(symbol);
+  unsubscribe(params: string) {
+    if (!this.subscriptions.has(params)) return;
+    this.subscriptions.delete(params);
     this.send({
       action: 'unsubscribe',
-      params: symbol
+      params
     });
   }
 
