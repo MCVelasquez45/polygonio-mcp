@@ -48,6 +48,7 @@ export type AlpacaOrderLeg = {
   side: 'buy' | 'sell';
   type?: 'market' | 'limit';
   limit_price?: number;
+  position_intent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
 };
 
 export type AlpacaOptionsOrderRequest = {
@@ -71,7 +72,10 @@ export async function listAlpacaPositions() {
 
 export async function listAlpacaOptionPositions() {
   try {
-    return await sendOptionsRequest('/options/positions');
+    const payload: any = await sendOptionsRequest('/options/positions');
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.positions)) return payload.positions;
+    return [];
   } catch (error: any) {
     if (error?.response?.status === 404) {
       console.warn('[ALPACA] options positions endpoint unavailable, returning empty list');
@@ -90,7 +94,10 @@ function mapOrderClass(orderClass: 'simple' | 'multi-leg' | undefined, legCount:
   return resolved === 'multi-leg' ? 'mleg' : 'simple';
 }
 
-function mapPositionIntent(side: 'buy' | 'sell') {
+function normalizePositionIntent(side: 'buy' | 'sell', intent?: AlpacaOrderLeg['position_intent']) {
+  if (intent === 'buy_to_open' || intent === 'buy_to_close' || intent === 'sell_to_open' || intent === 'sell_to_close') {
+    return intent;
+  }
   return side === 'sell' ? 'sell_to_open' : 'buy_to_open';
 }
 
@@ -119,14 +126,14 @@ export async function submitAlpacaOptionsOrder(payload: AlpacaOptionsOrderReques
       symbol: normalizeOptionSymbol(leg.symbol),
       ratio_qty: leg.qty,
       side: leg.side,
-      position_intent: mapPositionIntent(leg.side)
+      position_intent: normalizePositionIntent(leg.side, leg.position_intent)
     }));
   } else {
     const leg = payload.legs[0];
     Object.assign(baseOrder, {
       symbol: normalizeOptionSymbol(leg.symbol),
       side: leg.side,
-      position_intent: mapPositionIntent(leg.side)
+      position_intent: normalizePositionIntent(leg.side, leg.position_intent)
     });
   }
 
@@ -134,5 +141,8 @@ export async function submitAlpacaOptionsOrder(payload: AlpacaOptionsOrderReques
 }
 
 export async function listAlpacaOptionOrders(params: { status?: string; limit?: number } = {}) {
-  return sendOptionsRequest('/orders', params);
+  const payload: any = await sendOptionsRequest('/orders', params);
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.orders)) return payload.orders;
+  return [];
 }

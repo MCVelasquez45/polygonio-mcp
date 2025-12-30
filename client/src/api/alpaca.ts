@@ -26,6 +26,7 @@ export type OptionsOrderLegPayload = {
   side: 'buy' | 'sell';
   type?: 'market' | 'limit';
   limit_price?: number;
+  position_intent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
 };
 
 export type SubmitOptionsOrderPayload = {
@@ -50,5 +51,31 @@ export async function getOptionPositions(): Promise<{ positions: OptionPosition[
 
 export async function submitOptionOrder(payload: SubmitOptionsOrderPayload) {
   const { data } = await http.post('/api/broker/alpaca/options/orders', payload);
+  return data;
+}
+
+export type OptionOrder = {
+  id?: string;
+  symbol?: string;
+  status?: string;
+  side?: string;
+  qty?: string | number;
+  filled_qty?: string | number;
+  filled_avg_price?: string | number | null;
+  type?: string;
+  order_type?: string;
+  limit_price?: string | number | null;
+  time_in_force?: string;
+  client_order_id?: string | null;
+  source?: string | null;
+  submitted_at?: string | null;
+  created_at?: string | null;
+  filled_at?: string | null;
+  expired_at?: string | null;
+  canceled_at?: string | null;
+};
+
+export async function getOptionOrders(params?: { status?: string; limit?: number }): Promise<{ orders: OptionOrder[] }> {
+  const { data } = await http.get<{ orders: OptionOrder[] }>('/api/broker/alpaca/options/orders', { params });
   return data;
 }

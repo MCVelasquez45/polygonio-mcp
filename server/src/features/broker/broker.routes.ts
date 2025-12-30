@@ -11,6 +11,7 @@ const router = Router();
 
 // Simple in-memory caches to avoid calling Alpaca more than ~once every 10s.
 const CACHE_TTL_MS = 10_000;
+const ALLOWED_POSITION_INTENTS = new Set(['buy_to_open', 'buy_to_close', 'sell_to_open', 'sell_to_close']);
 
 let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
@@ -72,6 +73,9 @@ router.post('/alpaca/options/orders', async (req, res, next) => {
       const side = leg.side === 'sell' ? 'sell' : 'buy';
       const limitPrice = leg.limitPrice ?? leg.limit_price;
       const type = leg.type ?? (limitPrice != null ? 'limit' : 'market');
+      const intentRaw = leg.position_intent ?? leg.positionIntent;
+      const positionIntent =
+        typeof intentRaw === 'string' && ALLOWED_POSITION_INTENTS.has(intentRaw) ? intentRaw : undefined;
       if (!symbol || !Number.isFinite(qty) || qty <= 0) {
         throw new Error('Invalid leg payload');
       }
@@ -80,7 +84,8 @@ router.post('/alpaca/options/orders', async (req, res, next) => {
         qty,
         side,
         type,
-        ...(limitPrice != null ? { limit_price: Number(limitPrice) } : {})
+        ...(limitPrice != null ? { limit_price: Number(limitPrice) } : {}),
+        ...(positionIntent ? { position_intent: positionIntent } : {})
       };
     });
     const limitPriceRaw = body.limitPrice ?? body.limit_price;
