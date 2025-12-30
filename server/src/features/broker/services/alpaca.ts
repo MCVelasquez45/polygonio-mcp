@@ -66,6 +66,10 @@ export async function getAlpacaAccount() {
   return alpaca.getAccount();
 }
 
+export async function getAlpacaClock() {
+  return alpaca.getClock();
+}
+
 export async function listAlpacaPositions() {
   return alpaca.getPositions();
 }

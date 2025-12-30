@@ -10,6 +10,13 @@ export type BrokerAccountResponse = {
   last_equity?: string;
 };
 
+export type BrokerClockResponse = {
+  timestamp: string;
+  is_open: boolean;
+  next_open: string;
+  next_close: string;
+};
+
 export type OptionPosition = {
   symbol: string;
   qty: string;
@@ -41,6 +48,11 @@ export type SubmitOptionsOrderPayload = {
 
 export async function getBrokerAccount(): Promise<BrokerAccountResponse> {
   const { data } = await http.get<BrokerAccountResponse>('/api/broker/alpaca/account');
+  return data;
+}
+
+export async function getBrokerClock(): Promise<BrokerClockResponse> {
+  const { data } = await http.get<BrokerClockResponse>('/api/broker/alpaca/clock');
   return data;
 }
 

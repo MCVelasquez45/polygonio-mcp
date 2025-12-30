@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getBrokerAccount, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
+import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
 
 type PositionView = {
   symbol: string;
@@ -66,6 +66,8 @@ export function PortfolioPanel() {
   const [error, setError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [isMarketOpen, setIsMarketOpen] = useState<boolean | null>(null);
+  const [nextOpen, setNextOpen] = useState<string | null>(null);
 
   const loadPortfolio = useCallback(async () => {
     setLoading(true);
@@ -73,10 +75,11 @@ export function PortfolioPanel() {
     setError(null);
     setOrdersError(null);
     try {
-      const [account, positionResponse, ordersResponse] = await Promise.all([
+      const [account, positionResponse, ordersResponse, clockResponse] = await Promise.all([
         getBrokerAccount(),
         getOptionPositions(),
-        getOptionOrders({ status: 'all', limit: 20 })
+        getOptionOrders({ status: 'all', limit: 20 }),
+        getBrokerClock()
       ]);
       const normalizedPositions: PositionView[] =
         positionResponse.positions?.map(pos => ({
@@ -113,6 +116,8 @@ export function PortfolioPanel() {
           };
         }) ?? [];
       setOrders(normalizedOrders);
+      setIsMarketOpen(Boolean(clockResponse?.is_open));
+      setNextOpen(clockResponse?.next_open ?? null);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err: any) {
       const message = err?.response?.data?.error ?? err?.message ?? 'Failed to load Alpaca account';
@@ -130,6 +135,10 @@ export function PortfolioPanel() {
   const handleClosePosition = useCallback(
     async (position: PositionView) => {
       if (closingSymbol) return;
+      if (isMarketOpen === false) {
+        setError('Options market orders are only allowed during market hours.');
+        return;
+      }
       setClosingSymbol(position.symbol);
       setError(null);
       try {
@@ -149,13 +158,17 @@ export function PortfolioPanel() {
         });
         await loadPortfolio();
       } catch (err: any) {
-        const message = err?.response?.data?.error ?? err?.message ?? 'Failed to close position';
+        const payloadMessage = err?.response?.data?.message;
+        const message =
+          payloadMessage === 'options market orders are only allowed during market hours'
+            ? 'Options market orders are only allowed during market hours.'
+            : err?.response?.data?.error ?? err?.message ?? 'Failed to close position';
         setError(message);
       } finally {
         setClosingSymbol(null);
       }
     },
-    [closingSymbol, loadPortfolio]
+    [closingSymbol, isMarketOpen, loadPortfolio]
   );
 
   const totalPnl = useMemo(() => positions.reduce((sum, row) => sum + row.unrealizedPnl, 0), [positions]);
@@ -199,6 +212,11 @@ export function PortfolioPanel() {
         <div className="flex items-center justify-between">
           <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Active Positions</p>
         </div>
+        {isMarketOpen === false && (
+          <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
+            Options market orders pause outside market hours. Next open: {nextOpen ? formatTimestamp(nextOpen) : 'TBD'}.
+          </div>
+        )}
         {positions.map(pos => (
           <div key={pos.symbol} className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -212,7 +230,7 @@ export function PortfolioPanel() {
                 type="button"
                 onClick={() => handleClosePosition(pos)}
                 className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-40"
-                disabled={closingSymbol === pos.symbol}
+                disabled={closingSymbol === pos.symbol || isMarketOpen === false}
               >
                 {closingSymbol === pos.symbol ? 'Closing…' : 'Close Position'}
               </button>

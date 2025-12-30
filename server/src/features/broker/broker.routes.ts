@@ -2,6 +2,7 @@ import { Router } from 'express';
 // Broker router: thin façade over Alpaca APIs for account/positions/orders with caching.
 import {
   getAlpacaAccount,
+  getAlpacaClock,
   listAlpacaOptionOrders,
   listAlpacaOptionPositions,
   submitAlpacaOptionsOrder
@@ -26,6 +27,16 @@ router.get('/alpaca/account', async (_req, res, next) => {
     const account = await getAlpacaAccount();
     cachedAccount = { data: account, expiresAt: now + CACHE_TTL_MS };
     res.json(account);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/broker/alpaca/clock – returns Alpaca market clock.
+router.get('/alpaca/clock', async (_req, res, next) => {
+  try {
+    const clock = await getAlpacaClock();
+    res.json(clock);
   } catch (error) {
     next(error);
   }
