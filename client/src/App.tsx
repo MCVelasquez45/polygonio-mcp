@@ -9,7 +9,6 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
-import { EntryChecklistPanel } from './components/trading/EntryChecklistPanel';
 import { analysisApi, chatApi, marketApi } from './api';
 import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
@@ -208,7 +207,6 @@ function App() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const [checklistHighlights, setChecklistHighlights] = useState<Record<string, ChecklistResult>>({});
   const [checklistLoading, setChecklistLoading] = useState(false);
-  const [currentChecklist, setCurrentChecklist] = useState<ChecklistResult | null>(null);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
   const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
@@ -429,33 +427,6 @@ function App() {
     };
   }, [watchlistSignature, watchlistSymbols]);
 
-  // Keep the checklist card for the focused ticker up to date.
-  useEffect(() => {
-    const key = displayTicker?.toUpperCase();
-    if (!key) {
-      setCurrentChecklist(null);
-      return;
-    }
-    if (checklistHighlights[key]) {
-      setCurrentChecklist(checklistHighlights[key]);
-      return;
-    }
-    let cancelled = false;
-    analysisApi
-      .runChecklist([key])
-      .then(response => {
-        if (cancelled) return;
-        setCurrentChecklist(response.results?.[0] ?? null);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        console.warn('Failed to fetch checklist for ticker', key, error);
-        setCurrentChecklist(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [displayTicker, checklistHighlights]);
 
   // Lazily fetch conversation transcripts when the user re-opens a chat session.
   const ensureTranscriptLoaded = useCallback(async (sessionId: string) => {
@@ -762,6 +733,29 @@ function App() {
       }
     }
   }, [chainExpirations, desiredContract, selectedLeg]);
+
+  // If the selected leg no longer exists in the current chain, clear it so auto-select can run.
+  useEffect(() => {
+    if (!selectedLeg) return;
+    if (!chainExpirations.length) return;
+    const normalizedUnderlying = normalizedTicker.startsWith('O:')
+      ? extractUnderlyingFromOptionTicker(normalizedTicker)
+      : normalizedTicker;
+    const selectedUnderlying =
+      selectedLeg.underlying ?? extractUnderlyingFromOptionTicker(selectedLeg.ticker);
+    if (
+      normalizedUnderlying &&
+      selectedUnderlying &&
+      selectedUnderlying.toUpperCase() !== normalizedUnderlying.toUpperCase()
+    ) {
+      setSelectedLeg(null);
+      return;
+    }
+    const inChain = findLegByTicker(chainExpirations, selectedLeg.ticker);
+    if (!inChain) {
+      setSelectedLeg(null);
+    }
+  }, [selectedLeg, chainExpirations, normalizedTicker]);
 
   useEffect(() => {
     if (!desiredContract) return;
@@ -1288,7 +1282,6 @@ function App() {
             {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
           </p>
         </div>
-        <EntryChecklistPanel result={currentChecklist} loading={checklistLoading} />
         <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
