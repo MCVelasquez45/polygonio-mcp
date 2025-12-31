@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { chatApi } from '../../api';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
 import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
+import { PromptTemplates, type PromptTemplate } from './PromptTemplates';
 
 export type ChatBotProps = {
   sessionId: string;
@@ -26,6 +27,32 @@ export function ChatBot({
   onMessagesChange,
   onConversationUpdate,
 }: ChatBotProps) {
+  const promptTemplates: PromptTemplate[] = [
+    {
+      id: 'chart-read',
+      label: 'Analyze this chart',
+      prompt: 'Explain what is happening on this chart and call out any risks or trend shifts.',
+      description: 'Quick technical read for the active chart and timeframe.',
+    },
+    {
+      id: 'option-risk',
+      label: 'Option risk review',
+      prompt: 'Review the risk/reward for the selected option contract. Highlight IV, greeks, and key risk.',
+      description: 'Summarize risk/reward on the selected contract.',
+    },
+    {
+      id: 'why-move',
+      label: 'Why did it move?',
+      prompt: 'Why is this ticker moving today? Provide likely catalysts and key levels.',
+      description: 'Check news, momentum, and levels for the active ticker.',
+    },
+    {
+      id: 'daily-recap',
+      label: 'Daily recap',
+      prompt: 'Give me a concise daily recap for this ticker with trend, momentum, and notable events.',
+      description: 'Short daily summary for the active ticker.',
+    },
+  ];
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]
   );
@@ -52,9 +79,8 @@ export function ChatBot({
     timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function sendMessage(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = draft.trim();
+  async function sendUserMessage(text: string) {
+    const trimmed = text.trim();
     if (!trimmed || loading) return;
 
     const userMessage: ChatMessage = {
@@ -65,7 +91,6 @@ export function ChatBot({
     };
 
     setMessages(prev => [...prev, userMessage]);
-    setDraft('');
     setLoading(true);
 
     try {
@@ -105,6 +130,14 @@ export function ChatBot({
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!draft.trim() || loading) return;
+    const next = draft;
+    setDraft('');
+    await sendUserMessage(next);
   }
 
   return (
@@ -168,7 +201,15 @@ export function ChatBot({
         )}
       </div>
 
-      <form onSubmit={sendMessage} className="border-t border-gray-900 p-4 flex flex-col gap-3">
+      <form onSubmit={handleSubmit} className="border-t border-gray-900 p-4 flex flex-col gap-3">
+        <PromptTemplates
+          templates={promptTemplates}
+          disabled={loading}
+          onSelect={prompt => {
+            setDraft('');
+            void sendUserMessage(prompt);
+          }}
+        />
         <textarea
           rows={3}
           value={draft}
