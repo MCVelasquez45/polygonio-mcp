@@ -309,13 +309,17 @@ router.get('/options/contracts/:symbol', async (req, res, next) => {
       { symbol },
       300_000,
       async () => {
-        const detail = await getMassiveOptionContract(symbol);
-        if (!detail) {
-          const err: any = new Error('Contract not found');
-          err.status = 404;
-          throw err;
+        try {
+          return await getMassiveOptionContractSnapshot(symbol);
+        } catch (snapshotError) {
+          const detail = await getMassiveOptionContract(symbol);
+          if (!detail) {
+            const err: any = new Error('Contract not found');
+            err.status = 404;
+            throw err;
+          }
+          return detail;
         }
-        return detail;
       },
       { ticker: symbol }
     );

@@ -1381,6 +1381,19 @@ function normalizeOptionContractDetail(detail: any, fallbackTicker: string) {
   if (!detail) return null;
   const lastQuoteRaw = detail.last_quote ?? {};
   const lastTradeRaw = detail.last_trade ?? {};
+  const greeksRaw = detail.greeks ?? {};
+  const delta = resolveNumber(greeksRaw.delta);
+  const gamma = resolveNumber(greeksRaw.gamma);
+  const theta = resolveNumber(greeksRaw.theta);
+  const vega = resolveNumber(greeksRaw.vega);
+  const rho = resolveNumber(greeksRaw.rho);
+  const greeks = {
+    ...(delta != null ? { delta } : {}),
+    ...(gamma != null ? { gamma } : {}),
+    ...(theta != null ? { theta } : {}),
+    ...(vega != null ? { vega } : {}),
+    ...(rho != null ? { rho } : {}),
+  };
   const expiration =
     normalizeExpirationDate(
       typeof detail?.expiration_date === 'string'
@@ -1399,7 +1412,7 @@ function normalizeOptionContractDetail(detail: any, fallbackTicker: string) {
     breakEvenPrice: detail.break_even_price,
     impliedVolatility: detail.implied_volatility,
     day: detail.day,
-    greeks: detail.greeks,
+    greeks,
     lastQuote: {
       bid: lastQuoteRaw.bid ?? lastQuoteRaw.bid_price ?? null,
       ask: lastQuoteRaw.ask ?? lastQuoteRaw.ask_price ?? null,
@@ -1539,6 +1552,7 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
   console.log('[MASSIVE] contract snapshot payload', contractSymbol, JSON.stringify(snapshot)?.slice(0, 500));
   const payload = snapshot?.results ?? snapshot ?? {};
   const optionData = payload?.option ?? payload ?? {};
+  const priceData = optionData?.price_data ?? optionData?.priceData ?? optionData?.pricing ?? null;
   const day = optionData?.day ?? contractDetail.day ?? {};
   const lastQuote = optionData?.last_quote ?? contractDetail.lastQuote ?? {};
   const lastTrade = optionData?.last_trade ?? contractDetail.lastTrade ?? {};
@@ -1546,28 +1560,58 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
     resolveNumber(lastTrade?.price) ??
     computeMid(lastQuote?.bid, lastQuote?.ask) ??
     resolveNumber(day?.close);
+  const greeksRaw = {
+    ...(priceData?.greeks ?? {}),
+    ...(optionData?.greeks ?? {}),
+    ...(contractDetail.greeks ?? {})
+  };
+  const delta = resolveNumber(greeksRaw.delta);
+  const gamma = resolveNumber(greeksRaw.gamma);
+  const theta = resolveNumber(greeksRaw.theta);
+  const vega = resolveNumber(greeksRaw.vega);
+  const rho = resolveNumber(greeksRaw.rho);
+  const greeks = {
+    ...(delta != null ? { delta } : {}),
+    ...(gamma != null ? { gamma } : {}),
+    ...(theta != null ? { theta } : {}),
+    ...(vega != null ? { vega } : {}),
+    ...(rho != null ? { rho } : {})
+  };
+  const contractType = contractDetail.type;
+  const strike = contractDetail.strike ?? optionData?.strike_price ?? null;
+  const breakEvenPrice =
+    contractDetail.breakEvenPrice ??
+    (typeof strike === 'number' && typeof price === 'number' && contractType
+      ? contractType === 'call'
+        ? strike + price
+        : strike - price
+      : null);
 
   const normalizedSnapshot = {
     contract: contractSymbol,
     ticker: contractSymbol,
-    type: contractDetail.type,
     underlying: underlyingSymbol,
-    name: contractDetail.ticker ?? contractSymbol,
-    strike: contractDetail.strike ?? optionData?.strike_price ?? null,
     expiration:
       normalizeExpirationDate(contractDetail.expiration ?? optionData?.expiration_date) ??
       contractDetail.expiration ??
       optionData?.expiration_date ??
       undefined,
+    type: contractType,
+    strike,
+    openInterest: resolveNumber(optionData?.open_interest ?? contractDetail.openInterest),
+    breakEvenPrice: breakEvenPrice ?? undefined,
+    impliedVolatility: resolveNumber(optionData?.implied_volatility ?? contractDetail.impliedVolatility),
+    day,
+    greeks,
+    lastQuote,
+    lastTrade,
     price,
     bid: resolveNumber(lastQuote?.bid),
     ask: resolveNumber(lastQuote?.ask),
     mid: computeMid(lastQuote?.bid, lastQuote?.ask),
     change: resolveNumber(day?.change ?? day?.change_percent),
     changePercent: resolveNumber(day?.change_percent),
-    iv: resolveNumber(optionData?.implied_volatility ?? contractDetail.impliedVolatility),
     volume: resolveNumber(day?.volume ?? optionData?.volume),
-    openInterest: resolveNumber(optionData?.open_interest ?? contractDetail.openInterest),
   };
   console.log('[MASSIVE] contract snapshot resolved', {
     contract: normalizedSnapshot.contract,

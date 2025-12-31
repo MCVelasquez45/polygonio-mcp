@@ -1,5 +1,5 @@
 import { http } from './http';
-import type { AggregateBar, OptionChainData, QuoteSnapshot, TradePrint, WatchlistSnapshot } from '../types/market';
+import type { AggregateBar, OptionChainData, OptionContractDetail, QuoteSnapshot, TradePrint, WatchlistSnapshot } from '../types/market';
 
 type MarketMeta = {
   fetchedAt?: string;
@@ -67,6 +67,11 @@ export async function getOptionsChain(params: { ticker: string; limit?: number; 
   const { data } = await http.get<OptionChainData & MarketMeta>(`/api/market/options/chain/${params.ticker}`, {
     params: { limit: params.limit, expiration: params.expiration ?? undefined },
   });
+  return data;
+}
+
+export async function getOptionContractDetail(symbol: string): Promise<OptionContractDetail & MarketMeta> {
+  const { data } = await http.get<OptionContractDetail & MarketMeta>(`/api/market/options/contracts/${symbol}`);
   return data;
 }
 

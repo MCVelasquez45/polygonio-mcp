@@ -219,6 +219,7 @@ function App() {
   const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
   const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
+  const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -883,7 +884,37 @@ function App() {
       setContractDetail(null);
       return;
     }
-    setContractDetail(optionLegToContractDetail(selectedLeg));
+    const baseDetail = optionLegToContractDetail(selectedLeg);
+    setContractDetail(baseDetail);
+
+    const symbol = selectedLeg.ticker.toUpperCase();
+    const cached = contractDetailCacheRef.current.get(symbol);
+    if (cached) {
+      setContractDetail(mergeContractDetail(baseDetail, cached));
+      return;
+    }
+
+    const needsGreeks = !hasGreekValues(baseDetail.greeks);
+    const needsIv = baseDetail.impliedVolatility == null;
+    const needsOi = baseDetail.openInterest == null;
+    if (!needsGreeks && !needsIv && !needsOi) return;
+
+    let cancelled = false;
+    marketApi
+      .getOptionContractDetail(symbol)
+      .then(detail => {
+        if (cancelled) return;
+        const merged = mergeContractDetail(baseDetail, detail);
+        contractDetailCacheRef.current.set(symbol, merged);
+        setContractDetail(merged);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.warn('Failed to load contract details', error);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedLeg]);
 
   const chartTicker = useMemo(() => {
@@ -1461,6 +1492,7 @@ function App() {
           onContractSelect={handleContractSelection}
           liveQuotes={liveChainQuotes}
           liveTrades={liveChainTrades}
+          selectedContractDetail={contractDetail}
         />
       </div>
     </div>
@@ -1695,6 +1727,37 @@ function optionLegToContractDetail(leg: OptionLeg): OptionContractDetail {
           sip_timestamp: leg.lastTrade.sip_timestamp ?? undefined,
         }
       : undefined,
+  };
+}
+
+function hasGreekValues(greeks?: Record<string, number>): boolean {
+  if (!greeks) return false;
+  return (['delta', 'gamma', 'theta', 'vega', 'rho'] as const).some(key => {
+    const value = greeks[key];
+    return typeof value === 'number' && Number.isFinite(value);
+  });
+}
+
+function mergeContractDetail(base: OptionContractDetail, incoming?: OptionContractDetail | null): OptionContractDetail {
+  if (!incoming) return base;
+  const mergedGreeks = { ...(base.greeks ?? {}), ...(incoming.greeks ?? {}) };
+  const mergedDay = { ...(base.day ?? {}), ...(incoming.day ?? {}) };
+  const mergedQuote = { ...(base.lastQuote ?? {}), ...(incoming.lastQuote ?? {}) };
+  const mergedTrade = { ...(base.lastTrade ?? {}), ...(incoming.lastTrade ?? {}) };
+
+  return {
+    ticker: incoming.ticker ?? base.ticker,
+    underlying: incoming.underlying ?? base.underlying,
+    expiration: incoming.expiration ?? base.expiration,
+    type: incoming.type ?? base.type,
+    strike: incoming.strike ?? base.strike,
+    openInterest: incoming.openInterest ?? base.openInterest,
+    breakEvenPrice: incoming.breakEvenPrice ?? base.breakEvenPrice,
+    impliedVolatility: incoming.impliedVolatility ?? base.impliedVolatility,
+    day: Object.keys(mergedDay).length ? mergedDay : base.day,
+    greeks: Object.keys(mergedGreeks).length ? mergedGreeks : base.greeks,
+    lastQuote: Object.keys(mergedQuote).length ? mergedQuote : base.lastQuote,
+    lastTrade: Object.keys(mergedTrade).length ? mergedTrade : base.lastTrade,
   };
 }
 

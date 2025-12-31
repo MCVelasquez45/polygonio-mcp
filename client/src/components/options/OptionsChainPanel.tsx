@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { OptionChainExpirationGroup, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
+import type { OptionChainExpirationGroup, OptionContractDetail, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
 import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
 import { computeExpirationDte, formatExpirationDate } from '../../utils/expirations';
 
@@ -16,6 +16,7 @@ type Props = {
   onContractSelect: (leg: OptionLeg | null) => void;
   liveQuotes?: Record<string, QuoteSnapshot>;
   liveTrades?: Record<string, TradePrint>;
+  selectedContractDetail?: OptionContractDetail | null;
 };
 
 type ChainRow = {
@@ -62,6 +63,7 @@ export function OptionsChainPanel({
   onContractSelect,
   liveQuotes,
   liveTrades,
+  selectedContractDetail,
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -211,6 +213,10 @@ export function OptionsChainPanel({
     const leg = optionType === 'calls' ? row.call : row.put;
     if (!leg) return null;
     const strike = row.strike ?? leg.strike;
+    const detailOverride =
+      selectedContractDetail?.ticker?.toUpperCase() === leg.ticker.toUpperCase()
+        ? selectedContractDetail
+        : null;
     const liveQuote = liveQuotes?.[leg.ticker];
     const liveTrade = liveTrades?.[leg.ticker];
     const liveBid = liveQuote?.bidPrice ?? leg.bid ?? null;
@@ -223,10 +229,20 @@ export function OptionsChainPanel({
     const changeValue =
       leg.change ??
       (changePercent != null && price != null ? (changePercent / 100) * price : null);
-    const breakeven = leg.breakeven ?? null;
+    const breakeven = leg.breakeven ?? detailOverride?.breakEvenPrice ?? null;
     const toBreakeven = leg.toBreakevenPercent ?? null;
     const isSelected = selectedContract?.ticker === leg.ticker;
     const isLive = Boolean(liveQuote || liveTrade);
+    const resolvedIv =
+      typeof detailOverride?.impliedVolatility === 'number' ? detailOverride.impliedVolatility : leg.iv ?? null;
+    const resolvedOpenInterest =
+      typeof detailOverride?.openInterest === 'number' ? detailOverride.openInterest : leg.openInterest ?? null;
+    const detailGreeks = detailOverride?.greeks ?? null;
+    const resolvedDelta = typeof detailGreeks?.delta === 'number' ? detailGreeks.delta : leg.delta ?? null;
+    const resolvedGamma = typeof detailGreeks?.gamma === 'number' ? detailGreeks.gamma : leg.gamma ?? null;
+    const resolvedTheta = typeof detailGreeks?.theta === 'number' ? detailGreeks.theta : leg.theta ?? null;
+    const resolvedVega = typeof detailGreeks?.vega === 'number' ? detailGreeks.vega : leg.vega ?? null;
+    const resolvedRho = typeof detailGreeks?.rho === 'number' ? detailGreeks.rho : leg.rho ?? null;
     const prevStrike = index > 0 ? rows[index - 1].strike ?? rows[index - 1].call?.strike ?? rows[index - 1].put?.strike ?? null : null;
     const showUnderlyingLine =
       underlyingPrice != null &&
@@ -242,7 +258,7 @@ export function OptionsChainPanel({
       changeValue,
       price,
       volume: leg.volume ?? null,
-      openInterest: leg.openInterest ?? null
+      openInterest: resolvedOpenInterest ?? null
     };
 
     return (
@@ -330,16 +346,19 @@ export function OptionsChainPanel({
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
               <InfoTile label="Volume" value={leg.volume != null ? leg.volume.toLocaleString() : '—'} />
-              <InfoTile label="Open Interest" value={leg.openInterest != null ? leg.openInterest.toLocaleString() : '—'} />
-              <InfoTile label="Implied Vol" value={leg.iv != null ? `${(leg.iv * 100).toFixed(1)}%` : '—'} />
+              <InfoTile
+                label="Open Interest"
+                value={resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—'}
+              />
+              <InfoTile label="Implied Vol" value={resolvedIv != null ? `${(resolvedIv * 100).toFixed(1)}%` : '—'} />
               <InfoTile label="Breakeven" value={breakeven != null ? `$${breakeven.toFixed(2)}` : '—'} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-              <InfoTile label="Delta" value={leg.delta != null ? leg.delta.toFixed(3) : '—'} />
-              <InfoTile label="Gamma" value={leg.gamma != null ? leg.gamma.toFixed(3) : '—'} />
-              <InfoTile label="Theta" value={leg.theta != null ? leg.theta.toFixed(3) : '—'} />
-              <InfoTile label="Vega" value={leg.vega != null ? leg.vega.toFixed(3) : '—'} />
-              <InfoTile label="Rho" value={leg.rho != null ? leg.rho.toFixed(3) : '—'} />
+              <InfoTile label="Delta" value={resolvedDelta != null ? resolvedDelta.toFixed(3) : '—'} />
+              <InfoTile label="Gamma" value={resolvedGamma != null ? resolvedGamma.toFixed(3) : '—'} />
+              <InfoTile label="Theta" value={resolvedTheta != null ? resolvedTheta.toFixed(3) : '—'} />
+              <InfoTile label="Vega" value={resolvedVega != null ? resolvedVega.toFixed(3) : '—'} />
+              <InfoTile label="Rho" value={resolvedRho != null ? resolvedRho.toFixed(3) : '—'} />
             </div>
             </td>
           </tr>
