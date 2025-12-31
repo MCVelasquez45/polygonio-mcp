@@ -25,7 +25,7 @@ import type {
   WatchlistSnapshot,
 } from './types/market';
 import type { ChecklistResult, DeskInsight, WatchlistReport } from './api/analysis';
-import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
+import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
 const TIMEFRAME_MAP = {
@@ -1360,6 +1360,36 @@ function App() {
     resolvedUnderlyingPrice
   ]);
 
+  const aiContext = useMemo(
+    () =>
+      buildAiContext({
+        view,
+        selectedTicker: displayTicker,
+        chartTicker,
+        timeframe,
+        bars,
+        indicators,
+        selectedLeg,
+        contractDetail,
+        watchlistSymbols,
+        marketSessionMeta,
+        underlyingPrice: resolvedUnderlyingPrice,
+      }),
+    [
+      view,
+      displayTicker,
+      chartTicker,
+      timeframe,
+      bars,
+      indicators,
+      selectedLeg,
+      contractDetail,
+      watchlistSymbols,
+      marketSessionMeta,
+      resolvedUnderlyingPrice,
+    ]
+  );
+
   // Main trading workspace layout (chart, insights, greeks, and options chain).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
@@ -1584,6 +1614,7 @@ function App() {
         onAssistantReply={setLatestInsight}
         latestInsight={latestInsight}
         selectedTicker={displayTicker}
+        context={aiContext}
       />
     </div>
   );
@@ -1686,6 +1717,118 @@ function buildNearMoneySymbols(
     if (putTicker) symbols.add(putTicker.toUpperCase());
   });
   return symbols;
+}
+
+type AiContextInput = {
+  view: View;
+  selectedTicker: string;
+  chartTicker: string | null;
+  timeframe: TimeframeKey;
+  bars: AggregateBar[];
+  indicators?: IndicatorBundle;
+  selectedLeg?: OptionLeg | null;
+  contractDetail?: OptionContractDetail | null;
+  watchlistSymbols: string[];
+  marketSessionMeta?: MarketSessionMeta | null;
+  underlyingPrice: number | null;
+};
+
+function buildAiContext({
+  view,
+  selectedTicker,
+  chartTicker,
+  timeframe,
+  bars,
+  indicators,
+  selectedLeg,
+  contractDetail,
+  watchlistSymbols,
+  marketSessionMeta,
+  underlyingPrice,
+}: AiContextInput): ChatContext {
+  const lastClose = bars.length ? bars[bars.length - 1].close : null;
+  const indicatorSummary = summarizeIndicators(indicators);
+  const chartContext = {
+    symbol: chartTicker ?? selectedTicker,
+    timeframe,
+    barCount: bars.length,
+    lastClose,
+    underlyingPrice,
+    indicators: indicatorSummary ?? undefined,
+  };
+
+  const optionContext = buildOptionContext(selectedLeg, contractDetail);
+  const marketContext = marketSessionMeta
+    ? {
+        state: marketSessionMeta.state,
+        marketClosed: marketSessionMeta.marketClosed,
+        afterHours: marketSessionMeta.afterHours,
+      }
+    : undefined;
+
+  return {
+    view,
+    selectedTicker,
+    chart: chartContext,
+    option: optionContext ?? undefined,
+    market: marketContext,
+    watchlist: watchlistSymbols.length ? watchlistSymbols.slice(0, 12) : undefined,
+  };
+}
+
+function summarizeIndicators(indicators?: IndicatorBundle): { name: string; latest?: number | null; trend?: string | null }[] | null {
+  if (!indicators) return null;
+  const entries = Object.entries(indicators).filter(([key]) => key !== 'ticker');
+  const summary = entries
+    .map(([key, value]) => {
+      if (!value || typeof value !== 'object') return null;
+      const latest = typeof value.latest === 'number' ? value.latest : null;
+      const trend = typeof value.trend === 'string' ? value.trend : null;
+      if (latest == null && trend == null) return null;
+      return { name: key.toUpperCase(), latest, trend };
+    })
+    .filter((entry): entry is { name: string; latest?: number | null; trend?: string | null } => Boolean(entry));
+  return summary.length ? summary : null;
+}
+
+function buildOptionContext(
+  leg?: OptionLeg | null,
+  detail?: OptionContractDetail | null
+): ChatContext['option'] | null {
+  if (!leg && !detail) return null;
+  const greeks = summarizeGreeks(leg, detail);
+  return {
+    ticker: detail?.ticker ?? leg?.ticker,
+    underlying: detail?.underlying ?? leg?.underlying,
+    expiration: detail?.expiration ?? leg?.expiration,
+    strike: detail?.strike ?? leg?.strike,
+    type: detail?.type ?? leg?.type,
+    iv: pickNumber(detail?.impliedVolatility, leg?.iv),
+    openInterest: pickNumber(detail?.openInterest, leg?.openInterest),
+    greeks: greeks ?? undefined,
+  };
+}
+
+function summarizeGreeks(
+  leg?: OptionLeg | null,
+  detail?: OptionContractDetail | null
+): { delta: number | null; gamma: number | null; theta: number | null; vega: number | null; rho: number | null } | null {
+  const delta = pickNumber(detail?.greeks?.delta, leg?.delta, leg?.greeks?.delta);
+  const gamma = pickNumber(detail?.greeks?.gamma, leg?.gamma, leg?.greeks?.gamma);
+  const theta = pickNumber(detail?.greeks?.theta, leg?.theta, leg?.greeks?.theta);
+  const vega = pickNumber(detail?.greeks?.vega, leg?.vega, leg?.greeks?.vega);
+  const rho = pickNumber(detail?.greeks?.rho, leg?.rho, leg?.greeks?.rho);
+  if ([delta, gamma, theta, vega, rho].every(value => value == null)) {
+    return null;
+  }
+  return { delta, gamma, theta, vega, rho };
+}
+
+function pickNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return null;
 }
 
 // Convert an option leg returned by the chain API into the richer Details shape.

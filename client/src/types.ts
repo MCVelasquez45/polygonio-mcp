@@ -30,3 +30,38 @@ export type ConversationResponse = ConversationPayload & {
     timestamp: string;
   }[];
 };
+
+export type ChatContext = {
+  view?: 'trading' | 'scanner' | 'portfolio';
+  selectedTicker?: string;
+  chart?: {
+    symbol?: string;
+    timeframe?: string;
+    barCount?: number;
+    lastClose?: number | null;
+    underlyingPrice?: number | null;
+    indicators?: { name: string; latest?: number | null; trend?: string | null }[];
+  };
+  option?: {
+    ticker?: string;
+    underlying?: string;
+    expiration?: string;
+    strike?: number;
+    type?: string;
+    iv?: number | null;
+    openInterest?: number | null;
+    greeks?: {
+      delta?: number | null;
+      gamma?: number | null;
+      theta?: number | null;
+      vega?: number | null;
+      rho?: number | null;
+    };
+  };
+  market?: {
+    state?: string;
+    marketClosed?: boolean;
+    afterHours?: boolean;
+  };
+  watchlist?: string[];
+};

@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { ChatMessage, ConversationMeta, ConversationPayload } from '../../types';
+import { ChatContext, ChatMessage, ConversationMeta, ConversationPayload } from '../../types';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
 import { ChatBot } from './ChatBot';
 import { ConversationHistory } from './ConversationHistory';
@@ -17,6 +17,7 @@ type ChatDockProps = {
   onAssistantReply: (reply: string) => void;
   latestInsight: string;
   selectedTicker: string;
+  context?: ChatContext;
 };
 
 export function ChatDock({
@@ -32,6 +33,7 @@ export function ChatDock({
   onAssistantReply,
   latestInsight,
   selectedTicker,
+  context,
 }: ChatDockProps) {
   if (!isOpen) return null;
 
@@ -90,6 +92,7 @@ export function ChatDock({
               conversationTitle={activeConversation.title || 'Market Chat'}
               initialMessages={currentMessages}
               selectedTicker={selectedTicker}
+              context={context}
               onAssistantReply={onAssistantReply}
               onRequestNewChat={onRequestNewChat}
               onMessagesChange={messages => onMessagesChange(activeConversation.sessionId, messages)}

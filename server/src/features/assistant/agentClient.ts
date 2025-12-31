@@ -10,10 +10,10 @@ const PYTHON_URL = process.env.PYTHON_URL || 'http://localhost:5001';
  * Any transport error is logged and re-thrown so Express error middleware can
  * produce the appropriate HTTP status.
  */
-export async function agentAnalyze(query: string) {
-  console.log('[SERVER] agentClient.analyze -> POST', `${PYTHON_URL}/analyze`, query);
+export async function agentAnalyze(query: string, context?: Record<string, unknown>) {
+  console.log('[SERVER] agentClient.analyze -> POST', `${PYTHON_URL}/analyze`, { query, context });
   try {
-    const { data } = await axios.post(`${PYTHON_URL}/analyze`, { query });
+    const { data } = await axios.post(`${PYTHON_URL}/analyze`, { query, context });
     console.log('[SERVER] agentClient.analyze <- response', data);
     return data;
   } catch (error) {
@@ -28,13 +28,14 @@ export async function agentAnalyze(query: string) {
  * contract follows OpenAI's Chat Completions style (`messages`, `model`, etc.).
  * Returns the parsed reply text along with the raw response for auditing.
  */
-export async function agentChat(message: string, sessionName?: string) {
+export async function agentChat(message: string, sessionName?: string, context?: Record<string, unknown>) {
   const endpoint = `${PYTHON_URL}/v1/chat/completions`;
-  console.log('[SERVER] agentClient.chat -> POST', endpoint, { message, sessionName });
+  console.log('[SERVER] agentClient.chat -> POST', endpoint, { message, sessionName, context });
   try {
     const payload: Record<string, unknown> = {
       model: 'gpt-5',
-      messages: [{ role: 'user', content: message }]
+      messages: [{ role: 'user', content: message }],
+      context,
     };
     if (sessionName) {
       payload.session_name = sessionName;

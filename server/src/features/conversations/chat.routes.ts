@@ -9,7 +9,7 @@ const router = Router();
 
 router.post('/', async (req, res, next) => {
   try {
-    const { message, sessionId } = req.body;
+    const { message, sessionId, context } = req.body;
     if (typeof message !== 'string' || !message.trim()) {
       console.log('[SERVER] /api/chat validation failed:', req.body);
       return res.status(400).json({ error: 'message is required' });
@@ -21,9 +21,10 @@ router.post('/', async (req, res, next) => {
     console.log('[SERVER] /api/chat forwarding payload:', {
       message,
       sessionId: resolvedSessionId,
+      hasContext: Boolean(context),
     });
 
-    const data = await agentChat(message, resolvedSessionId);
+    const data = await agentChat(message, resolvedSessionId, context);
     console.log('[SERVER] /api/chat response from agent:', data);
 
     const conversation = await appendMessages(

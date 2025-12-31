@@ -13,14 +13,14 @@ const router = Router();
 
 router.post('/', async (req, res, next) => {
   try {
-    const { query } = req.body;
+    const { query, context } = req.body;
     // Basic guardrail to avoid hammering the agent with empty payloads.
     if (typeof query !== 'string' || !query.trim()) {
       console.log('[SERVER] /api/analyze validation failed:', req.body);
       return res.status(400).json({ error: 'query is required' });
     }
-    console.log('[SERVER] /api/analyze forwarding payload:', query);
-    const data = await agentAnalyze(query);
+    console.log('[SERVER] /api/analyze forwarding payload:', { query, hasContext: Boolean(context) });
+    const data = await agentAnalyze(query, context);
     console.log('[SERVER] /api/analyze response from agent:', data);
     res.json(data);
   } catch (error) {

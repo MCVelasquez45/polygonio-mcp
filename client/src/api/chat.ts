@@ -1,5 +1,5 @@
 import { http } from './http';
-import type { ConversationPayload, ConversationResponse } from '../types';
+import type { ChatContext, ConversationPayload, ConversationResponse } from '../types';
 
 type ConversationsListResponse = {
   conversations: ConversationPayload[];
@@ -21,8 +21,11 @@ export async function fetchConversationTranscript(sessionId: string): Promise<Co
   return data;
 }
 
-export async function sendChatMessage(payload: { message: string; sessionId: string }): Promise<ChatReplyResponse> {
+export async function sendChatMessage(payload: {
+  message: string;
+  sessionId: string;
+  context?: ChatContext;
+}): Promise<ChatReplyResponse> {
   const { data } = await http.post<ChatReplyResponse>('/api/chat', payload);
   return data;
 }
-

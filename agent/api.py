@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Any
 
 from agents.exceptions import InputGuardrailTripwireTriggered
 
@@ -16,6 +17,7 @@ app = FastAPI(title="Polygon Market Analysis API", version="1.0.0")
 class AnalysisRequest(BaseModel):
     query: str
     session_name: str | None = None
+    context: dict[str, Any] | None = None
 
 
 class AnalysisResponse(BaseModel):
@@ -31,7 +33,7 @@ async def analyze(request: AnalysisRequest) -> AnalysisResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query must not be empty.")
 
     try:
-        result = await run_analysis(query, session_name=request.session_name)
+        result = await run_analysis(query, session_name=request.session_name, context=request.context)
     except InputGuardrailTripwireTriggered as exc:
         reasoning = getattr(getattr(exc, "output_info", None), "reasoning", None)
         detail = reasoning or "Query is not finance-related."
@@ -61,9 +63,10 @@ async def chat_completions(request: Request) -> JSONResponse:
         )
 
     session_name = body.get("session_name")
+    context = body.get("context")
 
     try:
-        result = await run_analysis(user_prompt, session_name=session_name)
+        result = await run_analysis(user_prompt, session_name=session_name, context=context)
     except InputGuardrailTripwireTriggered as exc:
         reasoning = getattr(getattr(exc, "output_info", None), "reasoning", None)
         detail = reasoning or "Query is not finance-related."

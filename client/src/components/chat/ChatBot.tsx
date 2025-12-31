@@ -1,13 +1,14 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { chatApi } from '../../api';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
-import { ChatMessage, ConversationPayload } from '../../types';
+import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
 
 export type ChatBotProps = {
   sessionId: string;
   conversationTitle: string;
   initialMessages: ChatMessage[];
   selectedTicker: string;
+  context?: ChatContext;
   onAssistantReply?: (reply: string) => void;
   onRequestNewChat: () => void;
   onMessagesChange: (messages: ChatMessage[]) => void;
@@ -19,6 +20,7 @@ export function ChatBot({
   conversationTitle,
   initialMessages,
   selectedTicker,
+  context,
   onAssistantReply,
   onRequestNewChat,
   onMessagesChange,
@@ -67,7 +69,7 @@ export function ChatBot({
     setLoading(true);
 
     try {
-      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId });
+      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context });
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',

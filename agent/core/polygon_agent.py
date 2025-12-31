@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 import re
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from textwrap import dedent
@@ -90,6 +91,23 @@ def _session_guardrail_key(session: SQLiteSession | None) -> str | None:
     if isinstance(session_name, str) and session_name:
         return f"name:{session_name}"
     return f"obj:{id(session)}"
+
+
+def _with_context(query: str, context: Dict[str, Any] | None) -> str:
+    """Append dashboard context to the user query when provided."""
+    if not context:
+        return query
+    try:
+        context_blob = json.dumps(context, ensure_ascii=True)
+    except TypeError:
+        context_blob = json.dumps(context, ensure_ascii=True, default=str)
+    prefix = dedent(
+        f"""\
+        DASHBOARD CONTEXT (JSON):
+        {context_blob}
+        """
+    ).strip()
+    return f"{prefix}\n\nUser question: {query}"
 
 
 async def _fetch_capitol_trades_html() -> str:
@@ -899,6 +917,7 @@ async def run_analysis(
     session: SQLiteSession | None = None,
     server: MCPServerStdio | None = None,
     session_name: str | None = None,
+    context: Dict[str, Any] | None = None,
     trace_label: str = DEFAULT_TRACE_LABEL,
 ):
     """Execute the financial analysis agent for a single query."""
@@ -918,7 +937,7 @@ async def run_analysis(
         with trace(trace_label):
             return await Runner.run(
                 agent,
-                query,
+                _with_context(query, context),
                 session=session_obj,
                 run_config=run_config,
                 max_turns=32,
