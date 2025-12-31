@@ -127,7 +127,7 @@ def _formatting_guardrails() -> str:
     ).strip()
 
 
-async def _fetch_capitol_trades_html() -> str:
+async def _fetch_capitol_trades_html(url: str = CAPITOL_TRADES_URL) -> str:
     """Download the Capitol Trades HTML page."""
     headers = {
         "User-Agent": (
@@ -138,7 +138,7 @@ async def _fetch_capitol_trades_html() -> str:
         "Accept-Language": "en-US,en;q=0.9",
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(CAPITOL_TRADES_URL, headers=headers)
+        response = await client.get(url, headers=headers)
         response.raise_for_status()
         return response.text
 
@@ -147,6 +147,8 @@ def _parse_capitol_trades(html: str) -> List[Dict[str, str]]:
     """Extract trade rows from the Capitol Trades HTML."""
     soup = BeautifulSoup(html, "html.parser")
     rows = soup.select(".TradeTable__Row")
+    if not rows:
+        rows = soup.select("table tbody tr")
     trades: List[Dict[str, str]] = []
 
     for row in rows:
@@ -170,6 +172,19 @@ def _parse_capitol_trades(html: str) -> List[Dict[str, str]]:
             trades.append(trade)
 
     return trades
+
+
+def _capitol_trades_urls(ticker: str | None) -> List[str]:
+    if not ticker:
+        return [CAPITOL_TRADES_URL]
+    normalized = re.sub(r"[^A-Za-z0-9]", "", ticker.upper())
+    if not normalized:
+        return [CAPITOL_TRADES_URL]
+    return [
+        f"https://www.capitoltrades.com/issuer/{normalized}",
+        f"{CAPITOL_TRADES_URL}?issuer={normalized}",
+        CAPITOL_TRADES_URL,
+    ]
 
 
 class FinanceOutput(BaseModel):
@@ -824,16 +839,22 @@ async def get_polygon_financials(
 
 
 @function_tool
-async def get_capitol_trades(n: int = 10) -> Dict[str, Any]:
+async def get_capitol_trades(n: int = 10, ticker: str | None = None) -> Dict[str, Any]:
     """Fetch recent congressional trades scraped from Capitol Trades."""
     limit = max(1, min(int(n), 50))
-    try:
-        html = await _fetch_capitol_trades_html()
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"Failed to download Capitol Trades page: {exc}") from exc
-
-    trades = _parse_capitol_trades(html)
-    return {"trades": trades[:limit]}
+    last_error: Exception | None = None
+    for url in _capitol_trades_urls(ticker):
+        try:
+            html = await _fetch_capitol_trades_html(url)
+        except httpx.HTTPError as exc:
+            last_error = exc
+            continue
+        trades = _parse_capitol_trades(html)
+        if trades:
+            return {"trades": trades[:limit], "source_url": url, "ticker": ticker}
+    if last_error:
+        raise RuntimeError(f"Failed to download Capitol Trades page: {last_error}") from last_error
+    return {"trades": [], "source_url": None, "ticker": ticker}
 
 
 guardrail_agent = Agent(
