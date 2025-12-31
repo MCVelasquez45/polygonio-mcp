@@ -52,6 +52,18 @@ export function ChatBot({
       prompt: 'Give me a concise daily recap for this ticker with trend, momentum, and notable events.',
       description: 'Short daily summary for the active ticker.',
     },
+    {
+      id: 'capitol-activity',
+      label: 'Congressional activity',
+      prompt: 'Summarize recent congressional trading activity relevant to this ticker and any notable patterns.',
+      description: 'Pulls recent Capitol Trades activity and highlights relevance.',
+    },
+    {
+      id: 'fed-move',
+      label: 'Fed movement',
+      prompt: 'Summarize the latest Fed movement and how it may affect this ticker or sector.',
+      description: 'Quick macro read tied to the active symbol.',
+    },
   ];
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]
