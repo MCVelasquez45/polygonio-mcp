@@ -33,3 +33,13 @@ export async function sendChatMessage(payload: {
 export async function deleteConversation(sessionId: string): Promise<void> {
   await http.delete(`/api/conversations/${sessionId}`);
 }
+
+export async function saveChatReport(payload: {
+  content: string;
+  title?: string;
+  sessionId?: string;
+  context?: ChatContext;
+}): Promise<{ result: string }> {
+  const { data } = await http.post<{ result: string }>('/api/chat/report', payload);
+  return data;
+}

@@ -58,6 +58,9 @@ export function ChatBot({
   );
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
+  const [reportStatus, setReportStatus] = useState<
+    Record<string, { state: 'idle' | 'saving' | 'saved' | 'error'; message?: string }>
+  >({});
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const messagesChangeRef = useRef(onMessagesChange);
 
@@ -68,6 +71,7 @@ export function ChatBot({
   useEffect(() => {
     setMessages(initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]);
     setDraft('');
+    setReportStatus({});
   }, [sessionId, initialMessages]);
 
   useEffect(() => {
@@ -140,6 +144,28 @@ export function ChatBot({
     await sendUserMessage(next);
   }
 
+  async function handleSaveReport(message: ChatMessage) {
+    if (reportStatus[message.id]?.state === 'saving') return;
+    setReportStatus(prev => ({ ...prev, [message.id]: { state: 'saving' } }));
+    try {
+      const title = `${selectedTicker} ${conversationTitle}`.trim();
+      const response = await chatApi.saveChatReport({
+        content: message.content,
+        title,
+        sessionId,
+        context,
+      });
+      const resultText = response?.result ?? 'Report saved';
+      setReportStatus(prev => ({
+        ...prev,
+        [message.id]: { state: 'saved', message: extractReportName(resultText) ?? resultText },
+      }));
+    } catch (error: any) {
+      const fallback = error?.response?.data?.error ?? error?.message ?? 'Failed to save report';
+      setReportStatus(prev => ({ ...prev, [message.id]: { state: 'error', message: fallback } }));
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <header className="flex flex-col gap-2 border-b border-gray-900 p-4">
@@ -189,7 +215,29 @@ export function ChatBot({
                   : 'border-emerald-500/30 bg-emerald-500/10 text-white'
               }`}
             >
-              {message.role === 'assistant' ? renderStructuredReply(message.content) : <p>{message.content}</p>}
+              {message.role === 'assistant' ? (
+                <div className="space-y-2">
+                  <div>{renderStructuredReply(message.content)}</div>
+                  <div className="flex items-center gap-2 text-[0.65rem] text-gray-400">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveReport(message)}
+                      className="rounded-full border border-gray-800/80 px-2 py-1 text-gray-300 hover:text-white disabled:opacity-40"
+                      disabled={reportStatus[message.id]?.state === 'saving'}
+                    >
+                      {reportStatus[message.id]?.state === 'saving' ? 'Saving…' : 'Save report'}
+                    </button>
+                    {reportStatus[message.id]?.state === 'saved' && reportStatus[message.id]?.message && (
+                      <span className="text-emerald-300">Saved: {reportStatus[message.id]?.message}</span>
+                    )}
+                    {reportStatus[message.id]?.state === 'error' && reportStatus[message.id]?.message && (
+                      <span className="text-red-300">{reportStatus[message.id]?.message}</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p>{message.content}</p>
+              )}
             </div>
           </div>
         ))}
@@ -274,4 +322,12 @@ function renderStructuredReply(text: string): ReactNode {
 
   flushList();
   return elements;
+}
+
+function extractReportName(resultText: string): string | null {
+  const match = resultText.match(/Report saved:\s*(.+)$/i);
+  if (!match) return null;
+  const rawPath = match[1].trim();
+  const parts = rawPath.split(/[\\/]/);
+  return parts[parts.length - 1] || rawPath;
 }
