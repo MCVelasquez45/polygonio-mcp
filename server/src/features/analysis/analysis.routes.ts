@@ -1,7 +1,9 @@
+
 import { Router } from 'express';
 // Analysis router: bridges client watchlist/checklist requests to option analytics services.
 import { getWatchlistReports } from '../options/services/watchlistReports';
 import { evaluateChecklistBatch, getStoredChecklist } from '../options/services/optionsChecklist';
+import { getDeskInsight } from './deskInsight';
 
 const router = Router();
 
@@ -25,6 +27,20 @@ router.post('/watchlist', async (req, res, next) => {
       source,
       fetchedAt: new Date().toISOString()
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/insight', async (req, res, next) => {
+  try {
+    const raw = req.body?.symbol ?? req.body?.ticker;
+    const symbol = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+    if (!symbol) {
+      return res.status(400).json({ error: 'symbol is required' });
+    }
+    const insight = await getDeskInsight(symbol);
+    res.json(insight);
   } catch (error) {
     next(error);
   }

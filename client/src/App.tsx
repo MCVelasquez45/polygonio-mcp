@@ -24,7 +24,7 @@ import type {
   TradePrint,
   WatchlistSnapshot,
 } from './types/market';
-import type { ChecklistResult, WatchlistReport } from './api/analysis';
+import type { ChecklistResult, DeskInsight, WatchlistReport } from './api/analysis';
 import type { ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
@@ -178,6 +178,9 @@ function App() {
   const [transcripts, setTranscripts] = useState<Record<string, ChatMessage[]>>({});
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [latestInsight, setLatestInsight] = useState('');
+  const [deskInsight, setDeskInsight] = useState<DeskInsight | null>(null);
+  const [deskInsightLoading, setDeskInsightLoading] = useState(false);
+  const deskInsightCacheRef = useRef<Map<string, DeskInsight>>(new Map());
   const [isChatOpen, setIsChatOpen] = useState(false);
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
@@ -226,6 +229,12 @@ function App() {
   }, []);
 
   const watchlistSignature = watchlistSymbols.join(',');
+  const deskInsightSymbol = useMemo(() => {
+    if (normalizedTicker.startsWith('O:')) {
+      return extractUnderlyingFromOptionTicker(normalizedTicker) ?? normalizedTicker;
+    }
+    return normalizedTicker;
+  }, [normalizedTicker]);
 
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
@@ -392,6 +401,40 @@ function App() {
       cancelled = true;
     };
   }, [watchlistSignature, watchlistSymbols]);
+
+  // Load the AI desk insight for the active ticker.
+  useEffect(() => {
+    if (!deskInsightSymbol) {
+      setDeskInsight(null);
+      return;
+    }
+    const cached = deskInsightCacheRef.current.get(deskInsightSymbol);
+    if (cached) {
+      setDeskInsight(cached);
+    }
+    let cancelled = false;
+    setDeskInsightLoading(!cached);
+    analysisApi
+      .getDeskInsight(deskInsightSymbol)
+      .then(response => {
+        if (cancelled) return;
+        deskInsightCacheRef.current.set(deskInsightSymbol, response);
+        setDeskInsight(response);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.warn('Failed to load AI desk insight', error);
+        setDeskInsight(null);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeskInsightLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deskInsightSymbol]);
 
   // Run the entry checklist for the current watchlist to highlight notable setups.
   useEffect(() => {
@@ -1218,6 +1261,25 @@ function App() {
     return latestBar?.close ?? null;
   }, [chainUnderlyingPrice, underlyingSnapshot, bars]);
 
+  const deskSummary = deskInsight?.summary || latestInsight;
+  const sentimentLabel = deskInsight?.sentiment?.label ?? null;
+  const sentimentScore = deskInsight?.sentiment?.score ?? null;
+  const sentimentTone = sentimentLabel ? sentimentLabel.toLowerCase() : 'neutral';
+  const sentimentStyles =
+    sentimentTone === 'bullish'
+      ? 'border-emerald-500/30 text-emerald-200 bg-emerald-500/10'
+      : sentimentTone === 'bearish'
+      ? 'border-rose-500/30 text-rose-200 bg-rose-500/10'
+      : 'border-gray-800 text-gray-300 bg-gray-900/60';
+  const sentimentDot =
+    sentimentTone === 'bullish' ? 'bg-emerald-400' : sentimentTone === 'bearish' ? 'bg-rose-400' : 'bg-gray-500';
+  const sentimentText =
+    sentimentLabel && sentimentScore != null
+      ? `${sentimentLabel} (${sentimentScore.toFixed(2)})`
+      : sentimentLabel ?? (sentimentScore != null ? sentimentScore.toFixed(2) : null);
+  const fedEvent = deskInsight?.fedEvent ?? null;
+  const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
+
   // Main trading workspace layout (chart, insights, greeks, and options chain).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
@@ -1264,11 +1326,11 @@ function App() {
           }
           sessionMeta={marketSessionMeta}
         />
-        <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-2">
+        <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Latest Insight</p>
-              <p className="text-sm text-gray-400">AI desk notes for {displayTicker}</p>
+              <p className="text-sm text-gray-400">AI desk notes for {deskInsightSymbol}</p>
             </div>
             <button
               type="button"
@@ -1278,9 +1340,44 @@ function App() {
               Ask AI
             </button>
           </div>
-          <p className="text-sm text-gray-200 whitespace-pre-line">
-            {latestInsight || `No notes yet. Open the AI desk to ask about ${displayTicker} or any spread.`}
-          </p>
+          {deskInsightLoading ? (
+            <div className="space-y-2 animate-pulse">
+              <div className="h-3 w-3/4 rounded bg-gray-800" />
+              <div className="h-3 w-1/2 rounded bg-gray-800" />
+              <div className="h-3 w-2/3 rounded bg-gray-800" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-200 whitespace-pre-line">
+                {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
+              </p>
+              {(sentimentText || fedEvent) && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {sentimentText && (
+                    <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 ${sentimentStyles}`}>
+                      <span className={`h-2 w-2 rounded-full ${sentimentDot}`} />
+                      Sentiment: {sentimentText}
+                    </span>
+                  )}
+                  {fedEvent && (
+                    <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200">
+                      Fed: {fedEvent.title ?? fedEvent.name ?? 'Upcoming event'} · {fedEvent.date ?? 'TBD'}
+                    </span>
+                  )}
+                </div>
+              )}
+              {deskHighlights.length ? (
+                <ul className="space-y-1 text-xs text-gray-300">
+                  {deskHighlights.map(item => (
+                    <li key={item} className="flex items-start gap-2">
+                      <span className="text-emerald-300">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )}
         </div>
         <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>

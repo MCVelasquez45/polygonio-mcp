@@ -22,6 +22,21 @@ export async function getWatchlistReports(tickers: string[]): Promise<WatchlistR
   return data;
 }
 
+export type DeskInsight = {
+  symbol: string;
+  summary: string | null;
+  sentiment: { label?: string | null; score?: number | null } | null;
+  fedEvent: { title?: string; name?: string; date?: string; impact?: string } | null;
+  highlights: string[];
+  source?: string;
+  updatedAt?: string;
+};
+
+export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
+  const { data } = await http.post<DeskInsight>('/api/analysis/insight', { symbol });
+  return data;
+}
+
 export type ChecklistFactor = {
   key: string;
   label: string;
