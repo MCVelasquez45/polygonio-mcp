@@ -95,19 +95,36 @@ def _session_guardrail_key(session: SQLiteSession | None) -> str | None:
 
 def _with_context(query: str, context: Dict[str, Any] | None) -> str:
     """Append dashboard context to the user query when provided."""
+    formatting = _formatting_guardrails()
     if not context:
-        return query
+        return f"{formatting}\n\nUser question: {query}"
     try:
         context_blob = json.dumps(context, ensure_ascii=True)
     except TypeError:
         context_blob = json.dumps(context, ensure_ascii=True, default=str)
     prefix = dedent(
         f"""\
+        {formatting}
+
         DASHBOARD CONTEXT (JSON):
         {context_blob}
         """
     ).strip()
     return f"{prefix}\n\nUser question: {query}"
+
+
+def _formatting_guardrails() -> str:
+    """Instruction block to keep responses structured and readable in the UI."""
+    return dedent(
+        """\
+        RESPONSE FORMAT:
+        - Start with **Summary:** (1-2 sentences)
+        - Then 3-6 bullet points for key data/reasons
+        - End with **Conclusion:** (1 short sentence)
+        - Expand acronyms at least once (e.g., IV = implied volatility)
+        - Keep the tone concise and trader-friendly
+        """
+    ).strip()
 
 
 async def _fetch_capitol_trades_html() -> str:
