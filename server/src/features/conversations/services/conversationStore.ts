@@ -107,3 +107,8 @@ export async function getConversation(sessionId: string): Promise<ConversationDo
   const doc = await conversationsCollection().findOne({ sessionId }, { projection: { _id: 0 } });
   return doc ?? null;
 }
+
+export async function deleteConversation(sessionId: string): Promise<boolean> {
+  const result = await conversationsCollection().deleteOne({ sessionId });
+  return (result.deletedCount ?? 0) > 0;
+}

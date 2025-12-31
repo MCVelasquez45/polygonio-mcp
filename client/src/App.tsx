@@ -1200,6 +1200,36 @@ function App() {
     setLatestInsight(normalized.preview);
   }
 
+  async function handleConversationDelete(id: string) {
+    const convo = conversations.find(item => item.id === id);
+    if (!convo) return;
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('Delete this chat? This cannot be undone.');
+      if (!confirmed) return;
+    }
+    try {
+      await chatApi.deleteConversation(convo.sessionId);
+    } catch (error) {
+      console.warn('Failed to delete conversation', error);
+    }
+    const remaining = conversations.filter(item => item.id !== id);
+    setConversations(remaining);
+    setTranscripts(prev => {
+      const next = { ...prev };
+      delete next[convo.sessionId];
+      transcriptsRef.current = next;
+      return next;
+    });
+    if (activeConversationId === id) {
+      const nextActive = remaining[0]?.id ?? null;
+      setActiveConversationId(nextActive);
+      setLatestInsight(nextActive ? remaining[0]?.preview ?? '' : '');
+      if (nextActive) {
+        void ensureTranscriptLoaded(remaining[0].sessionId);
+      }
+    }
+  }
+
   // Sidebar component handles watchlist interactions + ticker selection.
   const sidebar = (
     <TradingSidebar
@@ -1612,6 +1642,7 @@ function App() {
         onMessagesChange={handleMessagesChange}
         onConversationUpdate={handleConversationUpdate}
         onAssistantReply={setLatestInsight}
+        onConversationDelete={handleConversationDelete}
         latestInsight={latestInsight}
         selectedTicker={displayTicker}
         context={aiContext}

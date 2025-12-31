@@ -52,9 +52,9 @@ const DEFAULT_HEIGHT = 320;
 const SMA_PERIOD = 20;
 
 const DARK_THEME: ThemePalette = {
-  background: '#0f172a',
+  background: 'rgba(15, 23, 42, 0.6)',
   text: '#e5e7eb',
-  grid: '#1f2937',
+  grid: 'rgba(31, 41, 55, 0.45)',
   candleUp: '#10b981',
   candleDown: '#ef4444',
   volumeUp: '#34d399',

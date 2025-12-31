@@ -29,3 +29,7 @@ export async function sendChatMessage(payload: {
   const { data } = await http.post<ChatReplyResponse>('/api/chat', payload);
   return data;
 }
+
+export async function deleteConversation(sessionId: string): Promise<void> {
+  await http.delete(`/api/conversations/${sessionId}`);
+}

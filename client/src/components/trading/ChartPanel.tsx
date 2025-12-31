@@ -60,7 +60,7 @@ export function ChartPanel({
   const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
+    <section className="bg-gray-950/70 border border-gray-900/80 backdrop-blur-sm rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm uppercase tracking-[0.4em] text-gray-500">{ticker}</p>

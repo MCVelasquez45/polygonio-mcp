@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getConversation, listConversations } from './services/conversationStore';
+import { deleteConversation, getConversation, listConversations } from './services/conversationStore';
 
 // Exposes `/api/conversations` endpoints for listing past chat sessions.
 
@@ -43,6 +43,22 @@ router.get('/:sessionId', async (req, res, next) => {
         timestamp: message.timestamp.toISOString(),
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/:sessionId', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    const deleted = await deleteConversation(sessionId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }
