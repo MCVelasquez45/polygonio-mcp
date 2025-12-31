@@ -24,14 +24,14 @@ export function ConversationHistory({ conversations, activeId, onSelect, onDelet
         return (
           <div
             key={convo.id}
-            className={`flex items-start gap-2 rounded-2xl border px-3 py-3 transition-colors ${
+            className={`w-full flex items-start gap-2 rounded-2xl border px-3 py-3 transition-colors ${
               isActive ? 'border-emerald-500/40 bg-emerald-500/10 text-white' : 'border-gray-900/80 bg-gray-950/70 text-gray-200 hover:border-gray-800'
             }`}
           >
             <button
               type="button"
               onClick={() => onSelect(convo.id)}
-              className="flex-1 text-left"
+              className="flex-1 min-w-0 text-left"
             >
               <p className="text-sm font-semibold">{convo.title || 'Untitled chat'}</p>
               <p className="text-xs text-gray-400 truncate">{convo.preview}</p>
@@ -42,7 +42,7 @@ export function ConversationHistory({ conversations, activeId, onSelect, onDelet
             <button
               type="button"
               onClick={() => onDelete(convo.id)}
-              className="h-8 w-8 rounded-full border border-gray-800/70 text-gray-400 hover:text-white flex items-center justify-center"
+              className="h-8 w-8 shrink-0 rounded-full border border-gray-800/70 text-gray-400 hover:text-white flex items-center justify-center"
               aria-label="Delete chat"
             >
               <Trash2 className="h-4 w-4" />
