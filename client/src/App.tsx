@@ -44,6 +44,7 @@ const SMA_WINDOW = 50;
 const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
+const LIVE_CHAIN_STRIKE_ROWS = 3;
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -215,6 +216,9 @@ function App() {
   const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
   const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
+  const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
+  const liveChainSymbolsRef = useRef<Set<string>>(new Set());
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -304,36 +308,37 @@ function App() {
     };
   }, []);
 
-  // Manage live feed subscription for the selected contract.
+  // Manage live feed events for the active contract + near-the-money strip.
   useEffect(() => {
     const socket = socketRef.current;
-    const symbol = activeContractSymbol?.toUpperCase();
-    if (!socket || !liveSocketConnected || !symbol || !symbol.startsWith('O:')) {
+    if (!socket || !liveSocketConnected) return;
+    const activeSymbol = activeContractSymbol?.toUpperCase() ?? null;
+    if (!activeSymbol) {
       setLiveSubscriptionActive(false);
-      return;
     }
-    let mounted = true;
 
-    const normalizeSymbol = (value: any) =>
-      typeof value === 'string' ? value.toUpperCase() : typeof value?.symbol === 'string' ? value.symbol.toUpperCase() : null;
+    const resolveSymbol = (payload: any) =>
+      typeof payload === 'string' ? payload.toUpperCase() : normalizeLiveSymbol(payload);
 
     const handleSubscribed = (payload: any) => {
-      const ackSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
-      if (!mounted || ackSymbol !== symbol) return;
-      setLiveSubscriptionActive(true);
+      const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (ackSymbol && activeSymbol && ackSymbol === activeSymbol) {
+        setLiveSubscriptionActive(true);
+      }
     };
 
     const handleUnsubscribed = (payload: any) => {
-      const ackSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
-      if (!mounted || ackSymbol !== symbol) return;
-      setLiveSubscriptionActive(false);
+      const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
+      if (ackSymbol && activeSymbol && ackSymbol === activeSymbol) {
+        setLiveSubscriptionActive(false);
+      }
     };
 
     const handleQuote = (payload: any) => {
-      const eventSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
-      if (eventSymbol !== symbol) return;
       const normalized = normalizeLiveQuote(payload);
-      if (normalized) {
+      if (!normalized) return;
+      setLiveChainQuotes(prev => ({ ...prev, [normalized.ticker]: normalized }));
+      if (activeSymbol && normalized.ticker === activeSymbol) {
         setQuote(normalized);
         setLastLiveQuoteAt(Date.now());
         setLiveSubscriptionActive(true);
@@ -341,10 +346,10 @@ function App() {
     };
 
     const handleTrade = (payload: any) => {
-      const eventSymbol = normalizeSymbol(payload?.symbol ?? payload?.sym ?? payload);
-      if (eventSymbol !== symbol) return;
       const normalized = normalizeLiveTrade(payload);
-      if (normalized) {
+      if (!normalized) return;
+      setLiveChainTrades(prev => ({ ...prev, [normalized.ticker]: normalized }));
+      if (activeSymbol && normalized.ticker === activeSymbol) {
         setTrades(prev => {
           if (prev.length > 0 && prev[0]?.id === normalized.id) return prev;
           return [normalized, ...prev].slice(0, MAX_TRADE_HISTORY);
@@ -358,16 +363,12 @@ function App() {
     socket.on('live:unsubscribed', handleUnsubscribed);
     socket.on('live:quote', handleQuote);
     socket.on('live:trades', handleTrade);
-    socket.emit('live:subscribe', { symbol });
 
     return () => {
-      mounted = false;
-      socket.emit('live:unsubscribe', { symbol });
       socket.off('live:subscribed', handleSubscribed);
       socket.off('live:unsubscribed', handleUnsubscribed);
       socket.off('live:quote', handleQuote);
       socket.off('live:trades', handleTrade);
-      setLiveSubscriptionActive(false);
     };
   }, [activeContractSymbol, liveSocketConnected]);
 
@@ -1280,6 +1281,54 @@ function App() {
   const fedEvent = deskInsight?.fedEvent ?? null;
   const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
 
+  // Subscribe to a near-the-money strip so the chain shows live prices.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !liveSocketConnected) return;
+    const nextSymbols = buildNearMoneySymbols(
+      chainExpirations,
+      selectedExpiration,
+      resolvedUnderlyingPrice,
+      LIVE_CHAIN_STRIKE_ROWS
+    );
+    if (activeContractSymbol?.startsWith('O:')) {
+      nextSymbols.add(activeContractSymbol.toUpperCase());
+    }
+
+    const prevSymbols = liveChainSymbolsRef.current;
+    const removed: string[] = [];
+    nextSymbols.forEach(symbol => {
+      if (!prevSymbols.has(symbol)) {
+        socket.emit('live:subscribe', { symbol });
+      }
+    });
+    prevSymbols.forEach(symbol => {
+      if (!nextSymbols.has(symbol)) {
+        socket.emit('live:unsubscribe', { symbol });
+        removed.push(symbol);
+      }
+    });
+    if (removed.length) {
+      setLiveChainQuotes(prev => {
+        const next = { ...prev };
+        removed.forEach(symbol => delete next[symbol]);
+        return next;
+      });
+      setLiveChainTrades(prev => {
+        const next = { ...prev };
+        removed.forEach(symbol => delete next[symbol]);
+        return next;
+      });
+    }
+    liveChainSymbolsRef.current = nextSymbols;
+  }, [
+    liveSocketConnected,
+    activeContractSymbol,
+    chainExpirations,
+    selectedExpiration,
+    resolvedUnderlyingPrice
+  ]);
+
   // Main trading workspace layout (chart, insights, greeks, and options chain).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
@@ -1410,6 +1459,8 @@ function App() {
           onExpirationChange={handleExpirationChange}
           selectedContract={selectedLeg}
           onContractSelect={handleContractSelection}
+          liveQuotes={liveChainQuotes}
+          liveTrades={liveChainTrades}
         />
       </div>
     </div>
@@ -1571,6 +1622,38 @@ function findFirstAvailableLeg(groups: OptionChainExpirationGroup[], preferredEx
     }
   }
   return null;
+}
+
+function buildNearMoneySymbols(
+  groups: OptionChainExpirationGroup[],
+  selectedExpiration: string | null,
+  underlyingPrice: number | null,
+  maxRows: number
+): Set<string> {
+  if (!groups.length || underlyingPrice == null) return new Set();
+  const activeGroup =
+    selectedExpiration != null
+      ? groups.find(group => group.expiration === selectedExpiration) ?? groups[0]
+      : groups[0];
+  if (!activeGroup) return new Set();
+  const ranked = activeGroup.strikes
+    .map(row => {
+      const strike = row.strike ?? row.call?.strike ?? row.put?.strike ?? null;
+      const distance = strike != null ? Math.abs(strike - underlyingPrice) : Number.POSITIVE_INFINITY;
+      return { row, strike, distance };
+    })
+    .filter(entry => entry.strike != null)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, Math.max(1, maxRows));
+
+  const symbols = new Set<string>();
+  ranked.forEach(entry => {
+    const callTicker = entry.row.call?.ticker;
+    const putTicker = entry.row.put?.ticker;
+    if (callTicker) symbols.add(callTicker.toUpperCase());
+    if (putTicker) symbols.add(putTicker.toUpperCase());
+  });
+  return symbols;
 }
 
 // Convert an option leg returned by the chain API into the richer Details shape.

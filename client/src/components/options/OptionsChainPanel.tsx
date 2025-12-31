@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { OptionChainExpirationGroup, OptionLeg } from '../../types/market';
+import type { OptionChainExpirationGroup, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
 import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
 import { computeExpirationDte, formatExpirationDate } from '../../utils/expirations';
 
@@ -14,6 +14,8 @@ type Props = {
   onExpirationChange: (value: string | null) => void;
   selectedContract?: OptionLeg | null;
   onContractSelect: (leg: OptionLeg | null) => void;
+  liveQuotes?: Record<string, QuoteSnapshot>;
+  liveTrades?: Record<string, TradePrint>;
 };
 
 type ChainRow = {
@@ -58,6 +60,8 @@ export function OptionsChainPanel({
   onExpirationChange,
   selectedContract,
   onContractSelect,
+  liveQuotes,
+  liveTrades,
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -207,8 +211,14 @@ export function OptionsChainPanel({
     const leg = optionType === 'calls' ? row.call : row.put;
     if (!leg) return null;
     const strike = row.strike ?? leg.strike;
-    const price =
-      leg.mark ?? leg.mid ?? leg.lastPrice ?? leg.bid ?? leg.ask ?? leg.lastTrade?.price ?? null;
+    const liveQuote = liveQuotes?.[leg.ticker];
+    const liveTrade = liveTrades?.[leg.ticker];
+    const liveBid = liveQuote?.bidPrice ?? leg.bid ?? null;
+    const liveAsk = liveQuote?.askPrice ?? leg.ask ?? null;
+    const liveMid = liveQuote?.midpoint ?? leg.mid ?? null;
+    const liveMark = liveQuote?.midpoint ?? leg.mark ?? null;
+    const liveLast = liveTrade?.price ?? leg.lastPrice ?? leg.lastTrade?.price ?? null;
+    const price = liveMark ?? liveMid ?? liveLast ?? liveBid ?? liveAsk ?? null;
     const changePercent = leg.changePercent ?? null;
     const changeValue =
       leg.change ??
@@ -216,6 +226,7 @@ export function OptionsChainPanel({
     const breakeven = leg.breakeven ?? null;
     const toBreakeven = leg.toBreakevenPercent ?? null;
     const isSelected = selectedContract?.ticker === leg.ticker;
+    const isLive = Boolean(liveQuote || liveTrade);
     const prevStrike = index > 0 ? rows[index - 1].strike ?? rows[index - 1].call?.strike ?? rows[index - 1].put?.strike ?? null : null;
     const showUnderlyingLine =
       underlyingPrice != null &&
@@ -283,7 +294,7 @@ export function OptionsChainPanel({
               >
                 {column.key === 'price' ? (
                   <span
-                    className={`px-2 py-1 rounded-full border ${
+                    className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border ${
                       changePercent != null && changePercent >= 0
                         ? 'border-emerald-500 text-emerald-300'
                         : changePercent != null
@@ -291,6 +302,7 @@ export function OptionsChainPanel({
                         : 'border-gray-700 text-gray-300'
                     }`}
                   >
+                    {isLive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
                     {formattedValue}
                   </span>
                 ) : (
@@ -311,10 +323,10 @@ export function OptionsChainPanel({
                 {formatExpirationDate(leg.expiration)}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
-              <InfoTile label="Bid" value={leg.bid != null ? `$${leg.bid.toFixed(2)}` : '—'} />
-              <InfoTile label="Ask" value={leg.ask != null ? `$${leg.ask.toFixed(2)}` : '—'} />
-              <InfoTile label="Mark" value={leg.mark != null ? `$${leg.mark.toFixed(2)}` : '—'} />
-              <InfoTile label="Last" value={leg.lastPrice != null ? `$${leg.lastPrice.toFixed(2)}` : '—'} />
+              <InfoTile label="Bid" value={liveBid != null ? `$${liveBid.toFixed(2)}` : '—'} />
+              <InfoTile label="Ask" value={liveAsk != null ? `$${liveAsk.toFixed(2)}` : '—'} />
+              <InfoTile label="Mark" value={liveMark != null ? `$${liveMark.toFixed(2)}` : '—'} />
+              <InfoTile label="Last" value={liveLast != null ? `$${liveLast.toFixed(2)}` : '—'} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
               <InfoTile label="Volume" value={leg.volume != null ? leg.volume.toLocaleString() : '—'} />
