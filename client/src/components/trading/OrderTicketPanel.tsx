@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { QuoteSnapshot, TradePrint } from '../../types/market';
 import type { OptionContractDetail } from '../../types/market';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  Info,
-  Loader2,
-  Plus,
-  ShoppingCart,
-  Trash2
-} from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Info, Loader2, Plus, Trash2 } from 'lucide-react';
 import { submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
 
 type Props = {
@@ -477,8 +468,24 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
           }`}
           onClick={handleSubmit}
         >
-          {submitting || isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
-          {legs.length ? `Submit ${orderDirection === 'credit' ? 'Credit' : 'Debit'} Order` : 'Add a leg to trade'}
+          {submitting || isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : legs.length ? (
+            <>
+              <span>Submit Order</span>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.2em] ${
+                  orderDirection === 'credit'
+                    ? 'border-emerald-300/40 text-emerald-200 bg-emerald-500/10'
+                    : 'border-red-300/40 text-red-200 bg-red-500/10'
+                }`}
+              >
+                {orderDirection === 'credit' ? 'Credit' : 'Debit'}
+              </span>
+            </>
+          ) : (
+            'Add a leg to trade'
+          )}
         </button>
         {submissionResult && (
           <div
