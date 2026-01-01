@@ -77,6 +77,9 @@ export function ShortInterestCard({ payload, loading, error, requestedTicker }: 
     shortInterestDelta != null
       ? `${shortInterestDelta >= 0 ? '+' : ''}${formatCompact(shortInterestDelta)}${shortInterestDeltaPct != null ? ` (${shortInterestDeltaPct.toFixed(2)}%)` : ''}`
       : '—';
+  const highInterest =
+    (typeof latest?.daysToCover === 'number' && latest.daysToCover >= 5) ||
+    (typeof shortInterestDeltaPct === 'number' && shortInterestDeltaPct >= 20);
 
   if (loading) {
     return (
@@ -104,6 +107,12 @@ export function ShortInterestCard({ payload, loading, error, requestedTicker }: 
       {error && (
         <div className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded-xl px-3 py-2">
           {error}
+        </div>
+      )}
+
+      {highInterest && (
+        <div className="text-xs text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-xl px-3 py-2">
+          High short interest detected. Watch days-to-cover and squeeze risk.
         </div>
       )}
 

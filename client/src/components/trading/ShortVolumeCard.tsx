@@ -83,6 +83,22 @@ export function ShortVolumeCard({ payload, loading, error, requestedTicker }: Pr
       ratio: entry.shortVolumeRatio ?? null,
     }));
   }, [sorted]);
+  const averageShortVolume = useMemo(() => {
+    const window = sorted.slice(-10);
+    const values = window.map(entry => entry.shortVolume).filter((value): value is number => typeof value === 'number');
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [sorted]);
+  const shortVolumeSpike =
+    typeof latest?.shortVolume === 'number' &&
+    typeof averageShortVolume === 'number' &&
+    latest.shortVolume >= averageShortVolume * 2;
+  const ratioElevated = typeof latest?.shortVolumeRatio === 'number' && latest.shortVolumeRatio >= 50;
+  const alertMessage = shortVolumeSpike
+    ? `Short volume spike: ${formatCompact(latest?.shortVolume)} vs ${formatCompact(averageShortVolume)} avg.`
+    : ratioElevated
+    ? `Short volume ratio elevated (${formatPercent(latest?.shortVolumeRatio)}).`
+    : null;
 
   if (loading) {
     return (
@@ -110,6 +126,12 @@ export function ShortVolumeCard({ payload, loading, error, requestedTicker }: Pr
       {error && (
         <div className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded-xl px-3 py-2">
           {error}
+        </div>
+      )}
+
+      {alertMessage && (
+        <div className="text-xs text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-xl px-3 py-2">
+          {alertMessage}
         </div>
       )}
 
