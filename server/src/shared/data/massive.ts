@@ -347,7 +347,7 @@ export async function getOptionAggregates(
             transactions: row.n ?? row.transactions ?? null
           };
         })
-        .filter((bar): bar is NonNullable<typeof bar> => Boolean(bar))
+        .filter((bar): bar is NonNullable<typeof bar> => bar != null)
     : [];
 
   console.log('[MASSIVE] aggregates resolved', {
