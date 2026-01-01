@@ -37,6 +37,21 @@ type TradesResponse = MarketMeta & {
   trades: TradePrint[];
 };
 
+export type ShortInterestEntry = {
+  ticker: string;
+  settlementDate: string | null;
+  shortInterest: number | null;
+  avgDailyVolume: number | null;
+  daysToCover: number | null;
+};
+
+export type ShortInterestResponse = MarketMeta & {
+  ticker: string;
+  requestedTicker?: string;
+  resolvedTicker?: string;
+  results: ShortInterestEntry[];
+};
+
 type WatchlistResponse = {
   entries: (WatchlistSnapshot & MarketMeta)[];
 };
@@ -82,6 +97,18 @@ type ExpirationsResponse = {
 
 export async function getOptionExpirations(ticker: string): Promise<ExpirationsResponse> {
   const { data } = await http.get<ExpirationsResponse>(`/api/market/options/expirations/${ticker}`);
+  return data;
+}
+
+export async function getShortInterest(params: {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
+}): Promise<ShortInterestResponse> {
+  const { data } = await http.get<ShortInterestResponse>('/api/market/short-interest', { params });
   return data;
 }
 
