@@ -52,6 +52,23 @@ export type ShortInterestResponse = MarketMeta & {
   results: ShortInterestEntry[];
 };
 
+export type ShortVolumeEntry = {
+  ticker: string;
+  date: string | null;
+  shortVolume: number | null;
+  shortVolumeRatio: number | null;
+  totalVolume: number | null;
+  nonExemptVolume: number | null;
+  exemptVolume: number | null;
+};
+
+export type ShortVolumeResponse = MarketMeta & {
+  ticker: string;
+  requestedTicker?: string;
+  resolvedTicker?: string;
+  results: ShortVolumeEntry[];
+};
+
 type WatchlistResponse = {
   entries: (WatchlistSnapshot & MarketMeta)[];
 };
@@ -109,6 +126,18 @@ export async function getShortInterest(params: {
   order?: 'asc' | 'desc';
 }): Promise<ShortInterestResponse> {
   const { data } = await http.get<ShortInterestResponse>('/api/market/short-interest', { params });
+  return data;
+}
+
+export async function getShortVolume(params: {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
+}): Promise<ShortVolumeResponse> {
+  const { data } = await http.get<ShortVolumeResponse>('/api/market/short-volume', { params });
   return data;
 }
 
