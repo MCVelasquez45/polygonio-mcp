@@ -36,6 +36,7 @@ load_dotenv()
 
 POLYGON_BASE_URL = "https://api.polygon.io"
 CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
+CAPITOL_TRADES_BFF_URL = "https://bff.capitoltrades.com"
 DEFAULT_TRACE_LABEL = "Polygon.io Demo"
 # Disable history replay by default until the OpenAI Responses API exposes a safe way
 # to trim reasoning/function_call pairs without corrupting the transcript.
@@ -127,24 +128,29 @@ def _formatting_guardrails() -> str:
     ).strip()
 
 
-async def _fetch_capitol_trades_html(url: str = CAPITOL_TRADES_URL) -> str:
-    """Download the Capitol Trades HTML page."""
-    headers = {
+def _capitol_trades_headers(accept: str) -> Dict[str, str]:
+    return {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
         ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": accept,
         "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.capitoltrades.com",
+        "Referer": "https://www.capitoltrades.com/trades",
     }
+
+
+async def _fetch_capitol_trades_html(url: str = CAPITOL_TRADES_URL) -> str:
+    """Download the Capitol Trades HTML page."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=headers)
+        response = await client.get(url, headers=_capitol_trades_headers("text/html"))
         response.raise_for_status()
         return response.text
 
 
-def _parse_capitol_trades(html: str) -> List[Dict[str, str]]:
-    """Extract trade rows from the Capitol Trades HTML."""
+def _parse_capitol_trades_table(html: str) -> List[Dict[str, str]]:
+    """Extract trade rows from a fallback HTML table (legacy layout)."""
     soup = BeautifulSoup(html, "html.parser")
     rows = soup.select(".TradeTable__Row")
     if not rows:
@@ -174,17 +180,123 @@ def _parse_capitol_trades(html: str) -> List[Dict[str, str]]:
     return trades
 
 
-def _capitol_trades_urls(ticker: str | None) -> List[str]:
+def _extract_capitol_trades_payload(html: str) -> str:
+    pattern = re.compile(r'self\\.__next_f\\.push\\(\\[1,\"(.*?)\"\\]\\)', re.S)
+    payloads = pattern.findall(html)
+    return "\n".join(payloads)
+
+
+def _parse_capitol_trades_payload(html: str) -> List[Dict[str, Any]]:
+    """Extract trade rows from Next.js flight payloads embedded in HTML."""
+    payload = _extract_capitol_trades_payload(html)
+    if not payload:
+        return []
+
+    tx_index = payload.find("_txId")
+    if tx_index == -1:
+        return []
+
+    data_marker = '\\"data\\":['
+    data_index = payload.rfind(data_marker, 0, tx_index)
+    if data_index == -1:
+        return []
+
+    start = data_index + len('\\"data\\":')
+    bracket = 0
+    end = None
+    for i in range(start, len(payload)):
+        ch = payload[i]
+        if ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket -= 1
+            if bracket == 0:
+                end = i + 1
+                break
+    if end is None:
+        return []
+
+    array_str = payload[start:end]
+    array_str = array_str.encode("utf-8").decode("unicode_escape")
+    try:
+        raw_trades = json.loads(array_str)
+    except json.JSONDecodeError:
+        return []
+
+    trades: List[Dict[str, Any]] = []
+    for trade in raw_trades:
+        politician = trade.get("politician") or {}
+        issuer = trade.get("issuer") or {}
+        member = " ".join(
+            part for part in [politician.get("firstName"), politician.get("lastName")] if part
+        ).strip()
+        trades.append(
+            {
+                "date": trade.get("txDate") or trade.get("pubDate"),
+                "member": member or None,
+                "asset": issuer.get("issuerTicker") or issuer.get("issuerName"),
+                "type": trade.get("txTypeExtended") or trade.get("txType"),
+                "amount": trade.get("value"),
+                "price": trade.get("price"),
+                "reported_at": trade.get("pubDate"),
+                "reporting_gap_days": trade.get("reportingGap"),
+                "chamber": trade.get("chamber"),
+                "owner": trade.get("owner"),
+            }
+        )
+
+    return trades
+
+
+def _parse_capitol_trades(html: str) -> List[Dict[str, Any]]:
+    """Extract trade rows from Capitol Trades HTML payloads."""
+    trades = _parse_capitol_trades_payload(html)
+    if trades:
+        return trades
+    return _parse_capitol_trades_table(html)
+
+
+def _normalize_capitol_ticker(ticker: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]", "", ticker.upper())
+    return normalized
+
+
+async def _fetch_capitol_issuer_id(ticker: str) -> int | None:
+    normalized = _normalize_capitol_ticker(ticker)
+    if not normalized:
+        return None
+    params = {"search": normalized}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{CAPITOL_TRADES_BFF_URL}/issuers",
+            headers=_capitol_trades_headers("application/json"),
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    candidates = payload.get("data") or []
+    for candidate in candidates:
+        issuer_ticker = (candidate.get("issuerTicker") or "").split(":")[0].upper()
+        if issuer_ticker == normalized:
+            return candidate.get("_issuerId")
+    if candidates:
+        return candidates[0].get("_issuerId")
+    return None
+
+
+async def _capitol_trades_urls(ticker: str | None) -> List[str]:
     if not ticker:
         return [CAPITOL_TRADES_URL]
-    normalized = re.sub(r"[^A-Za-z0-9]", "", ticker.upper())
+    normalized = _normalize_capitol_ticker(ticker)
     if not normalized:
         return [CAPITOL_TRADES_URL]
-    return [
-        f"https://www.capitoltrades.com/issuer/{normalized}",
-        f"{CAPITOL_TRADES_URL}?issuer={normalized}",
-        CAPITOL_TRADES_URL,
-    ]
+    issuer_id = await _fetch_capitol_issuer_id(normalized)
+    urls: List[str] = []
+    if issuer_id:
+        urls.append(f"{CAPITOL_TRADES_URL}?issuer={issuer_id}")
+    urls.append(f"{CAPITOL_TRADES_URL}?issuer={normalized}")
+    urls.append(CAPITOL_TRADES_URL)
+    return urls
 
 
 class FinanceOutput(BaseModel):
@@ -843,7 +955,8 @@ async def get_capitol_trades(n: int = 10, ticker: str | None = None) -> Dict[str
     """Fetch recent congressional trades scraped from Capitol Trades."""
     limit = max(1, min(int(n), 50))
     last_error: Exception | None = None
-    for url in _capitol_trades_urls(ticker):
+    urls = await _capitol_trades_urls(ticker)
+    for url in urls:
         try:
             html = await _fetch_capitol_trades_html(url)
         except httpx.HTTPError as exc:
