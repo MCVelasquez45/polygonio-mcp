@@ -342,23 +342,23 @@ export async function getOptionAggregates(
     transactions: number | null;
   };
 
-  const results = Array.isArray(payload.results)
-    ? payload.results.reduce<AggregateResultBar[]>((acc, row: any) => {
-        const timestamp = normalizeAggTimestamp(row.t ?? row.timestamp);
-        if (timestamp == null) return acc;
-        acc.push({
-          timestamp,
-          open: row.o ?? row.open,
-          high: row.h ?? row.high,
-          low: row.l ?? row.low,
-          close: row.c ?? row.close,
-          volume: row.v ?? row.volume ?? 0,
-          vwap: row.vw ?? row.vwap ?? null,
-          transactions: row.n ?? row.transactions ?? null
-        });
-        return acc;
-      }, [])
-    : [];
+  const results: AggregateResultBar[] = [];
+  if (Array.isArray(payload?.results)) {
+    for (const row of payload.results) {
+      const timestamp = normalizeAggTimestamp(row?.t ?? row?.timestamp);
+      if (timestamp == null) continue;
+      results.push({
+        timestamp,
+        open: row.o ?? row.open,
+        high: row.h ?? row.high,
+        low: row.l ?? row.low,
+        close: row.c ?? row.close,
+        volume: row.v ?? row.volume ?? 0,
+        vwap: row.vw ?? row.vwap ?? null,
+        transactions: row.n ?? row.transactions ?? null
+      });
+    }
+  }
 
   console.log('[MASSIVE] aggregates resolved', {
     ticker: symbol,
