@@ -13,6 +13,8 @@ import {
   getMassiveOptionsChain,
   getMassiveOptionsSnapshot,
   getMassiveOptionContractSnapshot,
+  getMassiveShortInterest,
+  getMassiveShortVolume,
   listOptionExpirations,
   normalizeExpirationDate,
   clampChainLimit,
@@ -26,6 +28,8 @@ import { resolveAggregates } from './services/aggregatesService';
 
 const router = Router();
 const STABLE_CHAIN_MAX_AGE_MS = 10 * 60 * 1000;
+const SHORT_INTEREST_TTL_MS = 6 * 60 * 60 * 1000;
+const SHORT_VOLUME_TTL_MS = 15 * 60 * 1000;
 
 function logMarketRequest(req: any) {
   try {
@@ -495,6 +499,90 @@ router.get('/watchlist', async (req, res, next) => {
     );
     console.log('[SERVER] Watchlist snapshots resolved', { tickers: unique, entries });
     res.json({ entries });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/short-interest', async (req, res, next) => {
+  try {
+    logMarketRequest(req);
+    const requestedTicker = String(req.query.ticker ?? '').trim().toUpperCase();
+    if (!requestedTicker) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    let ticker = requestedTicker;
+    if (requestedTicker.startsWith('O:')) {
+      const contractDetail = await getMassiveOptionContract(requestedTicker);
+      if (!contractDetail?.underlying) {
+        return res.status(404).json({ error: 'Option contract missing underlying ticker' });
+      }
+      ticker = contractDetail.underlying.toUpperCase();
+    }
+    const from = typeof req.query.from === 'string' && req.query.from.trim() ? req.query.from.trim() : undefined;
+    const to = typeof req.query.to === 'string' && req.query.to.trim() ? req.query.to.trim() : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const order = req.query.order === 'asc' ? 'asc' : req.query.order === 'desc' ? 'desc' : undefined;
+
+    const { data, fetchedAt, fromCache } = await fetchWithCache(
+      'short-interest',
+      { ticker, from, to, limit, sort, order },
+      SHORT_INTEREST_TTL_MS,
+      () => getMassiveShortInterest({ ticker, from, to, limit, sort, order }),
+      { ticker }
+    );
+    setNoStore(res);
+    res.json({
+      ticker: data.ticker,
+      requestedTicker,
+      ...(requestedTicker !== data.ticker ? { resolvedTicker: data.ticker } : {}),
+      results: data.results,
+      fetchedAt,
+      cache: fromCache ? 'hit' : 'miss'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/short-volume', async (req, res, next) => {
+  try {
+    logMarketRequest(req);
+    const requestedTicker = String(req.query.ticker ?? '').trim().toUpperCase();
+    if (!requestedTicker) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    let ticker = requestedTicker;
+    if (requestedTicker.startsWith('O:')) {
+      const contractDetail = await getMassiveOptionContract(requestedTicker);
+      if (!contractDetail?.underlying) {
+        return res.status(404).json({ error: 'Option contract missing underlying ticker' });
+      }
+      ticker = contractDetail.underlying.toUpperCase();
+    }
+    const from = typeof req.query.from === 'string' && req.query.from.trim() ? req.query.from.trim() : undefined;
+    const to = typeof req.query.to === 'string' && req.query.to.trim() ? req.query.to.trim() : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const order = req.query.order === 'asc' ? 'asc' : req.query.order === 'desc' ? 'desc' : undefined;
+
+    const { data, fetchedAt, fromCache } = await fetchWithCache(
+      'short-volume',
+      { ticker, from, to, limit, sort, order },
+      SHORT_VOLUME_TTL_MS,
+      () => getMassiveShortVolume({ ticker, from, to, limit, sort, order }),
+      { ticker }
+    );
+    setNoStore(res);
+    res.json({
+      ticker: data.ticker,
+      requestedTicker,
+      ...(requestedTicker !== data.ticker ? { resolvedTicker: data.ticker } : {}),
+      results: data.results,
+      fetchedAt,
+      cache: fromCache ? 'hit' : 'miss'
+    });
   } catch (error) {
     next(error);
   }
