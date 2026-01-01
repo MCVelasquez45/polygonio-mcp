@@ -331,9 +331,20 @@ export async function getOptionAggregates(
     { cacheTtlMs }
   );
 
+  type AggregateResultBar = {
+    timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    vwap: number | null;
+    transactions: number | null;
+  };
+
   const results = Array.isArray(payload.results)
     ? payload.results
-        .map((row: any) => {
+        .map((row: any): AggregateResultBar | null => {
           const timestamp = normalizeAggTimestamp(row.t ?? row.timestamp);
           if (timestamp == null) return null;
           return {
@@ -347,7 +358,7 @@ export async function getOptionAggregates(
             transactions: row.n ?? row.transactions ?? null
           };
         })
-        .filter((bar): bar is NonNullable<typeof bar> => bar != null)
+        .filter((bar): bar is AggregateResultBar => bar != null)
     : [];
 
   console.log('[MASSIVE] aggregates resolved', {
