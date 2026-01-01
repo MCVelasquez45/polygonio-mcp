@@ -1621,6 +1621,145 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
   return normalizedSnapshot;
 }
 
+type ShortInterestEntry = {
+  ticker: string;
+  settlementDate: string | null;
+  shortInterest: number | null;
+  avgDailyVolume: number | null;
+  daysToCover: number | null;
+};
+
+type ShortVolumeVenueBreakdown = {
+  adfShortVolume?: number | null;
+  adfShortVolumeExempt?: number | null;
+  nasdaqCarteretShortVolume?: number | null;
+  nasdaqCarteretShortVolumeExempt?: number | null;
+  nasdaqChicagoShortVolume?: number | null;
+  nasdaqChicagoShortVolumeExempt?: number | null;
+  nyseShortVolume?: number | null;
+  nyseShortVolumeExempt?: number | null;
+};
+
+type ShortVolumeEntry = {
+  ticker: string;
+  date: string | null;
+  shortVolume: number | null;
+  shortVolumeRatio: number | null;
+  totalVolume: number | null;
+  nonExemptVolume: number | null;
+  exemptVolume: number | null;
+  venues?: ShortVolumeVenueBreakdown;
+};
+
+type ShortInterestQuery = {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  sort?: string;
+  order?: SortDirection;
+};
+
+type ShortVolumeQuery = {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  sort?: string;
+  order?: SortDirection;
+};
+
+function normalizeShortDate(value: string | null | undefined) {
+  if (!value) return undefined;
+  return normalizeExpirationDate(value) ?? value;
+}
+
+/**
+ * Pulls short interest metrics for an underlying ticker (bi-monthly reports).
+ */
+export async function getMassiveShortInterest(query: ShortInterestQuery) {
+  const ticker = query.ticker.toUpperCase();
+  const params: Record<string, any> = { ticker };
+  const from = normalizeShortDate(query.from);
+  const to = normalizeShortDate(query.to);
+  if (from) params['settlement_date.gte'] = from;
+  if (to) params['settlement_date.lte'] = to;
+  const limitParam = Number(query.limit ?? 25) || 25;
+  params.limit = Math.min(Math.max(limitParam, 1), 500);
+  if (query.sort) params.sort = query.sort;
+  if (query.order) params.order = query.order;
+
+  const payload = await massiveGet('/stocks/v1/short-interest', params, { cacheTtlMs: 6 * 60 * 60 * 1000 });
+  const raw = Array.isArray(payload?.results) ? payload.results : [];
+  const results: ShortInterestEntry[] = raw.map((entry: any) => ({
+    ticker: typeof entry?.ticker === 'string' ? entry.ticker.toUpperCase() : ticker,
+    settlementDate: entry?.settlement_date ?? entry?.settlementDate ?? null,
+    shortInterest: resolveNumber(entry?.short_interest ?? entry?.shortInterest),
+    avgDailyVolume: resolveNumber(entry?.avg_daily_volume ?? entry?.avgDailyVolume),
+    daysToCover: resolveNumber(entry?.days_to_cover ?? entry?.daysToCover)
+  }));
+
+  console.log('[MASSIVE] short interest resolved', {
+    ticker,
+    count: results.length,
+    from,
+    to
+  });
+
+  return { ticker, results };
+}
+
+/**
+ * Pulls short volume metrics for an underlying ticker (daily reports).
+ */
+export async function getMassiveShortVolume(query: ShortVolumeQuery) {
+  const ticker = query.ticker.toUpperCase();
+  const params: Record<string, any> = { ticker };
+  const from = normalizeShortDate(query.from);
+  const to = normalizeShortDate(query.to);
+  if (from) params['date.gte'] = from;
+  if (to) params['date.lte'] = to;
+  const limitParam = Number(query.limit ?? 30) || 30;
+  params.limit = Math.min(Math.max(limitParam, 1), 500);
+  if (query.sort) params.sort = query.sort;
+  if (query.order) params.order = query.order;
+
+  const payload = await massiveGet('/stocks/v1/short-volume', params, { cacheTtlMs: 15 * 60 * 1000 });
+  const raw = Array.isArray(payload?.results) ? payload.results : [];
+  const results: ShortVolumeEntry[] = raw.map((entry: any) => ({
+    ticker: typeof entry?.ticker === 'string' ? entry.ticker.toUpperCase() : ticker,
+    date: entry?.date ?? null,
+    shortVolume: resolveNumber(entry?.short_volume ?? entry?.shortVolume),
+    shortVolumeRatio: resolveNumber(entry?.short_volume_ratio ?? entry?.shortVolumeRatio),
+    totalVolume: resolveNumber(entry?.total_volume ?? entry?.totalVolume),
+    nonExemptVolume: resolveNumber(entry?.non_exempt_volume ?? entry?.nonExemptVolume),
+    exemptVolume: resolveNumber(entry?.exempt_volume ?? entry?.exemptVolume),
+    venues: {
+      adfShortVolume: resolveNumber(entry?.adf_short_volume ?? entry?.adfShortVolume),
+      adfShortVolumeExempt: resolveNumber(entry?.adf_short_volume_exempt ?? entry?.adfShortVolumeExempt),
+      nasdaqCarteretShortVolume: resolveNumber(entry?.nasdaq_carteret_short_volume ?? entry?.nasdaqCarteretShortVolume),
+      nasdaqCarteretShortVolumeExempt: resolveNumber(
+        entry?.nasdaq_carteret_short_volume_exempt ?? entry?.nasdaqCarteretShortVolumeExempt
+      ),
+      nasdaqChicagoShortVolume: resolveNumber(entry?.nasdaq_chicago_short_volume ?? entry?.nasdaqChicagoShortVolume),
+      nasdaqChicagoShortVolumeExempt: resolveNumber(
+        entry?.nasdaq_chicago_short_volume_exempt ?? entry?.nasdaqChicagoShortVolumeExempt
+      ),
+      nyseShortVolume: resolveNumber(entry?.nyse_short_volume ?? entry?.nyseShortVolume),
+      nyseShortVolumeExempt: resolveNumber(entry?.nyse_short_volume_exempt ?? entry?.nyseShortVolumeExempt)
+    }
+  }));
+
+  console.log('[MASSIVE] short volume resolved', {
+    ticker,
+    count: results.length,
+    from,
+    to
+  });
+
+  return { ticker, results };
+}
+
 type IndicatorType = 'sma' | 'ema' | 'rsi' | 'macd';
 
 function normalizeIndicatorValues(indicator: IndicatorType, entries: any[]): { timestamp: number; value: number | null; meta?: any }[] {
