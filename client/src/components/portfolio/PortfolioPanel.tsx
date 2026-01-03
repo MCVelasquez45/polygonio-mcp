@@ -383,16 +383,34 @@ export function PortfolioPanel() {
                 <p className={`text-xs mt-1 ${pos.side === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
                   {pos.side.toUpperCase()} {Math.abs(pos.qty)}
                 </p>
-                {contract && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    {contract.underlying} · {contract.expiry} · {contract.type} {contract.strike.toFixed(2)}
-                    {underlyingSpot != null
-                      ? ` · Spot $${underlyingSpot.toFixed(2)}`
-                      : snapshotsLoading
-                      ? ' · Spot …'
-                      : ''}
-                  </p>
-                )}
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-gray-400">
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Contract</p>
+                    <p className="text-gray-200">{pos.symbol}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Expiration</p>
+                    <p className="text-gray-200">{contract?.expiry ?? '—'}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Underlying</p>
+                    <p className="text-gray-200">{contract?.underlying ?? underlyingSymbol}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Strike</p>
+                    <p className="text-gray-200">{contract?.strike != null ? contract.strike.toFixed(2) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Underlying Price</p>
+                    <p className="text-gray-200">
+                      {underlyingSpot != null ? `$${underlyingSpot.toFixed(2)}` : snapshotsLoading ? '…' : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-widest text-gray-500">Type</p>
+                    <p className="text-gray-200">{contract?.type?.toLowerCase() ?? '—'}</p>
+                  </div>
+                </div>
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
                   <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 ${resolveSentimentStyles(sentimentLabel)}`}>
                     {insightsLoading ? 'Sentiment…' : `Sentiment: ${sentimentLabel ?? 'neutral'}`}
