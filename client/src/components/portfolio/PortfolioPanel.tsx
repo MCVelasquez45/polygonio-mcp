@@ -52,6 +52,16 @@ function formatTimestamp(value?: string | null) {
   return new Date(parsed).toLocaleString();
 }
 
+function getBreakevenMetrics(position: PositionView) {
+  if (!position.avgCost || !Number.isFinite(position.avgCost)) return null;
+  const direction = position.side === 'short' ? -1 : 1;
+  const deltaPct = ((position.mark - position.avgCost) / position.avgCost) * 100 * direction;
+  const range = Math.max(Math.abs(deltaPct), 15);
+  const clampedDelta = Math.max(-range, Math.min(range, deltaPct));
+  const markerPercent = 50 + (clampedDelta / range) * 50;
+  return { deltaPct, markerPercent };
+}
+
 export function PortfolioPanel() {
   const [positions, setPositions] = useState<PositionView[]>([]);
   const [orders, setOrders] = useState<OrderView[]>([]);
@@ -146,7 +156,7 @@ export function PortfolioPanel() {
         const side = position.side === 'long' ? 'sell' : 'buy';
         const intent = position.side === 'long' ? 'sell_to_close' : 'buy_to_close';
         await submitOptionOrder({
-          orderType: 'market',
+          order_type: 'market',
           legs: [
             {
               symbol: position.symbol,
@@ -217,8 +227,10 @@ export function PortfolioPanel() {
             Options market orders pause outside market hours. Next open: {nextOpen ? formatTimestamp(nextOpen) : 'TBD'}.
           </div>
         )}
-        {positions.map(pos => (
-          <div key={pos.symbol} className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
+        {positions.map(pos => {
+          const breakeven = getBreakevenMetrics(pos);
+          return (
+            <div key={pos.symbol} className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-lg font-semibold">{pos.symbol}</p>
@@ -255,8 +267,42 @@ export function PortfolioPanel() {
                 </p>
               </div>
             </div>
+            {breakeven && (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between text-xs text-gray-400">
+                  <span>Breakeven meter</span>
+                  <span className={breakeven.deltaPct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                    {breakeven.deltaPct >= 0
+                      ? `In profit +${breakeven.deltaPct.toFixed(2)}%`
+                      : `To breakeven ${Math.abs(breakeven.deltaPct).toFixed(2)}%`}
+                  </span>
+                </div>
+                <div className="relative h-2 rounded-full bg-gray-900">
+                  <div
+                    className={`absolute top-0 h-2 rounded-full ${breakeven.deltaPct >= 0 ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
+                    style={{
+                      left: `${Math.min(50, breakeven.markerPercent)}%`,
+                      width: `${Math.abs(breakeven.markerPercent - 50)}%`
+                    }}
+                  />
+                  <div className="absolute top-0 h-2 w-px bg-gray-700" style={{ left: '50%' }} />
+                  <div
+                    className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full ${
+                      breakeven.deltaPct >= 0 ? 'bg-emerald-400' : 'bg-red-400'
+                    } ring-2 ring-gray-950`}
+                    style={{ left: `calc(${breakeven.markerPercent}% - 6px)` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>Loss</span>
+                  <span>BE</span>
+                  <span>Profit</span>
+                </div>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
         {!positions.length && !loading && <p className="text-sm text-gray-500">No option positions in Alpaca paper account.</p>}
       </div>
       <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
