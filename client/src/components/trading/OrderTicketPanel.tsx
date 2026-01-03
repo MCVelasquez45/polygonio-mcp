@@ -9,6 +9,7 @@ type Props = {
   trades: TradePrint[];
   isLoading: boolean;
   label?: string;
+  spotPrice?: number | null;
   marketClosed?: boolean;
   afterHours?: boolean;
   nextOpen?: string | null;
@@ -31,16 +32,31 @@ function formatCountdown(value?: string | null): string | null {
   return `in ${days}d ${remainingHours}h`;
 }
 
-function resolveDefaultLegPrice(contract?: OptionContractDetail | null, quote?: QuoteSnapshot | null) {
+function resolveDefaultLegPrice(
+  contract?: OptionContractDetail | null,
+  quote?: QuoteSnapshot | null,
+  spotPrice?: number | null
+) {
   if (quote?.midpoint != null) return quote.midpoint;
   if (contract?.lastTrade?.price != null) return contract.lastTrade.price;
   if (contract?.lastQuote?.bid != null && contract.lastQuote.ask != null) {
     return (Number(contract.lastQuote.bid) + Number(contract.lastQuote.ask)) / 2;
   }
+  if (spotPrice != null) return spotPrice;
   return null;
 }
 
-export function OrderTicketPanel({ contract, quote, trades, isLoading, label, marketClosed, afterHours, nextOpen }: Props) {
+export function OrderTicketPanel({
+  contract,
+  quote,
+  trades,
+  isLoading,
+  label,
+  spotPrice,
+  marketClosed,
+  afterHours,
+  nextOpen
+}: Props) {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
   const [timeInForce, setTimeInForce] = useState<'day' | 'gtc'>('day');
@@ -61,7 +77,7 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
     setSide('buy');
     setOrderType('limit');
     setTimeInForce('day');
-    setLimitPrice(resolveDefaultLegPrice(contract, quote)?.toFixed(2) ?? '');
+    setLimitPrice(resolveDefaultLegPrice(contract, quote, spotPrice)?.toFixed(2) ?? '');
     setStopPrice('');
     setTrailValue('');
     setSubmissionResult(null);
@@ -99,8 +115,9 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
       return (Number(contract.lastQuote.bid) + Number(contract.lastQuote.ask)) / 2;
     }
     if (contract?.lastTrade?.price) return contract.lastTrade.price;
+    if (spotPrice != null) return spotPrice;
     return null;
-  }, [contract, quote]);
+  }, [contract, quote, spotPrice]);
 
   const multiplier = contract?.ticker ? 100 : 1;
   const limitValue = Number.isFinite(Number(limitPrice)) ? Number(limitPrice) : null;

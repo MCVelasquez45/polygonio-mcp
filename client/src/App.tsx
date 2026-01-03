@@ -1529,6 +1529,7 @@ function App() {
           trades={trades}
           isLoading={false}
           label={displayTicker}
+          spotPrice={resolvedUnderlyingPrice}
           marketClosed={marketSessionMeta?.marketClosed}
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
