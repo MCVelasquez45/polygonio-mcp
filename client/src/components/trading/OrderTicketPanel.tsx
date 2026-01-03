@@ -16,6 +16,39 @@ type Props = {
 };
 
 type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
+type OrderIntent = 'buy_to_open' | 'sell_to_open' | 'buy_to_close' | 'sell_to_close';
+type QtyMode = 'shares' | 'contracts' | 'dollars';
+type OrderClass = 'simple' | 'bracket' | 'oco' | 'oto' | 'mleg';
+
+type OrderDraftLeg = {
+  symbol: string;
+  qty: number;
+  side: 'buy' | 'sell';
+  position_intent: OrderIntent;
+};
+
+type OrderDraft = {
+  instrument: string;
+  assetType: 'stock' | 'option';
+  side: 'buy' | 'sell';
+  intent: OrderIntent;
+  qtyMode: QtyMode;
+  qty: number;
+  orderType: OrderType;
+  prices: {
+    limit?: number;
+    stop?: number;
+    trail?: {
+      type: 'percent' | 'amount';
+      value: number;
+    };
+  };
+  timeInForce: 'day' | 'gtc';
+  orderClass: OrderClass;
+  legs?: OrderDraftLeg[];
+  riskProfile?: string;
+  aiConfidence?: number;
+};
 
 function formatCountdown(value?: string | null): string | null {
   if (!value) return null;
@@ -60,6 +93,7 @@ export function OrderTicketPanel({
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
   const [timeInForce, setTimeInForce] = useState<'day' | 'gtc'>('day');
+  const [qtyMode, setQtyMode] = useState<QtyMode>('contracts');
   const [quantity, setQuantity] = useState(1);
   const [limitPrice, setLimitPrice] = useState('');
   const [stopPrice, setStopPrice] = useState('');
@@ -77,6 +111,7 @@ export function OrderTicketPanel({
     setSide('buy');
     setOrderType('limit');
     setTimeInForce('day');
+    setQtyMode(contract?.ticker ? 'contracts' : 'shares');
     setLimitPrice(resolveDefaultLegPrice(contract, quote, spotPrice)?.toFixed(2) ?? '');
     setStopPrice('');
     setTrailValue('');
@@ -84,7 +119,7 @@ export function OrderTicketPanel({
   }, [contract?.ticker]);
 
   useEffect(() => {
-    if (marketClosed && orderType !== 'limit') {
+    if (marketClosed && orderType === 'market') {
       setOrderType('limit');
     }
   }, [marketClosed, orderType]);
@@ -119,6 +154,9 @@ export function OrderTicketPanel({
     return null;
   }, [contract, quote, spotPrice]);
 
+  const assetType: OrderDraft['assetType'] = contract?.ticker ? 'option' : 'stock';
+  const primaryQtyMode: QtyMode = assetType === 'option' ? 'contracts' : 'shares';
+  const notionalDisabled = assetType !== 'stock';
   const multiplier = contract?.ticker ? 100 : 1;
   const limitValue = Number.isFinite(Number(limitPrice)) ? Number(limitPrice) : null;
   const stopValue = Number.isFinite(Number(stopPrice)) ? Number(stopPrice) : null;
@@ -157,7 +195,8 @@ export function OrderTicketPanel({
     stop_limit: 'Stop Limit',
     trailing_stop: 'Trailing Stop'
   }[orderType];
-  const quantityLabel = contract?.ticker ? 'Contracts' : 'Shares';
+  const quantityLabel =
+    qtyMode === 'dollars' ? 'Dollars' : assetType === 'option' ? 'Contracts' : 'Shares';
   const symbolDisplay = contract?.ticker ?? label ?? '—';
   const marketPriceDisplay = markPrice != null ? `$${markPrice.toFixed(2)}` : '—';
   const canSubmit =
@@ -169,33 +208,71 @@ export function OrderTicketPanel({
     !insufficientFunds &&
     !submitting;
 
+  function buildOrderDraft(): OrderDraft | null {
+    if (!contract?.ticker) return null;
+    const intent: OrderIntent = side === 'buy' ? 'buy_to_open' : 'sell_to_close';
+    const prices: OrderDraft['prices'] = {};
+    if (requiresLimit && limitValue != null) prices.limit = limitValue;
+    if (requiresStop && stopValue != null) prices.stop = stopValue;
+    if (requiresTrail && trailValueNum != null) {
+      prices.trail = { type: trailType, value: trailValueNum };
+    }
+    return {
+      instrument: contract.ticker,
+      assetType,
+      side,
+      intent,
+      qtyMode,
+      qty: quantity,
+      orderType,
+      prices,
+      timeInForce,
+      orderClass: 'simple',
+      legs: [
+        {
+          symbol: contract.ticker,
+          qty: 1,
+          side,
+          position_intent: intent
+        }
+      ]
+    };
+  }
+
+  function mapOrderDraftToPayload(draft: OrderDraft): SubmitOptionsOrderPayload {
+    const trail = draft.prices.trail;
+    const orderClass: SubmitOptionsOrderPayload['order_class'] =
+      draft.orderClass === 'mleg' ? 'multi-leg' : 'simple';
+    return {
+      legs: draft.legs ?? [
+        {
+          symbol: draft.instrument,
+          qty: 1,
+          side: draft.side,
+          position_intent: draft.intent
+        }
+      ],
+      quantity: draft.qty,
+      time_in_force: draft.timeInForce,
+      order_type: draft.orderType,
+      order_class: orderClass,
+      limit_price: draft.prices.limit != null ? Number(draft.prices.limit.toFixed(2)) : undefined,
+      stop_price: draft.prices.stop != null ? Number(draft.prices.stop.toFixed(2)) : undefined,
+      trail_price:
+        trail && trail.type === 'amount' ? Number(trail.value.toFixed(2)) : undefined,
+      trail_percent:
+        trail && trail.type === 'percent' ? Number(trail.value.toFixed(2)) : undefined,
+      client_order_id: `mcp-${Date.now()}`
+    };
+  }
+
   async function handleSubmit() {
-    if (!contract?.ticker) return;
+    const draft = buildOrderDraft();
+    if (!draft) return;
     setSubmitting(true);
     setSubmissionResult(null);
     try {
-      const inferredOrderClass: 'simple' | 'multi-leg' = 'simple';
-      const inferredOrderType = orderType;
-      const payload: SubmitOptionsOrderPayload = {
-        legs: [
-          {
-            symbol: contract.ticker,
-            qty: 1,
-            side,
-            position_intent: side === 'buy' ? 'buy_to_open' : 'sell_to_close',
-            ...(requiresLimit && limitValue != null ? { limit_price: Number(limitValue.toFixed(2)) } : {})
-          }
-        ],
-        quantity,
-        time_in_force: timeInForce,
-        order_type: inferredOrderType,
-        order_class: inferredOrderClass,
-        limit_price: requiresLimit && limitValue != null ? Number(limitValue.toFixed(2)) : undefined,
-        stop_price: requiresStop && stopValue != null ? Number(stopValue.toFixed(2)) : undefined,
-        trail_price: requiresTrail && trailType === 'amount' && trailValueNum != null ? Number(trailValueNum.toFixed(2)) : undefined,
-        trail_percent: requiresTrail && trailType === 'percent' && trailValueNum != null ? Number(trailValueNum.toFixed(2)) : undefined,
-        client_order_id: `mcp-${Date.now()}`
-      };
+      const payload = mapOrderDraftToPayload(draft);
       console.log('[CLIENT] submitting Alpaca options order', payload);
       await submitOptionOrder(payload);
       setSubmissionResult({ status: 'success', message: 'Order submitted to Alpaca paper trading.' });
@@ -271,6 +348,38 @@ export function OrderTicketPanel({
           </div>
         </div>
 
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Quantity Mode</p>
+          <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
+            <button
+              type="button"
+              className={`rounded-xl px-3 py-2 border ${
+                qtyMode === primaryQtyMode
+                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                  : 'border-gray-800 text-gray-400'
+              }`}
+              onClick={() => setQtyMode(primaryQtyMode)}
+            >
+              {primaryQtyMode === 'contracts' ? 'Contracts' : 'Shares'}
+            </button>
+            <button
+              type="button"
+              disabled={notionalDisabled}
+              className={`rounded-xl px-3 py-2 border ${
+                qtyMode === 'dollars'
+                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                  : 'border-gray-800 text-gray-400'
+              } ${notionalDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => setQtyMode('dollars')}
+            >
+              Dollars
+            </button>
+          </div>
+          {notionalDisabled && (
+            <p className="text-xs text-gray-500">Notional sizing is available for stock orders only.</p>
+          )}
+        </div>
+
         <label className="flex flex-col gap-1 text-sm">
           Quantity ({quantityLabel.toLowerCase()})
           <input
@@ -289,7 +398,7 @@ export function OrderTicketPanel({
             onChange={event => setOrderType(event.target.value as OrderType)}
             className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
           >
-            <option value="market">Market</option>
+            <option value="market" disabled={marketClosed}>Market</option>
             <option value="limit">Limit</option>
             <option value="stop">Stop</option>
             <option value="stop_limit">Stop Limit</option>
@@ -308,6 +417,9 @@ export function OrderTicketPanel({
               onChange={event => setStopPrice(event.target.value)}
               className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
             />
+            {marketPriceDisplay !== '—' && (
+              <span className="text-xs text-gray-500">Market: {marketPriceDisplay}</span>
+            )}
           </label>
         )}
 
@@ -322,7 +434,17 @@ export function OrderTicketPanel({
               onChange={event => setLimitPrice(event.target.value)}
               className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
             />
+            {marketPriceDisplay !== '—' && (
+              <span className="text-xs text-gray-500">Market: {marketPriceDisplay}</span>
+            )}
           </label>
+        )}
+
+        {orderType === 'stop_limit' && (
+          <p className="text-xs text-gray-500">Stop = trigger. Limit = protection.</p>
+        )}
+        {orderType === 'stop' && (
+          <p className="text-xs text-gray-500">Stop = trigger. Executes at market once hit.</p>
         )}
 
         {requiresTrail && (
