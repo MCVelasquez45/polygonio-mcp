@@ -88,6 +88,14 @@ function parseOptionContract(symbol: string) {
   };
 }
 
+function formatCurrency(value: number, digits = 2) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: digits
+  }).format(value);
+}
+
 function isOpenOrder(status?: string | null) {
   if (!status) return false;
   const normalized = status.toLowerCase();
@@ -114,6 +122,24 @@ function getTakeProfitPnl(position: PositionView, limitPrice: number | null) {
   const pnl = delta * qty * 100;
   const pct = position.avgCost ? (delta / position.avgCost) * 100 : null;
   return { pnl, pct };
+}
+
+function buildPositionInsight(position: PositionView) {
+  if (!Number.isFinite(position.avgCost) || !Number.isFinite(position.mark)) return null;
+  const qty = Math.max(1, Math.abs(position.qty));
+  const entryValue = position.avgCost * qty * 100;
+  const currentValue = position.mark * qty * 100;
+  const direction = position.side === 'short' ? -1 : 1;
+  const pnl = (position.mark - position.avgCost) * direction * qty * 100;
+  const pct = entryValue ? (pnl / entryValue) * 100 : null;
+  const action = position.side === 'short' ? 'Collected' : 'Paid';
+  const nowVerb = position.side === 'short' ? 'Now costs' : 'Now worth';
+  return {
+    text: `${action} ${formatCurrency(entryValue)}, ${nowVerb} ${formatCurrency(currentValue)} → ${
+      pnl >= 0 ? '+' : ''
+    }${formatCurrency(pnl)}${typeof pct === 'number' ? ` (${pct.toFixed(2)}%)` : ''}`,
+    title: 'Avg cost × contracts × 100 vs current mark × contracts × 100. P&L is unrealized until you sell.'
+  };
 }
 
 export function PortfolioPanel() {
@@ -373,6 +399,7 @@ export function PortfolioPanel() {
           const snapshot = positionSnapshots[underlyingSymbol];
           const underlyingSpot =
             snapshot && snapshot.entryType === 'underlying' ? snapshot.price : null;
+          const insightLine = buildPositionInsight(pos);
           const breakevenPrice =
             contract && typeof pos.avgCost === 'number'
               ? contract.type === 'Call'
@@ -425,27 +452,50 @@ export function PortfolioPanel() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-sm text-gray-400">
               <div>
-                <p className="text-xs uppercase tracking-widest">Avg cost</p>
+                <p
+                  className="text-xs uppercase tracking-widest"
+                  title="What you paid per share. 1 contract = 100 shares."
+                >
+                  Avg cost
+                </p>
                 <p className="text-base text-white">${pos.avgCost.toFixed(2)}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-widest">Mark</p>
+                <p className="text-xs uppercase tracking-widest" title="Current option price (what you could sell for now).">
+                  Mark
+                </p>
                 <p className="text-base text-white">${pos.mark.toFixed(2)}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-widest">Value</p>
+                <p
+                  className="text-xs uppercase tracking-widest"
+                  title="Current total value = mark × contracts × 100."
+                >
+                  Value
+                </p>
                 <p className="text-base text-white">${pos.marketValue.toFixed(2)}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-widest">P&amp;L</p>
+                <p className="text-xs uppercase tracking-widest" title="Unrealized gain/loss so far.">
+                  P&amp;L
+                </p>
                 <p className={`text-base font-semibold ${pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                 </p>
               </div>
             </div>
+            {insightLine && (
+              <p className="mt-2 text-xs text-gray-400" title={insightLine.title}>
+                {insightLine.text}
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-              <span>Breakeven ${breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : `$${pos.avgCost.toFixed(2)}`}</span>
-              <span>TP {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}</span>
+              <span title="Underlying price you need to break even at expiration.">
+                Breakeven {breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : `$${pos.avgCost.toFixed(2)}`}
+              </span>
+              <span title="Your open limit order price for taking profit.">
+                TP {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}
+              </span>
               {takeProfitPnl && (
                 <span className={takeProfitPnl.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>
                   {takeProfitPnl.pnl >= 0 ? '+' : ''}${takeProfitPnl.pnl.toFixed(2)}
