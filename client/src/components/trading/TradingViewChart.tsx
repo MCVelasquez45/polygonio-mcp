@@ -9,9 +9,11 @@ import {
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type LineData,
   type MouseEventHandler,
+  LineStyle,
   type SeriesType,
   type Time,
   type UTCTimestamp,
@@ -50,6 +52,18 @@ type ChartCanvasProps = {
 
 const DEFAULT_HEIGHT = 320;
 const SMA_PERIOD = 20;
+const OR_START_HOUR = 6;
+const OR_START_MINUTE = 30;
+const OR_END_MINUTE = 35;
+const PST_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Los_Angeles',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
 const DARK_THEME: ThemePalette = {
   background: 'rgba(15, 23, 42, 0.6)',
@@ -112,6 +126,52 @@ const computeSma = (
   return result;
 };
 
+function getPstParts(timestamp: number) {
+  const parts = PST_FORMATTER.formatToParts(new Date(timestamp));
+  const bucket: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') {
+      bucket[part.type] = part.value;
+    }
+  }
+  const year = bucket.year ?? '';
+  const month = bucket.month ?? '';
+  const day = bucket.day ?? '';
+  const hour = Number(bucket.hour);
+  const minute = Number(bucket.minute);
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    hour,
+    minute,
+  };
+}
+
+function computeOpeningRange(bars: AggregateBar[], timeframe: string) {
+  const unit = timeframe.split('/')[1] ?? 'day';
+  const isIntraday = unit === 'minute' || unit === 'hour';
+  if (!isIntraday || bars.length === 0) return null;
+  const latest = getPstParts(bars[bars.length - 1].timestamp);
+  if (!latest) return null;
+  const sessionKey = latest.dateKey;
+  let high = -Infinity;
+  let low = Infinity;
+  let found = false;
+  for (const bar of bars) {
+    const parts = getPstParts(bar.timestamp);
+    if (!parts || parts.dateKey !== sessionKey) continue;
+    if (parts.hour === OR_START_HOUR && parts.minute >= OR_START_MINUTE && parts.minute < OR_END_MINUTE) {
+      found = true;
+      if (bar.high > high) high = bar.high;
+      if (bar.low < low) low = bar.low;
+    }
+  }
+  if (!found) return null;
+  return { high, low };
+}
+
 function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -119,6 +179,7 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const smaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const openingRangeLinesRef = useRef<{ high?: IPriceLine; low?: IPriceLine }>({});
   const prevBarsRef = useRef<AggregateBar[]>([]);
   const lastTimeframeRef = useRef<string>(timeframe);
   const lastThemeRef = useRef<Theme>(theme);
@@ -127,6 +188,7 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
   const candleData = useMemo(() => mapBarsToCandles(bars), [bars]);
   const volumeData = useMemo(() => mapBarsToVolumes(bars, palette), [bars, palette]);
   const smaData = useMemo(() => computeSma(bars, SMA_PERIOD), [bars]);
+  const openingRange = useMemo(() => computeOpeningRange(bars, timeframe), [bars, timeframe]);
   const tooltipClassName =
     theme === 'light'
       ? 'pointer-events-none absolute left-3 top-3 z-10 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[11px] text-slate-900 shadow-sm opacity-0 transition-opacity whitespace-pre'
@@ -189,6 +251,7 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
       candleSeriesRef.current = candles;
       volumeSeriesRef.current = volume;
       smaSeriesRef.current = sma;
+      openingRangeLinesRef.current = {};
       prevBarsRef.current = [];
     } else {
       chartRef.current?.resize(width, height);
@@ -245,6 +308,32 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
       chart.unsubscribeCrosshairMove(handler);
     };
   }, [theme, timeframe, width, height]);
+
+  useEffect(() => {
+    const candles = candleSeriesRef.current;
+    if (!candles) return;
+    const existing = openingRangeLinesRef.current;
+    if (existing.high) candles.removePriceLine(existing.high);
+    if (existing.low) candles.removePriceLine(existing.low);
+    openingRangeLinesRef.current = {};
+    if (!openingRange) return;
+    openingRangeLinesRef.current.high = candles.createPriceLine({
+      price: openingRange.high,
+      color: '#38bdf8',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'OR High',
+    });
+    openingRangeLinesRef.current.low = candles.createPriceLine({
+      price: openingRange.low,
+      color: '#f59e0b',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'OR Low',
+    });
+  }, [openingRange, theme, timeframe]);
 
   useEffect(() => {
     const candles = candleSeriesRef.current;
