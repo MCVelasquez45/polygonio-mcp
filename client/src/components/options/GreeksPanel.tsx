@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { OptionContractDetail, OptionLeg } from '../../types/market';
+import type { DeskInsight } from '../../api/analysis';
 import { PieChart, Pie, Cell } from 'recharts';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
 import { formatExpirationDate } from '../../utils/expirations';
@@ -18,6 +20,7 @@ type Props = {
   leg?: OptionLeg | null;
   label?: string;
   underlyingPrice?: number | null;
+  insight?: DeskInsight | null;
 };
 
 type RiskSlice = {
@@ -38,7 +41,7 @@ const EMPTY_GREEKS: Record<GreekKey, number | null> = {
   rho: null,
 };
 
-export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
+export function GreeksPanel({ contract, leg, label, underlyingPrice, insight }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
   const resolvedStrike = typeof contract?.strike === 'number' ? contract.strike : leg?.strike ?? null;
@@ -105,6 +108,7 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
   const totalRiskValue = riskProfile.slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
   const spread = resolveSpread(leg, contract);
   const itmProbability = typeof resolvedGreeks.delta === 'number' ? Math.abs(resolvedGreeks.delta) * 100 : null;
+  const [checklistOpen, setChecklistOpen] = useState(false);
   const checklistEntries = buildEntryChecklist({
     strike: resolvedStrike,
     premium: resolvedPremium,
@@ -116,6 +120,53 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
     openInterest: resolvedOpenInterest,
     spread,
   });
+  const checklistVisible = checklistOpen ? checklistEntries : checklistEntries.slice(0, 2);
+
+  const sentimentLabel = insight?.sentiment?.label ?? null;
+  const sentimentTone = sentimentLabel ? sentimentLabel.toLowerCase() : null;
+  const shortBiasLabel = insight?.shortBias?.label ?? null;
+  const shortBiasReasons = insight?.shortBias?.reasons ?? [];
+  const fedEvent = insight?.fedEvent ?? null;
+  const fedEventDate = fedEvent?.date ? Date.parse(fedEvent.date) : null;
+  const isFedSoon =
+    typeof fedEventDate === 'number' && Number.isFinite(fedEventDate)
+      ? fedEventDate - Date.now() <= 2 * 24 * 60 * 60 * 1000
+      : false;
+  const biasPreference =
+    sentimentTone === 'bullish' ? 'calls' : sentimentTone === 'bearish' ? 'puts' : null;
+  const contractLabel = contractType ? contractType.toLowerCase() : null;
+  const biasMismatch = biasPreference && contractLabel && !biasPreference.startsWith(contractLabel);
+  const ivPercent = typeof resolvedIV === 'number' ? resolvedIV * 100 : null;
+  const ivLabel =
+    ivPercent == null
+      ? null
+      : ivPercent <= 35
+      ? 'IV efficient'
+      : ivPercent <= 70
+      ? 'IV elevated'
+      : 'IV extreme';
+  const spreadLabel =
+    typeof spread === 'number'
+      ? spread <= 0.1
+        ? `Spread $${spread.toFixed(2)} (tight)`
+        : `Spread $${spread.toFixed(2)} (wide)`
+      : null;
+  const oiLabel =
+    typeof resolvedOpenInterest === 'number' ? `OI ${resolvedOpenInterest.toLocaleString()}` : null;
+  const focusHighlights = [
+    sentimentLabel ? `Sentiment ${sentimentLabel}.` : null,
+    shortBiasLabel
+      ? `Short bias ${shortBiasLabel}${shortBiasReasons.length ? ` · ${shortBiasReasons.join(', ')}` : ''}.`
+      : null,
+    biasPreference
+      ? `Bias favors ${biasPreference}${biasMismatch && contractLabel ? ` (current ${contractLabel}).` : '.'}`
+      : null,
+    ivLabel ? `IV ${ivLabel}${ivPercent != null ? ` · ${ivPercent.toFixed(1)}%` : ''}.` : null,
+    [oiLabel, spreadLabel].filter(Boolean).join(' · ') || null,
+    isFedSoon && fedEvent ? `Macro: ${fedEvent.title ?? fedEvent.name ?? 'Fed event'} soon.` : null
+  ]
+    .filter(Boolean)
+    .slice(0, 4);
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
@@ -176,9 +227,37 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice }: Props) {
       </div>
 
       <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
-        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
+        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">AI Contract Focus</p>
+        <p className="text-sm text-gray-300">
+          {biasMismatch ? 'Bias mismatch — recheck direction or strike selection.' : 'Bias and contract are aligned.'}
+        </p>
+        {focusHighlights.length > 0 ? (
+          <ul className="space-y-1 text-xs text-gray-400">
+            {focusHighlights.map(item => (
+              <li key={item} className="flex items-start gap-2">
+                <span className="text-emerald-300">•</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-gray-500">Select a contract to generate AI selection notes.</p>
+        )}
+      </div>
+
+      <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
+          <button
+            type="button"
+            onClick={() => setChecklistOpen(open => !open)}
+            className="text-xs text-gray-400 border border-gray-800 rounded-full px-3 py-1 hover:border-emerald-500/40 hover:text-white transition-colors"
+          >
+            {checklistOpen ? 'Hide full checklist' : 'View full checklist'}
+          </button>
+        </div>
         <div className="space-y-3">
-          {checklistEntries.map(entry => (
+          {checklistVisible.map(entry => (
             <div
               key={entry.key}
               className={`rounded-xl border px-3 py-2 text-sm ${toneToBorder(entry.tone)} ${toneToBackground(entry.tone)}`}

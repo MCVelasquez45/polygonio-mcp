@@ -1520,7 +1520,13 @@ function App() {
             </div>
           )}
         </div>
-        <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
+        <GreeksPanel
+          contract={contractDetail}
+          leg={selectedLeg}
+          label={displayTicker}
+          underlyingPrice={greeksUnderlyingPrice}
+          insight={deskInsight}
+        />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
         <OrderTicketPanel
