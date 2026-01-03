@@ -67,6 +67,35 @@ function formatNumber(value: number | null | undefined, options: Intl.NumberForm
   return new Intl.NumberFormat('en-US', options).format(value);
 }
 
+function deriveShortInterestBias(
+  shortInterest?: ShortInterestSnapshot | null,
+  shortVolume?: ShortVolumeSnapshot | null
+): { label: 'bullish' | 'bearish' | 'neutral' | null; reasons: string[] } {
+  if (!shortInterest && !shortVolume) return { label: null, reasons: [] };
+  const reasons: string[] = [];
+  const shortInterestBearish =
+    (typeof shortInterest?.changePct === 'number' && shortInterest.changePct >= 20) ||
+    (typeof shortInterest?.daysToCover === 'number' && shortInterest.daysToCover >= 5);
+  const shortInterestBullish =
+    typeof shortInterest?.changePct === 'number' &&
+    shortInterest.changePct <= -20 &&
+    (shortInterest.daysToCover == null || shortInterest.daysToCover <= 3);
+  const shortVolumeBearish =
+    shortVolume?.spike === true ||
+    (typeof shortVolume?.shortVolumeRatio === 'number' && shortVolume.shortVolumeRatio >= 50);
+
+  if (shortInterestBearish) reasons.push('Short interest elevated');
+  if (shortVolumeBearish) reasons.push('Short volume elevated');
+
+  if (shortInterestBearish || shortVolumeBearish) {
+    return { label: 'bearish', reasons };
+  }
+  if (shortInterestBullish) {
+    return { label: 'bullish', reasons };
+  }
+  return { label: 'neutral', reasons };
+}
+
 function summarizeShortInterest(payload: { results: any[] } | null): ShortInterestSnapshot | null {
   const latest = payload?.results?.[0];
   if (!latest) return null;
@@ -158,12 +187,15 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
   const snapshot = context.snapshot ?? null;
   const shortInterest = context.metrics?.shortInterest as ShortInterestSnapshot | undefined;
   const shortVolume = context.metrics?.shortVolume as ShortVolumeSnapshot | undefined;
+  const shortBias = deriveShortInterestBias(shortInterest, shortVolume);
   const priceLabel =
     typeof snapshot?.price === 'number' ? `$${snapshot.price.toFixed(2)}` : 'Price unavailable';
   const changePercent =
     typeof snapshot?.changePercent === 'number' ? snapshot.changePercent : null;
   const sentimentLabel =
-    typeof changePercent === 'number'
+    shortBias.label && shortBias.label !== 'neutral'
+      ? shortBias.label
+      : typeof changePercent === 'number'
       ? changePercent > 0
         ? 'bullish'
         : changePercent < 0
@@ -171,6 +203,10 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
         : 'neutral'
       : 'neutral';
   const changeLabel = changePercent != null ? `${changePercent.toFixed(2)}%` : '—';
+  const sentimentNote =
+    shortBias.label && shortBias.label !== 'neutral'
+      ? `${shortBias.label === 'bearish' ? 'Bearish' : 'Bullish'} short-interest signal`
+      : null;
   const highlights = [
     `Spot ${priceLabel} (${changeLabel})`,
     snapshot?.iv != null ? `IV ${Number(snapshot.iv).toFixed(2)}%` : null,
@@ -182,12 +218,15 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
     shortInterest?.daysToCover != null
       ? `Days to cover ${Number(shortInterest.daysToCover).toFixed(2)}`
       : null,
-    shortVolume?.spike ? 'Short volume spike vs recent avg' : null
+    shortVolume?.spike ? 'Short volume spike vs recent avg' : null,
+    sentimentNote
   ].filter(Boolean) as string[];
 
   return {
     symbol,
-    summary: `Spot move ${changeLabel}. Ref contract ${snapshot?.referenceContract ?? 'n/a'}.`,
+    summary: `Spot move ${changeLabel}. Ref contract ${snapshot?.referenceContract ?? 'n/a'}.${
+      sentimentNote ? ` ${sentimentNote}.` : ''
+    }`,
     sentiment: { label: sentimentLabel, score: null },
     fedEvent: null,
     highlights,
@@ -250,7 +289,9 @@ async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<
     '- if tools are unavailable, set sentiment and fedEvent to null',
     '- consider shortInterest and shortVolume metrics when framing sentiment or risks',
     '- flag if shortInterest changePct >= 20 or daysToCover >= 5',
-    '- flag if shortVolume spike is true or shortVolumeRatio >= 50'
+    '- flag if shortVolume spike is true or shortVolumeRatio >= 50',
+    '- if shortInterest is elevated (changePct >= 20 or daysToCover >= 5), sentiment should lean bearish unless strong positive price action contradicts it',
+    '- if shortInterest is falling (changePct <= -20) and daysToCover <= 3, sentiment can lean bullish'
   ].join('\n');
 
   try {
