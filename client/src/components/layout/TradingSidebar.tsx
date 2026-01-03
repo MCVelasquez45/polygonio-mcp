@@ -181,17 +181,35 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
     setWatchlistError(null);
     setIsRefreshing(true);
     const symbols = watchlistSymbolsKey.split(',').filter(Boolean);
-    marketApi.getWatchlistSnapshots(symbols)
-      .then(payload => {
+    const batches: string[][] = [];
+    for (let i = 0; i < symbols.length; i += 25) {
+      batches.push(symbols.slice(i, i + 25));
+    }
+    Promise.all(
+      batches.map(batch =>
+        marketApi.getWatchlistSnapshots(batch).catch(error => ({ entries: [], error }))
+      )
+    )
+      .then(results => {
         if (cancelled) return;
-        const snapshots = Array.isArray(payload?.entries) ? payload.entries : [];
-        if (!snapshots.length) return;
         const nextMap: Record<string, WatchlistSnapshot> = {};
-        snapshots.forEach(entry => {
-          if (entry?.ticker) {
-            nextMap[entry.ticker.toUpperCase()] = entry;
-          }
+        let hadEntries = false;
+        let hadErrors = false;
+        results.forEach(result => {
+          if ((result as any)?.error) hadErrors = true;
+          const snapshots = Array.isArray((result as any)?.entries) ? (result as any).entries : [];
+          if (snapshots.length) hadEntries = true;
+          snapshots.forEach(entry => {
+            if (entry?.ticker) {
+              nextMap[entry.ticker.toUpperCase()] = entry;
+            }
+          });
         });
+        if (!hadEntries) {
+          setWatchlistError(hadErrors ? 'Failed to refresh watchlist' : null);
+          setSnapshots({});
+          return;
+        }
         setSnapshots(nextMap);
         setWatchlist(prev =>
           prev.map(item => {
@@ -207,6 +225,7 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
         if (cancelled) return;
         const message = error?.response?.data?.error ?? error?.message ?? 'Failed to refresh watchlist';
         setWatchlistError(message);
+        setSnapshots({});
       })
       .finally(() => {
         if (!cancelled) {
