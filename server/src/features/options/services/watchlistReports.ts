@@ -2,7 +2,7 @@ import axios from 'axios';
 // Builds summary reports for watchlist tickers. Prefers AI-generated summaries
 // (agent service) but falls back to deterministic Massive snapshots when the
 // agent is offline.
-import { getMassiveOptionsSnapshot } from '../../../shared/data/massive';
+import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../../shared/data/massive';
 import { getRecentAggregateBars } from '../../market/services/aggregatesStore';
 
 const AGENT_API_URL = process.env.AGENT_API_URL || process.env.FASTAPI_URL || '';
@@ -33,6 +33,22 @@ type WatchlistContext = {
 
 // Normalized bars keep timestamps/fields consistent for prompts + fallbacks.
 
+type ShortInterestSnapshot = {
+  settlementDate: string | null;
+  shortInterest: number | null;
+  avgDailyVolume: number | null;
+  daysToCover: number | null;
+  changePct: number | null;
+};
+
+type ShortVolumeSnapshot = {
+  date: string | null;
+  shortVolume: number | null;
+  shortVolumeRatio: number | null;
+  averageShortVolume: number | null;
+  spike: boolean | null;
+};
+
 function normalizeBars(bars: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }[]) {
   return bars
     .slice()
@@ -47,17 +63,70 @@ function normalizeBars(bars: { timestamp: number; open: number; high: number; lo
     }));
 }
 
+function summarizeShortInterest(payload: { results: any[] } | null): ShortInterestSnapshot | null {
+  const latest = payload?.results?.[0];
+  if (!latest) return null;
+  const previous = payload?.results?.[1];
+  const latestValue = typeof latest.shortInterest === 'number' ? latest.shortInterest : null;
+  const previousValue = typeof previous?.shortInterest === 'number' ? previous.shortInterest : null;
+  const changePct =
+    typeof latestValue === 'number' && typeof previousValue === 'number' && previousValue !== 0
+      ? ((latestValue - previousValue) / previousValue) * 100
+      : null;
+  return {
+    settlementDate: latest.settlementDate ?? null,
+    shortInterest: latestValue,
+    avgDailyVolume: typeof latest.avgDailyVolume === 'number' ? latest.avgDailyVolume : null,
+    daysToCover: typeof latest.daysToCover === 'number' ? latest.daysToCover : null,
+    changePct
+  };
+}
+
+function summarizeShortVolume(payload: { results: any[] } | null): ShortVolumeSnapshot | null {
+  const latest = payload?.results?.[0];
+  if (!latest) return null;
+  const recentValues = payload?.results
+    ?.slice(1, 11)
+    .map((entry: any) => entry.shortVolume)
+    .filter((value: unknown): value is number => typeof value === 'number');
+  const averageShortVolume =
+    recentValues && recentValues.length
+      ? recentValues.reduce((sum, value) => sum + value, 0) / recentValues.length
+      : null;
+  const latestShortVolume = typeof latest.shortVolume === 'number' ? latest.shortVolume : null;
+  const spike =
+    typeof latestShortVolume === 'number' && typeof averageShortVolume === 'number' && averageShortVolume > 0
+      ? latestShortVolume >= averageShortVolume * 2
+      : null;
+  return {
+    date: latest.date ?? null,
+    shortVolume: latestShortVolume,
+    shortVolumeRatio: typeof latest.shortVolumeRatio === 'number' ? latest.shortVolumeRatio : null,
+    averageShortVolume,
+    spike
+  };
+}
+
 // Builds the structured JSON passed to the agent (if enabled).
 // Builds structured JSON describing each ticker (snapshot, recent bars, metrics)
 // so the agent has context to generate richer narratives.
 async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContext[]> {
   return Promise.all(
     tickers.map(async symbol => {
-      const [snapshot, dailyBars, minuteBars] = await Promise.all([
+      const isOptionSymbol = symbol.startsWith('O:');
+      const [snapshot, dailyBars, minuteBars, shortInterestPayload, shortVolumePayload] = await Promise.all([
         getMassiveOptionsSnapshot(symbol).catch(() => null),
         getRecentAggregateBars(symbol, 1, 'day', 10).catch(() => []),
-        getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => [])
+        getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => []),
+        isOptionSymbol
+          ? Promise.resolve(null)
+          : getMassiveShortInterest({ ticker: symbol, limit: 2, sort: 'settlement_date', order: 'desc' }).catch(() => null),
+        isOptionSymbol
+          ? Promise.resolve(null)
+          : getMassiveShortVolume({ ticker: symbol, limit: 12, sort: 'date', order: 'desc' }).catch(() => null)
       ]);
+      const shortInterest = summarizeShortInterest(shortInterestPayload);
+      const shortVolume = summarizeShortVolume(shortVolumePayload);
       return {
         symbol,
         snapshot,
@@ -69,7 +138,9 @@ async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContex
           refContract: snapshot?.referenceContract ?? null,
           iv: snapshot?.iv ?? null,
           vol: snapshot?.volume ?? null,
-          oi: snapshot?.openInterest ?? null
+          oi: snapshot?.openInterest ?? null,
+          shortInterest,
+          shortVolume
         },
         events: []
       };
@@ -93,7 +164,11 @@ async function fetchAgentReports(tickers: string[]): Promise<WatchlistReport[] |
     '',
     'Return ONLY valid JSON of this shape:',
     '[{"symbol":"SPY","headline":"...", "summary":"...", "sentiment":"bullish","flow":"+4.2M","contract":"O:SPY...", "expiry":"2025-12-19","ivRank":45}]',
-    'Keep summaries under 200 characters.'
+    'Keep summaries under 200 characters.',
+    'If shortInterest or shortVolume metrics are elevated, mention it in the summary or headline.',
+    'Flag shortInterest when changePct >= 20 or daysToCover >= 5.',
+    'Flag shortVolume when spike is true or shortVolumeRatio >= 50.',
+    'Use the options snapshot (reference contract, volume, open interest) to infer put/call bias when possible.'
   ].join('\n');
   try {
     const { data } = await axios.post(

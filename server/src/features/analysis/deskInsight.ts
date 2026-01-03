@@ -1,5 +1,5 @@
 import { agentAnalyze } from '../assistant/agentClient';
-import { getMassiveOptionsSnapshot } from '../../shared/data/massive';
+import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../shared/data/massive';
 import { getRecentAggregateBars } from '../market/services/aggregatesStore';
 
 type SentimentSnapshot = {
@@ -32,6 +32,22 @@ type DeskContext = {
   metrics?: Record<string, any>;
 };
 
+type ShortInterestSnapshot = {
+  settlementDate: string | null;
+  shortInterest: number | null;
+  avgDailyVolume: number | null;
+  daysToCover: number | null;
+  changePct: number | null;
+};
+
+type ShortVolumeSnapshot = {
+  date: string | null;
+  shortVolume: number | null;
+  shortVolumeRatio: number | null;
+  averageShortVolume: number | null;
+  spike: boolean | null;
+};
+
 function normalizeBars(bars: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }[]) {
   return bars
     .slice()
@@ -51,12 +67,70 @@ function formatNumber(value: number | null | undefined, options: Intl.NumberForm
   return new Intl.NumberFormat('en-US', options).format(value);
 }
 
+function summarizeShortInterest(payload: { results: any[] } | null): ShortInterestSnapshot | null {
+  const latest = payload?.results?.[0];
+  if (!latest) return null;
+  const previous = payload?.results?.[1];
+  const latestValue = typeof latest.shortInterest === 'number' ? latest.shortInterest : null;
+  const previousValue = typeof previous?.shortInterest === 'number' ? previous.shortInterest : null;
+  const changePct =
+    typeof latestValue === 'number' && typeof previousValue === 'number' && previousValue !== 0
+      ? ((latestValue - previousValue) / previousValue) * 100
+      : null;
+  return {
+    settlementDate: latest.settlementDate ?? null,
+    shortInterest: latestValue,
+    avgDailyVolume: typeof latest.avgDailyVolume === 'number' ? latest.avgDailyVolume : null,
+    daysToCover: typeof latest.daysToCover === 'number' ? latest.daysToCover : null,
+    changePct
+  };
+}
+
+function summarizeShortVolume(payload: { results: any[] } | null): ShortVolumeSnapshot | null {
+  const latest = payload?.results?.[0];
+  if (!latest) return null;
+  const recentValues = payload?.results
+    ?.slice(1, 11)
+    .map((entry: any) => entry.shortVolume)
+    .filter((value: unknown): value is number => typeof value === 'number');
+  const averageShortVolume =
+    recentValues && recentValues.length
+      ? recentValues.reduce((sum, value) => sum + value, 0) / recentValues.length
+      : null;
+  const latestShortVolume = typeof latest.shortVolume === 'number' ? latest.shortVolume : null;
+  const spike =
+    typeof latestShortVolume === 'number' && typeof averageShortVolume === 'number' && averageShortVolume > 0
+      ? latestShortVolume >= averageShortVolume * 2
+      : null;
+  return {
+    date: latest.date ?? null,
+    shortVolume: latestShortVolume,
+    shortVolumeRatio: typeof latest.shortVolumeRatio === 'number' ? latest.shortVolumeRatio : null,
+    averageShortVolume,
+    spike
+  };
+}
+
 async function buildDeskContext(symbol: string): Promise<DeskContext> {
   const [snapshot, dailyBars, minuteBars] = await Promise.all([
     getMassiveOptionsSnapshot(symbol).catch(() => null),
     getRecentAggregateBars(symbol, 1, 'day', 10).catch(() => []),
     getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => [])
   ]);
+  const shortTicker =
+    typeof snapshot?.underlying === 'string'
+      ? snapshot.underlying.toUpperCase()
+      : symbol.startsWith('O:')
+      ? null
+      : symbol;
+  const [shortInterestPayload, shortVolumePayload] = shortTicker
+    ? await Promise.all([
+        getMassiveShortInterest({ ticker: shortTicker, limit: 2, sort: 'settlement_date', order: 'desc' }).catch(() => null),
+        getMassiveShortVolume({ ticker: shortTicker, limit: 12, sort: 'date', order: 'desc' }).catch(() => null)
+      ])
+    : [null, null];
+  const shortInterest = summarizeShortInterest(shortInterestPayload);
+  const shortVolume = summarizeShortVolume(shortVolumePayload);
   return {
     symbol,
     snapshot,
@@ -68,7 +142,9 @@ async function buildDeskContext(symbol: string): Promise<DeskContext> {
       refContract: snapshot?.referenceContract ?? null,
       iv: snapshot?.iv ?? null,
       vol: snapshot?.volume ?? null,
-      oi: snapshot?.openInterest ?? null
+      oi: snapshot?.openInterest ?? null,
+      shortInterest,
+      shortVolume
     }
   };
 }
@@ -78,7 +154,10 @@ function sanitizeHighlights(input: unknown): string[] {
   return input.filter(item => typeof item === 'string' && item.trim().length > 0).slice(0, 4);
 }
 
-function buildFallbackInsight(symbol: string, snapshot: Record<string, any> | null): DeskInsight {
+function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight {
+  const snapshot = context.snapshot ?? null;
+  const shortInterest = context.metrics?.shortInterest as ShortInterestSnapshot | undefined;
+  const shortVolume = context.metrics?.shortVolume as ShortVolumeSnapshot | undefined;
   const priceLabel =
     typeof snapshot?.price === 'number' ? `$${snapshot.price.toFixed(2)}` : 'Price unavailable';
   const changePercent =
@@ -96,7 +175,14 @@ function buildFallbackInsight(symbol: string, snapshot: Record<string, any> | nu
     `Spot ${priceLabel} (${changeLabel})`,
     snapshot?.iv != null ? `IV ${Number(snapshot.iv).toFixed(2)}%` : null,
     snapshot?.openInterest != null ? `OI ${formatNumber(snapshot.openInterest, { maximumFractionDigits: 0 })}` : null,
-    snapshot?.volume != null ? `Volume ${formatNumber(snapshot.volume, { maximumFractionDigits: 0 })}` : null
+    snapshot?.volume != null ? `Volume ${formatNumber(snapshot.volume, { maximumFractionDigits: 0 })}` : null,
+    shortInterest?.shortInterest != null
+      ? `Short interest ${formatNumber(shortInterest.shortInterest, { maximumFractionDigits: 0 })}`
+      : null,
+    shortInterest?.daysToCover != null
+      ? `Days to cover ${Number(shortInterest.daysToCover).toFixed(2)}`
+      : null,
+    shortVolume?.spike ? 'Short volume spike vs recent avg' : null
   ].filter(Boolean) as string[];
 
   return {
@@ -161,7 +247,10 @@ async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<
     '- highlights: 2-4 short bullets',
     '- sentiment.score between -1 and 1 (or null if unavailable)',
     '- fedEvent can be null if nothing notable in the next 14 days',
-    '- if tools are unavailable, set sentiment and fedEvent to null'
+    '- if tools are unavailable, set sentiment and fedEvent to null',
+    '- consider shortInterest and shortVolume metrics when framing sentiment or risks',
+    '- flag if shortInterest changePct >= 20 or daysToCover >= 5',
+    '- flag if shortVolume spike is true or shortVolumeRatio >= 50'
   ].join('\n');
 
   try {
@@ -181,5 +270,5 @@ export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
   const context = await buildDeskContext(upper);
   const agentInsight = await fetchAgentInsight(upper, context);
   if (agentInsight) return agentInsight;
-  return buildFallbackInsight(upper, context.snapshot ?? null);
+  return buildFallbackInsight(upper, context);
 }

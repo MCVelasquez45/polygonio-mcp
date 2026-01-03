@@ -3,8 +3,6 @@ import { io, type Socket } from 'socket.io-client';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
 import { ChartPanel } from './components/trading/ChartPanel';
-import { ShortInterestCard } from './components/trading/ShortInterestCard';
-import { ShortVolumeCard } from './components/trading/ShortVolumeCard';
 import { GreeksPanel } from './components/options/GreeksPanel';
 import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
 import { OptionsChainPanel } from './components/options/OptionsChainPanel';
@@ -27,7 +25,6 @@ import type {
   WatchlistSnapshot,
 } from './types/market';
 import type { ChecklistResult, DeskInsight, WatchlistReport } from './api/analysis';
-import type { ShortInterestResponse, ShortVolumeResponse } from './api/market';
 import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
@@ -175,12 +172,6 @@ function App() {
   const [trades, setTrades] = useState<TradePrint[]>([]);
   const [underlyingSnapshot, setUnderlyingSnapshot] = useState<WatchlistSnapshot | null>(null);
   const underlyingSnapshotRef = useRef<WatchlistSnapshot | null>(null);
-  const [shortInterest, setShortInterest] = useState<ShortInterestResponse | null>(null);
-  const [shortInterestLoading, setShortInterestLoading] = useState(false);
-  const [shortInterestError, setShortInterestError] = useState<string | null>(null);
-  const [shortVolume, setShortVolume] = useState<ShortVolumeResponse | null>(null);
-  const [shortVolumeLoading, setShortVolumeLoading] = useState(false);
-  const [shortVolumeError, setShortVolumeError] = useState<string | null>(null);
 
   // Conversation/chat state (AI insights dock).
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -880,63 +871,6 @@ function App() {
     };
   }, [normalizedTicker]);
 
-  useEffect(() => {
-    if (!normalizedTicker) {
-      setShortInterest(null);
-      setShortInterestError(null);
-      return;
-    }
-    let cancelled = false;
-    setShortInterestLoading(true);
-    setShortInterestError(null);
-    marketApi
-      .getShortInterest({ ticker: normalizedTicker, limit: 50 })
-      .then(payload => {
-        if (cancelled) return;
-        setShortInterest(payload);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load short interest';
-        setShortInterestError(message);
-        setShortInterest(null);
-      })
-      .finally(() => {
-        if (!cancelled) setShortInterestLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [normalizedTicker]);
-
-  useEffect(() => {
-    if (!normalizedTicker) {
-      setShortVolume(null);
-      setShortVolumeError(null);
-      return;
-    }
-    let cancelled = false;
-    setShortVolumeLoading(true);
-    setShortVolumeError(null);
-    marketApi
-      .getShortVolume({ ticker: normalizedTicker, limit: 30 })
-      .then(payload => {
-        if (cancelled) return;
-        setShortVolume(payload);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load short volume';
-        setShortVolumeError(message);
-        setShortVolume(null);
-      })
-      .finally(() => {
-        if (!cancelled) setShortVolumeLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [normalizedTicker]);
 
   // Clear previous market errors when we have an active contract symbol again.
   useEffect(() => {
@@ -1586,18 +1520,6 @@ function App() {
             </div>
           )}
         </div>
-        <ShortInterestCard
-          payload={shortInterest}
-          loading={shortInterestLoading}
-          error={shortInterestError}
-          requestedTicker={displayTicker}
-        />
-        <ShortVolumeCard
-          payload={shortVolume}
-          loading={shortVolumeLoading}
-          error={shortVolumeError}
-          requestedTicker={displayTicker}
-        />
         <GreeksPanel contract={contractDetail} leg={selectedLeg} label={displayTicker} underlyingPrice={greeksUnderlyingPrice} />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
