@@ -265,31 +265,20 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
           />
         </label>
 
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Order Type</p>
-          <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
-            {([
-              { value: 'market', label: 'Market' },
-              { value: 'limit', label: 'Limit' },
-              { value: 'stop', label: 'Stop' },
-              { value: 'stop_limit', label: 'Stop Limit' },
-              { value: 'trailing_stop', label: 'Trailing Stop' }
-            ] as const).map(option => (
-              <button
-                key={option.value}
-                type="button"
-                className={`rounded-xl px-3 py-2 border ${
-                  orderType === option.value
-                    ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                    : 'border-gray-800 text-gray-400'
-                }`}
-                onClick={() => setOrderType(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <label className="flex flex-col gap-1 text-sm">
+          Order Type
+          <select
+            value={orderType}
+            onChange={event => setOrderType(event.target.value as OrderType)}
+            className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
+          >
+            <option value="market">Market</option>
+            <option value="limit">Limit</option>
+            <option value="stop">Stop</option>
+            <option value="stop_limit">Stop Limit</option>
+            <option value="trailing_stop">Trailing Stop</option>
+          </select>
+        </label>
 
         {requiresStop && (
           <label className="flex flex-col gap-1 text-sm">
