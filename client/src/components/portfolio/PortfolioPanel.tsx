@@ -132,12 +132,11 @@ function buildPositionInsight(position: PositionView) {
   const direction = position.side === 'short' ? -1 : 1;
   const pnl = (position.mark - position.avgCost) * direction * qty * 100;
   const pct = entryValue ? (pnl / entryValue) * 100 : null;
-  const action = position.side === 'short' ? 'Collected' : 'Paid';
-  const nowVerb = position.side === 'short' ? 'Now costs' : 'Now worth';
   return {
-    text: `${action} ${formatCurrency(entryValue)}, ${nowVerb} ${formatCurrency(currentValue)} → ${
-      pnl >= 0 ? '+' : ''
-    }${formatCurrency(pnl)}${typeof pct === 'number' ? ` (${pct.toFixed(2)}%)` : ''}`,
+    entryValue,
+    currentValue,
+    pnl,
+    pct,
     title: 'Avg cost × contracts × 100 vs current mark × contracts × 100. P&L is unrealized until you sell.'
   };
 }
@@ -485,8 +484,19 @@ export function PortfolioPanel() {
               </div>
             </div>
             {insightLine && (
-              <p className="mt-2 text-xs text-gray-400" title={insightLine.title}>
-                {insightLine.text}
+              <p
+                className="mt-2 inline-flex flex-wrap items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300"
+                title={insightLine.title}
+              >
+                <span>Paid {formatCurrency(insightLine.entryValue)}</span>
+                <span className="text-emerald-200">,</span>
+                <span>Now worth {formatCurrency(insightLine.currentValue)}</span>
+                <span className="text-emerald-200">→</span>
+                <span className={insightLine.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>
+                  {insightLine.pnl >= 0 ? '+' : ''}
+                  {formatCurrency(insightLine.pnl)}
+                  {typeof insightLine.pct === 'number' ? ` (${insightLine.pct.toFixed(2)}%)` : ''}
+                </span>
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
