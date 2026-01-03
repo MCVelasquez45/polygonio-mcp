@@ -103,6 +103,7 @@ export function OrderTicketPanel({
   const [submissionResult, setSubmissionResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [riskOpen, setRiskOpen] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(true);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
 
@@ -296,6 +297,30 @@ export function OrderTicketPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="border border-gray-900 rounded-2xl">
+          <button
+            type="button"
+            onClick={() => setTipsOpen(open => !open)}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-300"
+          >
+            <span>Beginner Guide</span>
+            {tipsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {tipsOpen && (
+            <div className="px-4 pb-4 space-y-2 text-xs text-gray-400">
+              <p>1) Choose Buy or Sell. Buy opens a position, Sell closes it.</p>
+              <p>2) Pick an order type. Market = fastest, Limit = price control.</p>
+              <p>3) Fill in any required prices, then review before submitting.</p>
+              {assetType === 'option' ? (
+                <p>Options trade in contracts (1 contract = 100 shares).</p>
+              ) : (
+                <p>Stocks trade in shares (or dollars when available).</p>
+              )}
+              <p>Time in force: DAY expires today, GTC stays until canceled.</p>
+            </div>
+          )}
+        </div>
+
         {(marketClosed || afterHours) && (
           <div
             className={`rounded-xl border px-3 py-2 text-xs ${
