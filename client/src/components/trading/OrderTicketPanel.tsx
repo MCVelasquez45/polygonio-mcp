@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { QuoteSnapshot, TradePrint } from '../../types/market';
-import type { OptionContractDetail } from '../../types/market';
+import type { QuoteSnapshot, TradePrint, OptionContractDetail } from '../../types/market';
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { getBrokerAccount, submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
 
@@ -199,15 +198,6 @@ export function OrderTicketPanel({ contract, quote, trades, isLoading, label, ma
             <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Order Ticket</p>
             <p className="text-lg font-semibold text-gray-100">{label ?? contract?.ticker ?? 'Select a contract'}</p>
           </div>
-          <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
-            <input
-              type="checkbox"
-              className="form-checkbox text-emerald-500 rounded border-gray-700"
-              checked={showHelp}
-              onChange={event => setShowHelp(event.target.checked)}
-            />
-            Show tips
-          </label>
         </div>
       </header>
 
