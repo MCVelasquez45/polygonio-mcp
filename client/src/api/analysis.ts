@@ -28,6 +28,7 @@ export type DeskInsight = {
   sentiment: { label?: string | null; score?: number | null } | null;
   fedEvent: { title?: string; name?: string; date?: string; impact?: string } | null;
   highlights: string[];
+  shortBias?: { label?: string | null; reasons?: string[] } | null;
   source?: string;
   updatedAt?: string;
 };

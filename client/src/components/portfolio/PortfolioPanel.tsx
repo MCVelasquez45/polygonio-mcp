@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { analysisApi, marketApi } from '../../api';
 import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
+import type { DeskInsight } from '../../api/analysis';
+import type { WatchlistSnapshot } from '../../types/market';
 
 type PositionView = {
   symbol: string;
@@ -19,6 +22,7 @@ type OrderView = {
   qty: number;
   filledQty: number;
   avgFillPrice: number | null;
+  limitPrice: number | null;
   status: string;
   source?: string | null;
   submittedAt?: string | null;
@@ -52,6 +56,54 @@ function formatTimestamp(value?: string | null) {
   return new Date(parsed).toLocaleString();
 }
 
+function getUnderlyingSymbol(symbol: string) {
+  const normalized = symbol.toUpperCase();
+  const cleaned = normalized.startsWith('O:') ? normalized.slice(2) : normalized;
+  const match = cleaned.match(/^([A-Z]+)(?=\d)/);
+  return match?.[1] ?? normalized;
+}
+
+function resolveSentimentStyles(label?: string | null) {
+  if (label === 'bullish') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  if (label === 'bearish') return 'border-red-500/30 bg-red-500/10 text-red-200';
+  return 'border-gray-800 bg-gray-900/40 text-gray-300';
+}
+
+function parseOptionContract(symbol: string) {
+  const normalized = symbol.toUpperCase();
+  const cleaned = normalized.startsWith('O:') ? normalized.slice(2) : normalized;
+  const match = cleaned.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+  if (!match) return null;
+  const [, underlying, dateRaw, typeRaw, strikeRaw] = match;
+  const year = Number(`20${dateRaw.slice(0, 2)}`);
+  const month = Number(dateRaw.slice(2, 4));
+  const day = Number(dateRaw.slice(4, 6));
+  const expiry = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const strike = Number(strikeRaw) / 1000;
+  return {
+    underlying,
+    expiry,
+    type: typeRaw === 'C' ? 'Call' : 'Put',
+    strike
+  };
+}
+
+function isOpenOrder(status?: string | null) {
+  if (!status) return false;
+  const normalized = status.toLowerCase();
+  return !['filled', 'canceled', 'cancelled', 'expired', 'rejected'].includes(normalized);
+}
+
+function getTakeProfitOrder(orders: OrderView[], position: PositionView) {
+  const desiredSide = position.side === 'long' ? 'sell' : 'buy';
+  return orders.find(order => {
+    if (order.symbol !== position.symbol) return false;
+    if (!isOpenOrder(order.status)) return false;
+    if (order.side?.toLowerCase() !== desiredSide) return false;
+    return typeof order.limitPrice === 'number';
+  });
+}
+
 function getBreakevenMetrics(position: PositionView) {
   if (!position.avgCost || !Number.isFinite(position.avgCost)) return null;
   const direction = position.side === 'short' ? -1 : 1;
@@ -78,6 +130,10 @@ export function PortfolioPanel() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isMarketOpen, setIsMarketOpen] = useState<boolean | null>(null);
   const [nextOpen, setNextOpen] = useState<string | null>(null);
+  const [positionInsights, setPositionInsights] = useState<Record<string, DeskInsight>>({});
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
   const loadPortfolio = useCallback(async () => {
     setLoading(true);
@@ -118,6 +174,7 @@ export function PortfolioPanel() {
             qty: toNumber(order.qty, 0),
             filledQty: toNumber(order.filled_qty, 0),
             avgFillPrice: toOptionalNumber(order.filled_avg_price),
+            limitPrice,
             status: order.status ?? '-',
             source: order.source ?? order.client_order_id ?? null,
             submittedAt: order.submitted_at ?? order.created_at ?? null,
@@ -141,6 +198,79 @@ export function PortfolioPanel() {
   useEffect(() => {
     void loadPortfolio();
   }, [loadPortfolio]);
+
+  useEffect(() => {
+    const symbols = Array.from(
+      new Set(positions.map(position => getUnderlyingSymbol(position.symbol)).filter(Boolean))
+    );
+    if (!symbols.length) {
+      setPositionInsights({});
+      return;
+    }
+    let cancelled = false;
+    setInsightsLoading(true);
+    Promise.all(
+      symbols.map(async symbol => {
+        try {
+          const insight = await analysisApi.getDeskInsight(symbol);
+          return [symbol, insight] as const;
+        } catch (error) {
+          return null;
+        }
+      })
+    )
+      .then(entries => {
+        if (cancelled) return;
+        setPositionInsights(prev => {
+          const next = { ...prev };
+          entries.forEach(entry => {
+            if (!entry) return;
+            const [symbol, insight] = entry;
+            next[symbol] = insight;
+          });
+          return next;
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setInsightsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [positions]);
+
+  useEffect(() => {
+    const symbols = Array.from(
+      new Set(positions.map(position => getUnderlyingSymbol(position.symbol)).filter(Boolean))
+    );
+    if (!symbols.length) {
+      setPositionSnapshots({});
+      return;
+    }
+    let cancelled = false;
+    setSnapshotsLoading(true);
+    marketApi
+      .getWatchlistSnapshots(symbols)
+      .then(payload => {
+        if (cancelled) return;
+        const next: Record<string, WatchlistSnapshot> = {};
+        payload.entries?.forEach(entry => {
+          if (entry?.ticker) {
+            next[entry.ticker.toUpperCase()] = entry;
+          }
+        });
+        setPositionSnapshots(next);
+      })
+      .catch(() => {
+        if (!cancelled) setPositionSnapshots({});
+      })
+      .finally(() => {
+        if (!cancelled) setSnapshotsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [positions]);
 
   const handleClosePosition = useCallback(
     async (position: PositionView) => {
@@ -229,6 +359,22 @@ export function PortfolioPanel() {
         )}
         {positions.map(pos => {
           const breakeven = getBreakevenMetrics(pos);
+          const underlyingSymbol = getUnderlyingSymbol(pos.symbol);
+          const insight = positionInsights[underlyingSymbol];
+          const sentimentLabel = insight?.sentiment?.label ?? null;
+          const shortInterestElevated =
+            insight?.shortBias?.reasons?.some(reason => reason.toLowerCase().includes('short interest')) ?? false;
+          const takeProfitOrder = getTakeProfitOrder(orders, pos);
+          const contract = parseOptionContract(pos.symbol);
+          const snapshot = positionSnapshots[underlyingSymbol];
+          const underlyingSpot =
+            snapshot && snapshot.entryType === 'underlying' ? snapshot.price : null;
+          const breakevenPrice =
+            contract && typeof pos.avgCost === 'number'
+              ? contract.type === 'Call'
+                ? contract.strike + pos.avgCost
+                : contract.strike - pos.avgCost
+              : pos.avgCost;
           return (
             <div key={pos.symbol} className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -237,6 +383,26 @@ export function PortfolioPanel() {
                 <p className={`text-xs mt-1 ${pos.side === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
                   {pos.side.toUpperCase()} {Math.abs(pos.qty)}
                 </p>
+                {contract && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {contract.underlying} · {contract.expiry} · {contract.type} {contract.strike.toFixed(2)}
+                    {underlyingSpot != null
+                      ? ` · Spot $${underlyingSpot.toFixed(2)}`
+                      : snapshotsLoading
+                      ? ' · Spot …'
+                      : ''}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
+                  <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 ${resolveSentimentStyles(sentimentLabel)}`}>
+                    {insightsLoading ? 'Sentiment…' : `Sentiment: ${sentimentLabel ?? 'neutral'}`}
+                  </span>
+                  {shortInterestElevated && (
+                    <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                      Short interest high
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
@@ -266,6 +432,11 @@ export function PortfolioPanel() {
                   {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                 </p>
               </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+              <span>Breakeven: ${breakevenPrice != null ? breakevenPrice.toFixed(2) : pos.avgCost.toFixed(2)}</span>
+              <span>Take profit: {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}</span>
+              <span className="text-[10px] text-gray-500">{takeProfitOrder ? 'Open limit order' : 'No limit set'}</span>
             </div>
             {breakeven && (
               <div className="mt-4 space-y-2">

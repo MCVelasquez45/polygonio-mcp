@@ -20,6 +20,7 @@ export type DeskInsight = {
   sentiment: SentimentSnapshot | null;
   fedEvent: FedEventSnapshot | null;
   highlights: string[];
+  shortBias?: { label?: 'bullish' | 'bearish' | 'neutral' | null; reasons?: string[] } | null;
   source: 'agent' | 'snapshot';
   updatedAt: string;
 };
@@ -230,6 +231,7 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
     sentiment: { label: sentimentLabel, score: null },
     fedEvent: null,
     highlights,
+    shortBias: { label: shortBias.label, reasons: shortBias.reasons },
     source: 'snapshot',
     updatedAt: new Date().toISOString()
   };
@@ -309,7 +311,13 @@ async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<
 export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
   const upper = symbol.toUpperCase();
   const context = await buildDeskContext(upper);
+  const shortBias = deriveShortInterestBias(
+    context.metrics?.shortInterest as ShortInterestSnapshot | undefined,
+    context.metrics?.shortVolume as ShortVolumeSnapshot | undefined
+  );
   const agentInsight = await fetchAgentInsight(upper, context);
-  if (agentInsight) return agentInsight;
+  if (agentInsight) {
+    return { ...agentInsight, shortBias: { label: shortBias.label, reasons: shortBias.reasons } };
+  }
   return buildFallbackInsight(upper, context);
 }
