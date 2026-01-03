@@ -17,6 +17,7 @@ type Props = {
   liveQuotes?: Record<string, QuoteSnapshot>;
   liveTrades?: Record<string, TradePrint>;
   selectedContractDetail?: OptionContractDetail | null;
+  preferredSide?: 'call' | 'put' | null;
 };
 
 type ChainRow = {
@@ -64,10 +65,19 @@ export function OptionsChainPanel({
   liveQuotes,
   liveTrades,
   selectedContractDetail,
+  preferredSide,
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableBodyRef = useRef<HTMLTableSectionElement | null>(null);
+
+  useEffect(() => {
+    if (preferredSide === 'call') {
+      setOptionType('calls');
+    } else if (preferredSide === 'put') {
+      setOptionType('puts');
+    }
+  }, [preferredSide]);
 
   const expirationOptions = useMemo(
     () =>

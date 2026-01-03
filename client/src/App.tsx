@@ -1590,6 +1590,7 @@ function App() {
           liveQuotes={liveChainQuotes}
           liveTrades={liveChainTrades}
           selectedContractDetail={contractDetail}
+          preferredSide={preferredOptionSide}
         />
       </div>
     </div>
