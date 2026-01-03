@@ -96,10 +96,12 @@ function isOpenOrder(status?: string | null) {
 
 function getTakeProfitOrder(orders: OrderView[], position: PositionView) {
   const desiredSide = position.side === 'long' ? 'sell' : 'buy';
+  const desiredPrefix = desiredSide.toLowerCase();
   return orders.find(order => {
     if (order.symbol !== position.symbol) return false;
     if (!isOpenOrder(order.status)) return false;
-    if (order.side?.toLowerCase() !== desiredSide) return false;
+    const orderSide = order.side?.toLowerCase() ?? '';
+    if (!orderSide.startsWith(desiredPrefix)) return false;
     return typeof order.limitPrice === 'number';
   });
 }
@@ -165,12 +167,14 @@ export function PortfolioPanel() {
       });
       const normalizedOrders: OrderView[] =
         ordersResponse.orders?.map(order => {
-          const limitPrice = toOptionalNumber(order.limit_price);
+          const legSymbol = order.symbol ?? order.legs?.[0]?.symbol ?? '-';
+          const limitPrice = toOptionalNumber(order.limit_price ?? order.legs?.[0]?.limit_price);
+          const orderSide = order.side ?? order.legs?.[0]?.side ?? order.position_intent ?? '-';
           return {
-            id: order.id ?? `${order.symbol ?? 'order'}-${order.submitted_at ?? order.created_at ?? ''}`,
-            symbol: order.symbol ?? '-',
+            id: order.id ?? `${legSymbol ?? 'order'}-${order.submitted_at ?? order.created_at ?? ''}`,
+            symbol: legSymbol ?? '-',
             orderType: formatOrderType(order.type ?? order.order_type ?? null, limitPrice),
-            side: order.side ?? '-',
+            side: orderSide ?? '-',
             qty: toNumber(order.qty, 0),
             filledQty: toNumber(order.filled_qty, 0),
             avgFillPrice: toOptionalNumber(order.filled_avg_price),

@@ -71,6 +71,7 @@ export type OptionOrder = {
   symbol?: string;
   status?: string;
   side?: string;
+  position_intent?: string | null;
   qty?: string | number;
   filled_qty?: string | number;
   filled_avg_price?: string | number | null;
@@ -85,6 +86,12 @@ export type OptionOrder = {
   filled_at?: string | null;
   expired_at?: string | null;
   canceled_at?: string | null;
+  legs?: {
+    symbol?: string;
+    side?: string;
+    position_intent?: string | null;
+    limit_price?: string | number | null;
+  }[];
 };
 
 export async function getOptionOrders(params?: { status?: string; limit?: number }): Promise<{ orders: OptionOrder[] }> {
