@@ -104,14 +104,14 @@ function getTakeProfitOrder(orders: OrderView[], position: PositionView) {
   });
 }
 
-function getBreakevenMetrics(position: PositionView) {
-  if (!position.avgCost || !Number.isFinite(position.avgCost)) return null;
-  const direction = position.side === 'short' ? -1 : 1;
-  const deltaPct = ((position.mark - position.avgCost) / position.avgCost) * 100 * direction;
-  const range = Math.max(Math.abs(deltaPct), 15);
-  const clampedDelta = Math.max(-range, Math.min(range, deltaPct));
-  const markerPercent = 50 + (clampedDelta / range) * 50;
-  return { deltaPct, markerPercent };
+function getTakeProfitPnl(position: PositionView, limitPrice: number | null) {
+  if (limitPrice == null || !Number.isFinite(limitPrice)) return null;
+  const qty = Math.max(1, Math.abs(position.qty));
+  const direction = position.side === 'long' ? 1 : -1;
+  const delta = (limitPrice - position.avgCost) * direction;
+  const pnl = delta * qty * 100;
+  const pct = position.avgCost ? (delta / position.avgCost) * 100 : null;
+  return { pnl, pct };
 }
 
 export function PortfolioPanel() {
@@ -358,13 +358,13 @@ export function PortfolioPanel() {
           </div>
         )}
         {positions.map(pos => {
-          const breakeven = getBreakevenMetrics(pos);
           const underlyingSymbol = getUnderlyingSymbol(pos.symbol);
           const insight = positionInsights[underlyingSymbol];
           const sentimentLabel = insight?.sentiment?.label ?? null;
           const shortInterestElevated =
             insight?.shortBias?.reasons?.some(reason => reason.toLowerCase().includes('short interest')) ?? false;
           const takeProfitOrder = getTakeProfitOrder(orders, pos);
+          const takeProfitPnl = getTakeProfitPnl(pos, takeProfitOrder?.limitPrice ?? null);
           const contract = parseOptionContract(pos.symbol);
           const snapshot = positionSnapshots[underlyingSymbol];
           const underlyingSpot =
@@ -383,33 +383,21 @@ export function PortfolioPanel() {
                 <p className={`text-xs mt-1 ${pos.side === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
                   {pos.side.toUpperCase()} {Math.abs(pos.qty)}
                 </p>
-                <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-gray-400">
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Contract</p>
-                    <p className="text-gray-200">{pos.symbol}</p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Expiration</p>
-                    <p className="text-gray-200">{contract?.expiry ?? '—'}</p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Underlying</p>
-                    <p className="text-gray-200">{contract?.underlying ?? underlyingSymbol}</p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Strike</p>
-                    <p className="text-gray-200">{contract?.strike != null ? contract.strike.toFixed(2) : '—'}</p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Underlying Price</p>
-                    <p className="text-gray-200">
-                      {underlyingSpot != null ? `$${underlyingSpot.toFixed(2)}` : snapshotsLoading ? '…' : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-widest text-gray-500">Type</p>
-                    <p className="text-gray-200">{contract?.type?.toLowerCase() ?? '—'}</p>
-                  </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
+                  <span className="text-gray-500 uppercase tracking-widest">Contract:</span>
+                  <span className="text-gray-200">{pos.symbol}</span>
+                  <span className="text-gray-500 uppercase tracking-widest">Expiration:</span>
+                  <span className="text-gray-200">{contract?.expiry ?? '—'}</span>
+                  <span className="text-gray-500 uppercase tracking-widest">Underlying:</span>
+                  <span className="text-gray-200">{contract?.underlying ?? underlyingSymbol}</span>
+                  <span className="text-gray-500 uppercase tracking-widest">Strike:</span>
+                  <span className="text-gray-200">{contract?.strike != null ? contract.strike.toFixed(2) : '—'}</span>
+                  <span className="text-gray-500 uppercase tracking-widest">Underlying Price:</span>
+                  <span className="text-gray-200">
+                    {underlyingSpot != null ? `$${underlyingSpot.toFixed(2)}` : snapshotsLoading ? '…' : '—'}
+                  </span>
+                  <span className="text-gray-500 uppercase tracking-widest">Type:</span>
+                  <span className="text-gray-200">{contract?.type?.toLowerCase() ?? '—'}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
                   <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 ${resolveSentimentStyles(sentimentLabel)}`}>
@@ -452,43 +440,16 @@ export function PortfolioPanel() {
               </div>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-              <span>Breakeven: ${breakevenPrice != null ? breakevenPrice.toFixed(2) : pos.avgCost.toFixed(2)}</span>
-              <span>Take profit: {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}</span>
-              <span className="text-[10px] text-gray-500">{takeProfitOrder ? 'Open limit order' : 'No limit set'}</span>
+              <span>Breakeven ${breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : `$${pos.avgCost.toFixed(2)}`}</span>
+              <span>TP {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}</span>
+              {takeProfitPnl && (
+                <span className={takeProfitPnl.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>
+                  {takeProfitPnl.pnl >= 0 ? '+' : ''}${takeProfitPnl.pnl.toFixed(2)}
+                  {typeof takeProfitPnl.pct === 'number' ? ` (${takeProfitPnl.pct.toFixed(2)}%)` : ''}
+                </span>
+              )}
+              <span className="text-[10px] text-gray-500">{takeProfitOrder ? 'Limit set' : 'No limit'}</span>
             </div>
-            {breakeven && (
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between text-xs text-gray-400">
-                  <span>Breakeven meter</span>
-                  <span className={breakeven.deltaPct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                    {breakeven.deltaPct >= 0
-                      ? `In profit +${breakeven.deltaPct.toFixed(2)}%`
-                      : `To breakeven ${Math.abs(breakeven.deltaPct).toFixed(2)}%`}
-                  </span>
-                </div>
-                <div className="relative h-2 rounded-full bg-gray-900">
-                  <div
-                    className={`absolute top-0 h-2 rounded-full ${breakeven.deltaPct >= 0 ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
-                    style={{
-                      left: `${Math.min(50, breakeven.markerPercent)}%`,
-                      width: `${Math.abs(breakeven.markerPercent - 50)}%`
-                    }}
-                  />
-                  <div className="absolute top-0 h-2 w-px bg-gray-700" style={{ left: '50%' }} />
-                  <div
-                    className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full ${
-                      breakeven.deltaPct >= 0 ? 'bg-emerald-400' : 'bg-red-400'
-                    } ring-2 ring-gray-950`}
-                    style={{ left: `calc(${breakeven.markerPercent}% - 6px)` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-gray-500">
-                  <span>Loss</span>
-                  <span>BE</span>
-                  <span>Profit</span>
-                </div>
-              </div>
-            )}
           </div>
           );
         })}
