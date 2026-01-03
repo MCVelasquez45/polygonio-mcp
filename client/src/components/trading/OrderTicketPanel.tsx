@@ -340,7 +340,7 @@ export function OrderTicketPanel({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2">
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Symbol</p>
-            <p className="text-sm text-white">{symbolDisplay}</p>
+            <p className="text-sm text-white break-all">{symbolDisplay}</p>
           </div>
           <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2">
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Market Price</p>
