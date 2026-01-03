@@ -1320,17 +1320,15 @@ function App() {
   const preferredOptionSide = useMemo(() => {
     const sentiment = deskInsight?.sentiment?.label?.toLowerCase() ?? null;
     const shortBias = deskInsight?.shortBias?.label?.toLowerCase() ?? null;
-    if (sentiment === 'bullish' && shortBias === 'bearish') return null;
-    if (sentiment === 'bearish' && shortBias === 'bullish') return null;
-    if (sentiment === 'bullish' || shortBias === 'bullish') return 'call';
-    if (sentiment === 'bearish' || shortBias === 'bearish') return 'put';
+    if (sentiment === 'bullish') return 'call';
+    if (sentiment === 'bearish') return 'put';
+    if (shortBias === 'bullish') return 'call';
+    if (shortBias === 'bearish') return 'put';
     return null;
   }, [deskInsight]);
 
   useEffect(() => {
-    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
-    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
-    if (!isIntraday || !chainExpirations.length) return;
+    if (!chainExpirations.length || !preferredOptionSide) return;
     const selectedType = selectedLeg?.type?.toLowerCase() ?? null;
     const biasMismatch =
       preferredOptionSide && selectedType ? preferredOptionSide !== selectedType : false;
