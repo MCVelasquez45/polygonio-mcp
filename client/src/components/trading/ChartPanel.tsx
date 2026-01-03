@@ -90,7 +90,7 @@ export function ChartPanel({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 max-w-full w-full md:w-auto justify-start md:justify-end">
           {TIMEFRAMES.map(option => (
             <button
               key={option.value}
