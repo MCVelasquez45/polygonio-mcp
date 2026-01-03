@@ -31,7 +31,7 @@ export type OptionsOrderLegPayload = {
   symbol: string;
   qty: number;
   side: 'buy' | 'sell';
-  type?: 'market' | 'limit';
+  type?: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
   limit_price?: number;
   position_intent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
 };
@@ -42,8 +42,11 @@ export type SubmitOptionsOrderPayload = {
   time_in_force?: 'day' | 'gtc';
   client_order_id?: string;
   order_class?: 'simple' | 'multi-leg';
-  order_type?: 'market' | 'limit';
+  order_type?: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
   limit_price?: number;
+  stop_price?: number;
+  trail_price?: number;
+  trail_percent?: number;
 };
 
 export async function getBrokerAccount(): Promise<BrokerAccountResponse> {

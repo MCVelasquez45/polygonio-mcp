@@ -101,6 +101,12 @@ router.post('/alpaca/options/orders', async (req, res, next) => {
     });
     const limitPriceRaw = body.limitPrice ?? body.limit_price;
     const limitPriceValue = Number(limitPriceRaw);
+    const stopPriceRaw = body.stopPrice ?? body.stop_price;
+    const stopPriceValue = Number(stopPriceRaw);
+    const trailPriceRaw = body.trailPrice ?? body.trail_price;
+    const trailPriceValue = Number(trailPriceRaw);
+    const trailPercentRaw = body.trailPercent ?? body.trail_percent;
+    const trailPercentValue = Number(trailPercentRaw);
     const orderClass =
       typeof body.orderClass === 'string'
         ? body.orderClass
@@ -119,6 +125,9 @@ router.post('/alpaca/options/orders', async (req, res, next) => {
       order_class: orderClass,
       order_type: orderType,
       limit_price: Number.isFinite(limitPriceValue) ? Math.abs(limitPriceValue) : undefined,
+      stop_price: Number.isFinite(stopPriceValue) ? Math.abs(stopPriceValue) : undefined,
+      trail_price: Number.isFinite(trailPriceValue) ? Math.abs(trailPriceValue) : undefined,
+      trail_percent: Number.isFinite(trailPercentValue) ? Math.abs(trailPercentValue) : undefined,
       time_in_force: body.timeInForce ?? body.time_in_force ?? 'day',
       client_order_id: body.clientOrderId ?? body.client_order_id,
       extended_hours: Boolean(body.extendedHours ?? body.extended_hours)

@@ -46,7 +46,7 @@ export type AlpacaOrderLeg = {
   symbol: string;
   qty: number;
   side: 'buy' | 'sell';
-  type?: 'market' | 'limit';
+  type?: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
   limit_price?: number;
   position_intent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
 };
@@ -56,8 +56,11 @@ export type AlpacaOptionsOrderRequest = {
   quantity?: number;
   time_in_force: 'day' | 'gtc';
   order_class?: 'simple' | 'multi-leg';
-  order_type?: 'limit' | 'market';
+  order_type?: 'limit' | 'market' | 'stop' | 'stop_limit' | 'trailing_stop';
   limit_price?: number;
+  stop_price?: number;
+  trail_price?: number;
+  trail_percent?: number;
   client_order_id?: string;
   extended_hours?: boolean;
 };
@@ -115,13 +118,34 @@ function normalizePositionIntent(side: 'buy' | 'sell', intent?: AlpacaOrderLeg['
 }
 
 export async function submitAlpacaOptionsOrder(payload: AlpacaOptionsOrderRequest) {
-  const normalizedType: 'limit' | 'market' =
-    payload.order_type ?? (payload.limit_price != null ? 'limit' : 'market');
+  const normalizedType: 'limit' | 'market' | 'stop' | 'stop_limit' | 'trailing_stop' =
+    payload.order_type ??
+    (payload.trail_price != null || payload.trail_percent != null
+      ? 'trailing_stop'
+      : payload.stop_price != null && payload.limit_price != null
+      ? 'stop_limit'
+      : payload.stop_price != null
+      ? 'stop'
+      : payload.limit_price != null
+      ? 'limit'
+      : 'market');
   const normalizedClass = mapOrderClass(payload.order_class, payload.legs.length);
   const qty = Number(payload.quantity ?? 1);
   const limitPrice =
     payload.limit_price != null && Number.isFinite(Number(payload.limit_price))
       ? Math.abs(Number(payload.limit_price))
+      : undefined;
+  const stopPrice =
+    payload.stop_price != null && Number.isFinite(Number(payload.stop_price))
+      ? Math.abs(Number(payload.stop_price))
+      : undefined;
+  const trailPrice =
+    payload.trail_price != null && Number.isFinite(Number(payload.trail_price))
+      ? Math.abs(Number(payload.trail_price))
+      : undefined;
+  const trailPercent =
+    payload.trail_percent != null && Number.isFinite(Number(payload.trail_percent))
+      ? Math.abs(Number(payload.trail_percent))
       : undefined;
   const baseOrder: Record<string, any> = {
     order_class: normalizedClass,
@@ -129,7 +153,10 @@ export async function submitAlpacaOptionsOrder(payload: AlpacaOptionsOrderReques
     type: normalizedType,
     time_in_force: payload.time_in_force,
     client_order_id: payload.client_order_id,
-    limit_price: normalizedType === 'limit' ? limitPrice : undefined,
+    limit_price: normalizedType === 'limit' || normalizedType === 'stop_limit' ? limitPrice : undefined,
+    stop_price: normalizedType === 'stop' || normalizedType === 'stop_limit' ? stopPrice : undefined,
+    trail_price: normalizedType === 'trailing_stop' ? trailPrice : undefined,
+    trail_percent: normalizedType === 'trailing_stop' ? trailPercent : undefined,
     extended_hours:
       typeof payload.extended_hours === 'boolean' ? payload.extended_hours : undefined
   };
