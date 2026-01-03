@@ -220,6 +220,7 @@ function App() {
   const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
+  const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -772,6 +773,7 @@ function App() {
     if (selectedLeg?.ticker?.toUpperCase() === desiredContract.toUpperCase()) return;
     const matching = findLegByTicker(chainExpirations, desiredContract);
     if (matching) {
+      selectionSourceRef.current = 'auto';
       setSelectedLeg(matching);
       if (pendingSelectionRef.current.contract?.toUpperCase() === desiredContract.toUpperCase()) {
         pendingSelectionRef.current.contract = null;
@@ -1268,7 +1270,8 @@ function App() {
 
   // When the user chooses a contract in the chain, sync selection + expiration state.
   const handleContractSelection = useCallback(
-    (leg: OptionLeg | null) => {
+    (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
+      selectionSourceRef.current = source;
       setSelectedLeg(leg);
       if (leg?.ticker) {
         setDesiredContract(leg.ticker.toUpperCase());
@@ -1299,16 +1302,6 @@ function App() {
     setDesiredContract(null);
   }, []);
 
-  useEffect(() => {
-    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
-    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
-    if (!isIntraday || selectedLeg || !chainExpirations.length) return;
-    const candidate = findFirstAvailableLeg(chainExpirations, selectedExpiration);
-    if (candidate) {
-      handleContractSelection(candidate);
-    }
-  }, [timeframe, selectedLeg, chainExpirations, selectedExpiration, handleContractSelection]);
-
   // Prefer the latest chain price for Greeks panel, fall back to watchlist snapshot.
   const greeksUnderlyingPrice =
     chainUnderlyingPrice ??
@@ -1323,6 +1316,44 @@ function App() {
     const latestBar = bars.at(-1);
     return latestBar?.close ?? null;
   }, [chainUnderlyingPrice, underlyingSnapshot, bars]);
+
+  const preferredOptionSide = useMemo(() => {
+    const sentiment = deskInsight?.sentiment?.label?.toLowerCase() ?? null;
+    const shortBias = deskInsight?.shortBias?.label?.toLowerCase() ?? null;
+    if (sentiment === 'bullish' && shortBias === 'bearish') return null;
+    if (sentiment === 'bearish' && shortBias === 'bullish') return null;
+    if (sentiment === 'bullish' || shortBias === 'bullish') return 'call';
+    if (sentiment === 'bearish' || shortBias === 'bearish') return 'put';
+    return null;
+  }, [deskInsight]);
+
+  useEffect(() => {
+    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
+    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
+    if (!isIntraday || !chainExpirations.length) return;
+    const selectedType = selectedLeg?.type?.toLowerCase() ?? null;
+    const biasMismatch =
+      preferredOptionSide && selectedType ? preferredOptionSide !== selectedType : false;
+    if (selectedLeg && selectionSourceRef.current === 'user') return;
+    if (selectedLeg && !biasMismatch) return;
+    const candidate = findPreferredLeg(
+      chainExpirations,
+      selectedExpiration,
+      resolvedUnderlyingPrice,
+      preferredOptionSide
+    );
+    if (candidate && candidate.ticker !== selectedLeg?.ticker) {
+      handleContractSelection(candidate, 'auto');
+    }
+  }, [
+    timeframe,
+    selectedLeg,
+    chainExpirations,
+    selectedExpiration,
+    preferredOptionSide,
+    resolvedUnderlyingPrice,
+    handleContractSelection
+  ]);
 
   const deskSummary = deskInsight?.summary || latestInsight;
   const sentimentLabel = deskInsight?.sentiment?.label ?? null;
@@ -1708,6 +1739,72 @@ function findLegByTicker(groups: OptionChainExpirationGroup[], ticker: string): 
       if (row.call && row.call.ticker.toUpperCase() === normalized) return row.call;
       if (row.put && row.put.ticker.toUpperCase() === normalized) return row.put;
     }
+  }
+  return null;
+}
+
+type OptionSidePreference = 'call' | 'put' | null;
+
+function scoreLeg(leg: OptionLeg, underlyingPrice: number | null) {
+  let score = 0;
+  const delta = typeof leg.delta === 'number' ? Math.abs(leg.delta) : null;
+  if (delta != null) {
+    const deltaGap = Math.abs(delta - 0.6);
+    score += Math.max(0, 1 - deltaGap / 0.4) * 4;
+  }
+  const spread =
+    typeof leg.bid === 'number' && typeof leg.ask === 'number' ? leg.ask - leg.bid : null;
+  if (spread != null) {
+    score += spread <= 0.3 ? 2 : spread <= 0.6 ? 1 : 0;
+  }
+  if (typeof leg.openInterest === 'number') {
+    score += leg.openInterest >= 500 ? 2 : leg.openInterest >= 200 ? 1 : 0;
+  }
+  if (underlyingPrice != null && typeof leg.strike === 'number') {
+    const distance = Math.abs(leg.strike - underlyingPrice);
+    const range = underlyingPrice * 0.1;
+    score += range > 0 ? Math.max(0, 1 - distance / range) : 0;
+  }
+  if (typeof leg.iv === 'number') {
+    const ivPct = leg.iv * 100;
+    if (ivPct > 120) score -= 1;
+  }
+  return score;
+}
+
+function findPreferredLeg(
+  groups: OptionChainExpirationGroup[],
+  preferredExpiration: string | null,
+  underlyingPrice: number | null,
+  preferredSide: OptionSidePreference
+): OptionLeg | null {
+  if (!groups.length) return null;
+  const ordered = preferredExpiration
+    ? [
+        ...groups.filter(group => group.expiration === preferredExpiration),
+        ...groups.filter(group => group.expiration !== preferredExpiration),
+      ]
+    : groups;
+  for (const group of ordered) {
+    let bestLeg: OptionLeg | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const row of group.strikes) {
+      const candidates: OptionLeg[] = [];
+      if (preferredSide === 'call' && row.call) candidates.push(row.call);
+      if (preferredSide === 'put' && row.put) candidates.push(row.put);
+      if (preferredSide == null) {
+        if (row.call) candidates.push(row.call);
+        if (row.put) candidates.push(row.put);
+      }
+      for (const leg of candidates) {
+        const score = scoreLeg(leg, underlyingPrice);
+        if (score > bestScore) {
+          bestScore = score;
+          bestLeg = leg;
+        }
+      }
+    }
+    if (bestLeg) return bestLeg;
   }
   return null;
 }
