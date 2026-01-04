@@ -151,14 +151,16 @@ export function GreeksPanel({
     ivPercent == null
       ? null
       : ivPercent <= 35
-      ? 'IV efficient'
+      ? 'efficient'
       : ivPercent <= 70
-      ? 'IV elevated'
-      : 'IV extreme';
+      ? 'elevated'
+      : 'extreme';
   const spreadLabel =
     typeof spread === 'number'
       ? spread <= 0.1
         ? `Spread $${spread.toFixed(2)} (tight)`
+        : spread <= 0.3
+        ? `Spread $${spread.toFixed(2)} (ok)`
         : `Spread $${spread.toFixed(2)} (wide)`
       : null;
   const oiLabel =
