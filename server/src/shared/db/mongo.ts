@@ -17,7 +17,7 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
     return;
   }
   if (!uri) {
-    throw new Error('MONGODB_URI is not set. Please provide a connection string.');
+    throw new Error('MONGO_URI is not set. Please provide a MongoDB connection string.');
   }
 
   client = new MongoClient(uri);

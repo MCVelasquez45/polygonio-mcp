@@ -15,7 +15,10 @@ const DEFAULT_INTERVALS: WorkerInterval[] = [{ multiplier: 1, timespan: 'minute'
 
 const POLL_INTERVAL_MS = Math.max(60_000, Number(process.env.AGG_WORKER_INTERVAL_MS ?? 180_000));
 const REQUEST_DELAY_MS = Math.max(300, Number(process.env.AGG_WORKER_REQUEST_DELAY_MS ?? 800));
-const ENABLED = (process.env.AGG_WORKER_ENABLED ?? '').toLowerCase() === 'true';
+const AGG_WORKER_RAW = process.env.AGG_WORKER_ENABLED;
+const AGG_WORKER_UNSET = AGG_WORKER_RAW == null || AGG_WORKER_RAW === '';
+const AGG_WORKER_DEV_DEFAULT = AGG_WORKER_UNSET && process.env.NODE_ENV !== 'production';
+const ENABLED = AGG_WORKER_DEV_DEFAULT || (AGG_WORKER_RAW ?? '').toLowerCase() === 'true';
 const TICKERS = (process.env.AGG_WORKER_TICKERS ?? 'SPY,AAPL,TSLA,NVDA,MSFT,META,QQQ')
   .split(',')
   .map(ticker => ticker.trim().toUpperCase())
@@ -83,7 +86,11 @@ async function runCycle() {
 // Public entry: starts the polling loop when `AGG_WORKER_ENABLED=true`.
 export function startAggregatesWorker() {
   if (!ENABLED) {
-    console.log('[AGG-WORKER] disabled (set AGG_WORKER_ENABLED=true to enable background ingestion)');
+    const reason = AGG_WORKER_UNSET ? 'AGG_WORKER_ENABLED is not set' : `AGG_WORKER_ENABLED=${AGG_WORKER_RAW}`;
+    console.log(
+      `[AGG-WORKER] disabled (${reason}). This worker pre-warms intraday aggregate caches for faster chart loads.`
+    );
+    console.log('[AGG-WORKER] To enable, set AGG_WORKER_ENABLED=true.');
     return;
   }
   if (!TICKERS.length) {
@@ -93,6 +100,9 @@ export function startAggregatesWorker() {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (AGG_WORKER_DEV_DEFAULT) {
+    console.log('[AGG-WORKER] AGG_WORKER_ENABLED not set; auto-enabling in development mode.');
   }
   console.log('[AGG-WORKER] starting', { tickers: TICKERS, pollIntervalMs: POLL_INTERVAL_MS });
   runCycle().catch(error => console.warn('[AGG-WORKER] initial cycle failed', error));
