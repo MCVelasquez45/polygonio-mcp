@@ -5,6 +5,7 @@ import { getWatchlistReports } from '../options/services/watchlistReports';
 import { evaluateChecklistBatch, getStoredChecklist } from '../options/services/optionsChecklist';
 import { getDeskInsight } from './deskInsight';
 import { selectContract } from './contractSelection';
+import { summarizeContract } from './contractSummary';
 
 const router = Router();
 
@@ -71,10 +72,29 @@ router.post('/contract-select', async (req, res, next) => {
     const payload = req.body ?? {};
     const ticker = typeof payload?.ticker === 'string' ? payload.ticker.trim().toUpperCase() : '';
     if (!ticker) {
-      return res.status(400).json({ error: 'ticker is required' });
+      return res.status(400).json({ error: 'underlying is required' });
     }
     const selection = await selectContract(payload);
     res.json(selection);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/contract-summary', async (req, res, next) => {
+  try {
+    const payload = req.body ?? {};
+    const ticker =
+      typeof payload?.underlying === 'string'
+        ? payload.underlying.trim().toUpperCase()
+        : typeof payload?.contract?.symbol === 'string'
+        ? payload.contract.symbol.trim().toUpperCase()
+        : '';
+    if (!ticker) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    const summary = await summarizeContract(payload);
+    res.json(summary);
   } catch (error) {
     next(error);
   }

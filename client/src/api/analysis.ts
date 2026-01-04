@@ -73,6 +73,46 @@ export async function selectContract(payload: {
   return data;
 }
 
+export type ContractExplanationResult = {
+  whatThisTradeDoes: string;
+  whatNeedsToHappen: string[];
+  mainRisks: string[];
+  whyAIChoseThis: string[];
+  riskLevel: string | null;
+  source: 'agent' | 'fallback';
+};
+
+export async function getContractExplanation(payload: {
+  underlying: string;
+  spotPrice: number | null;
+  breakeven: number | null;
+  breakevenPct: number | null;
+  contract: {
+    symbol: string;
+    type: 'call' | 'put';
+    strike: number | null;
+    expiration: string | null;
+    price: number | null;
+  };
+  decision: {
+    selectedContract: string | null;
+    side: 'call' | 'put' | null;
+    confidence: number | null;
+    reasons: string[];
+    warnings: string[];
+    source: 'agent' | 'fallback';
+    fallbackUsed: boolean;
+    constraintsFailed: string[];
+  };
+  risk: {
+    score: number | null;
+    label: string | null;
+  };
+}): Promise<ContractExplanationResult> {
+  const { data } = await http.post<ContractExplanationResult>('/api/analysis/contract-summary', payload);
+  return data;
+}
+
 export type ChecklistFactor = {
   key: string;
   label: string;

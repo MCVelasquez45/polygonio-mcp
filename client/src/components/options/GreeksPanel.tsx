@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OptionContractDetail, OptionLeg } from '../../types/market';
-import type { ContractSelectionResult, DeskInsight } from '../../api/analysis';
+import { analysisApi } from '../../api';
+import type { ContractExplanationResult, ContractSelectionResult, DeskInsight } from '../../api/analysis';
 import { PieChart, Pie, Cell } from 'recharts';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
 import { formatExpirationDate } from '../../utils/expirations';
@@ -53,6 +54,8 @@ export function GreeksPanel({
   selectionLoading
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
+  const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
+  const underlyingSymbol = contract?.underlying ?? leg?.underlying ?? null;
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
   const resolvedStrike = typeof contract?.strike === 'number' ? contract.strike : leg?.strike ?? null;
   const contractType = contract?.type ?? leg?.type ?? null;
@@ -98,17 +101,14 @@ export function GreeksPanel({
     breakevenMove != null && typeof underlyingPrice === 'number' && underlyingPrice !== 0
       ? (breakevenMove / underlyingPrice) * 100
       : null;
-  const breakevenFormula =
-    contractType && resolvedStrike != null && resolvedPremium != null
-      ? `${formatCurrency(resolvedStrike)} ${contractType === 'call' ? '+' : '-'} ${formatCurrency(resolvedPremium)}`
-      : null;
-  const meta = [
+  const contractMeta = [
     { label: 'Expiration', value: resolvedExpiration ? formatExpirationDate(resolvedExpiration) : '—' },
     { label: 'Strike', value: resolvedStrike != null ? `$${resolvedStrike.toFixed(2)}` : '—' },
     { label: 'Premium', value: resolvedPremium != null ? `$${resolvedPremium.toFixed(2)}` : '—' },
-    { label: 'Breakeven', value: breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : '—' },
-    { label: 'Implied Vol', value: resolvedIV != null ? `${(resolvedIV * 100).toFixed(1)}%` : '—' },
-    { label: 'Open Interest', value: resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—' },
+    {
+      label: 'Delta',
+      value: typeof resolvedGreeks.delta === 'number' ? resolvedGreeks.delta.toFixed(2) : '—'
+    }
   ];
   const riskProfile = buildRiskProfile(resolvedGreeks, {
     iv: resolvedIV,
@@ -118,34 +118,12 @@ export function GreeksPanel({
   const totalRiskValue = riskProfile.slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
   const spread = resolveSpread(leg, contract);
   const itmProbability = typeof resolvedGreeks.delta === 'number' ? Math.abs(resolvedGreeks.delta) * 100 : null;
-  const [checklistOpen, setChecklistOpen] = useState(false);
-  const checklistEntries = buildEntryChecklist({
-    strike: resolvedStrike,
-    premium: resolvedPremium,
-    breakeven: breakevenPrice,
-    underlyingPrice,
-    delta: resolvedGreeks.delta,
-    iv: resolvedIV,
-    theta: resolvedGreeks.theta,
-    openInterest: resolvedOpenInterest,
-    spread,
-  });
-  const checklistVisible = checklistOpen ? checklistEntries : checklistEntries.slice(0, 2);
+  const [showTechnical, setShowTechnical] = useState(false);
+  const [explanation, setExplanation] = useState<ContractExplanationResult | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
+  const explanationKeyRef = useRef<string | null>(null);
 
-  const sentimentLabel = insight?.sentiment?.label ?? null;
-  const sentimentTone = sentimentLabel ? sentimentLabel.toLowerCase() : null;
-  const shortBiasLabel = insight?.shortBias?.label ?? null;
-  const shortBiasReasons = insight?.shortBias?.reasons ?? [];
-  const fedEvent = insight?.fedEvent ?? null;
-  const fedEventDate = fedEvent?.date ? Date.parse(fedEvent.date) : null;
-  const isFedSoon =
-    typeof fedEventDate === 'number' && Number.isFinite(fedEventDate)
-      ? fedEventDate - Date.now() <= 2 * 24 * 60 * 60 * 1000
-      : false;
-  const biasPreference =
-    sentimentTone === 'bullish' ? 'calls' : sentimentTone === 'bearish' ? 'puts' : null;
-  const contractLabel = contractType ? contractType.toLowerCase() : null;
-  const biasMismatch = biasPreference && contractLabel && !biasPreference.startsWith(contractLabel);
   const ivPercent = typeof resolvedIV === 'number' ? resolvedIV * 100 : null;
   const ivLabel =
     ivPercent == null
@@ -165,22 +143,114 @@ export function GreeksPanel({
       : null;
   const oiLabel =
     typeof resolvedOpenInterest === 'number' ? `OI ${resolvedOpenInterest.toLocaleString()}` : null;
-  const focusHighlights = [
-    sentimentLabel ? `Sentiment ${sentimentLabel}.` : null,
-    shortBiasLabel
-      ? `Short bias ${shortBiasLabel}${shortBiasReasons.length ? ` · ${shortBiasReasons.join(', ')}` : ''}.`
-      : null,
-    biasPreference
-      ? `Bias favors ${biasPreference}${biasMismatch && contractLabel ? ` (current ${contractLabel}).` : '.'}`
-      : null,
-    ivLabel ? `IV ${ivLabel}${ivPercent != null ? ` · ${ivPercent.toFixed(1)}%` : ''}.` : null,
-    [oiLabel, spreadLabel].filter(Boolean).join(' · ') || null,
-    isFedSoon && fedEvent ? `Macro: ${fedEvent.title ?? fedEvent.name ?? 'Fed event'} soon.` : null
-  ]
-    .filter(Boolean)
-    .slice(0, 4);
-  const selectionReasons = selection?.reasons?.filter(Boolean) ?? [];
-  const selectionWarnings = selection?.warnings?.filter(Boolean) ?? [];
+  const selectionWarnings = useMemo(() => selection?.warnings?.filter(Boolean) ?? [], [selection?.warnings]);
+  const overviewBadges = [
+    ivPercent != null ? `IV ${ivLabel ?? ''}${ivLabel ? ' · ' : ''}${ivPercent.toFixed(1)}%` : null,
+    oiLabel,
+    spreadLabel
+  ].filter(Boolean);
+  const spotLabel =
+    typeof underlyingPrice === 'number' ? `$${underlyingPrice.toFixed(2)}` : null;
+  const breakevenLabel =
+    breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : null;
+  const breakevenDeltaLabel =
+    breakevenPercent != null ? `${breakevenPercent >= 0 ? '+' : ''}${breakevenPercent.toFixed(2)}%` : null;
+  const spotLine =
+    spotLabel && breakevenLabel
+      ? `Spot ${spotLabel} → Breakeven ${breakevenLabel}${breakevenDeltaLabel ? ` (${breakevenDeltaLabel})` : ''}`
+      : 'Breakeven distance unavailable.';
+  const underlyingName = useMemo(() => {
+    const raw = (label ?? underlyingSymbol ?? insight?.symbol ?? contractSymbol ?? 'Underlying').toUpperCase();
+    return raw.startsWith('O:') ? raw.slice(2) : raw;
+  }, [label, underlyingSymbol, insight?.symbol, contractSymbol]);
+  const fallbackUsed =
+    selection?.source === 'fallback' || selectionWarnings.some(item => item.toLowerCase().includes('fallback'));
+  const decision = useMemo(
+    () => ({
+      selectedContract: selection?.selectedContract ?? contractSymbol,
+      side: selection?.side ?? (contractType === 'call' ? 'call' : contractType === 'put' ? 'put' : null),
+      confidence: selection?.confidence ?? null,
+      reasons: selection?.reasons ?? [],
+      warnings: selection?.warnings ?? [],
+      source: selection?.source ?? 'fallback',
+      fallbackUsed,
+      constraintsFailed: selectionWarnings
+    }),
+    [selection, contractSymbol, contractType, fallbackUsed, selectionWarnings]
+  );
+  const explanationPayload = useMemo(() => {
+    if (!contractSymbol || !contractType) return null;
+    if (contractType !== 'call' && contractType !== 'put') return null;
+    return {
+      underlying: underlyingName,
+      spotPrice: typeof underlyingPrice === 'number' ? underlyingPrice : null,
+      breakeven: breakevenPrice ?? null,
+      breakevenPct: breakevenPercent ?? null,
+      contract: {
+        symbol: contractSymbol,
+        type: contractType,
+        strike: resolvedStrike ?? null,
+        expiration: resolvedExpiration ?? null,
+        price: resolvedPremium ?? null
+      },
+      decision,
+      risk: {
+        score: riskProfile.score ?? null,
+        label: riskProfile.label ?? null
+      }
+    };
+  }, [
+    contractSymbol,
+    contractType,
+    underlyingName,
+    resolvedStrike,
+    resolvedExpiration,
+    resolvedPremium,
+    breakevenPrice,
+    breakevenPercent,
+    underlyingPrice,
+    decision,
+    riskProfile.score,
+    riskProfile.label
+  ]);
+  const riskLevelLine =
+    explanation?.riskLevel ??
+    (riskProfile.label ? `${riskProfile.label}${riskProfile.score != null ? ` — ${Math.round(riskProfile.score * 100)}%` : ''}` : null);
+
+  useEffect(() => {
+    if (!explanationPayload) {
+      setExplanation(null);
+      setExplanationError(null);
+      explanationKeyRef.current = null;
+      return;
+    }
+    const key = JSON.stringify(explanationPayload);
+    if (explanationKeyRef.current === key) return;
+    explanationKeyRef.current = key;
+    let cancelled = false;
+    setExplanation(null);
+    setExplanationLoading(true);
+    setExplanationError(null);
+    analysisApi
+      .getContractExplanation(explanationPayload)
+      .then(result => {
+        if (!cancelled) setExplanation(result);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExplanation(null);
+          setExplanationError('Unable to generate an explanation yet.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setExplanationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [explanationPayload]);
+  const showExplanationPlaceholder =
+    Boolean(explanationPayload) && !explanation && !explanationError;
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
@@ -202,190 +272,200 @@ export function GreeksPanel({
         )}
       </header>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-        {meta.map(item => (
-          <div key={item.label} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
-            <p className="text-xs uppercase tracking-widest text-gray-500">{item.label}</p>
-            <p className="text-base font-semibold text-white mt-1">{item.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {breakevenPrice != null && resolvedPremium != null && resolvedStrike != null && contractType && (
-        <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-2">
-          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Breakeven Calculator</p>
-          <p className="text-lg font-semibold text-white">
-            Needs {displayName} {contractType === 'call' ? '≥' : '≤'} ${breakevenPrice.toFixed(2)}
-          </p>
-          <p className="text-sm text-gray-400">
-            {contractType === 'call' ? 'Strike + Premium' : 'Strike - Premium'} ({breakevenFormula})
-          </p>
-          {breakevenMove != null && breakevenPercent != null && (
-            <p className="text-xs text-gray-500">
-              Current {label ?? 'price'} {underlyingPrice != null ? `$${underlyingPrice.toFixed(2)}` : '—'} · Move{' '}
-              {breakevenMove >= 0 ? '+' : '-'}${Math.abs(breakevenMove).toFixed(2)} ({Math.abs(breakevenPercent).toFixed(2)}%)
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        {metrics.map(metric => (
-          <div key={metric.key} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
-            <p className="text-xs uppercase tracking-widest text-gray-500">{metric.label}</p>
-            <p className="text-xl font-semibold text-white mt-1">
-              {resolvedGreeks[metric.key] != null ? Number(resolvedGreeks[metric.key]).toFixed(4) : '—'}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
-        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">AI Contract Focus</p>
-        <p className="text-sm text-gray-300">
-          {biasMismatch ? 'Bias mismatch — recheck direction or strike selection.' : 'Bias and contract are aligned.'}
-        </p>
-        {selectionLoading && (
-          <p className="text-xs text-gray-500">Selecting the best contract based on liquidity + delta…</p>
-        )}
-        {selection?.selectedContract && (
-          <p className="text-xs text-gray-400">
-            Selected: <span className="text-gray-200">{selection.selectedContract}</span>
-            {selection.confidence != null ? ` · ${Math.round(selection.confidence * 100)}%` : ''}
-          </p>
-        )}
-        {focusHighlights.length > 0 ? (
-          <ul className="space-y-1 text-xs text-gray-400">
-            {focusHighlights.map(item => (
-              <li key={item} className="flex items-start gap-2">
-                <span className="text-emerald-300">•</span>
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-gray-500">Select a contract to generate AI selection notes.</p>
-        )}
-        {selectionReasons.length > 0 && (
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Why this contract</p>
-            <ul className="mt-1 space-y-1 text-xs text-gray-400">
-              {selectionReasons.slice(0, 4).map(reason => (
-                <li key={reason} className="flex items-start gap-2">
-                  <span className="text-emerald-300">•</span>
-                  <span>{reason}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {selectionWarnings.length > 0 && (
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Risk notes</p>
-            <ul className="mt-1 space-y-1 text-xs text-amber-200">
-              {selectionWarnings.slice(0, 2).map(warning => (
-                <li key={warning} className="flex items-start gap-2">
-                  <span className="text-amber-200">!</span>
-                  <span>{warning}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-
       <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Entry Checklist</p>
+          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Beginner View</p>
           <button
             type="button"
-            onClick={() => setChecklistOpen(open => !open)}
+            onClick={() => setShowTechnical(open => !open)}
             className="text-xs text-gray-400 border border-gray-800 rounded-full px-3 py-1 hover:border-emerald-500/40 hover:text-white transition-colors"
           >
-            {checklistOpen ? 'Hide full checklist' : 'View full checklist'}
+            {showTechnical ? 'Hide technical details' : 'Show technical details'}
           </button>
         </div>
-        <div className="space-y-3">
-          {checklistVisible.map(entry => (
-            <div
-              key={entry.key}
-              className={`rounded-xl border px-3 py-2 text-sm ${toneToBorder(entry.tone)} ${toneToBackground(entry.tone)}`}
-            >
-              <p className="font-semibold text-white">{entry.label}</p>
-              <p className="text-gray-200">{entry.primary}</p>
-              <p className="text-xs text-gray-400 mt-1">{entry.detail}</p>
+        {selectionLoading && <p className="text-xs text-gray-500">Picking the best contract…</p>}
+        {(explanationLoading || showExplanationPlaceholder) && (
+          <p className="text-xs text-gray-500">Building an explanation…</p>
+        )}
+        {!explanationLoading && explanationError && <p className="text-xs text-amber-200">{explanationError}</p>}
+        {!explanationLoading && explanation ? (
+          <div className="space-y-3 text-sm text-gray-200">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">What this trade does</p>
+              <p className="text-gray-200 mt-1">{explanation.whatThisTradeDoes}</p>
             </div>
-          ))}
-        </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">What needs to happen</p>
+              {explanation.whatNeedsToHappen.length ? (
+                <ul className="mt-1 space-y-1 text-xs text-gray-400">
+                  {explanation.whatNeedsToHappen.map(item => (
+                    <li key={item} className="flex items-start gap-2">
+                      <span className="text-emerald-300">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-500">Waiting on more market data.</p>
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Main risks</p>
+              {explanation.mainRisks.length ? (
+                <ul className="mt-1 space-y-1 text-xs text-amber-200">
+                  {explanation.mainRisks.map(item => (
+                    <li key={item} className="flex items-start gap-2">
+                      <span className="text-amber-200">!</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-500">No major risks flagged yet.</p>
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Why the AI picked this</p>
+              {explanation.whyAIChoseThis.length ? (
+                <ul className="mt-1 space-y-1 text-xs text-gray-400">
+                  {explanation.whyAIChoseThis.map(item => (
+                    <li key={item} className="flex items-start gap-2">
+                      <span className="text-emerald-300">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-500">No selection rationale available yet.</p>
+              )}
+            </div>
+            {riskLevelLine && (
+              <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-3 py-2 text-xs text-gray-300">
+                Risk level: <span className="text-gray-100">{riskLevelLine}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          !explanationLoading && !explanationError && (
+            <p className="text-xs text-gray-500">Select a contract to generate an explanation.</p>
+          )
+        )}
       </div>
 
-      <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Risk Profile</p>
-            <p className="text-base font-semibold text-white">
-              {riskProfile.label} {riskProfile.score != null ? `· ${(riskProfile.score * 100).toFixed(0)}%` : ''}
-            </p>
-            <p className="text-xs text-gray-400 max-w-xl">{riskProfile.description}</p>
-          </div>
-          {itmProbability != null && (
-            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-emerald-200">ITM odds</p>
-              <p className="text-lg font-semibold text-emerald-200">{itmProbability.toFixed(0)}%</p>
-              <p className="text-[11px] text-emerald-100/80">Delta-based chance this contract expires in the money.</p>
-            </div>
-          )}
-        </div>
-        {riskProfile.slices.length ? (
-          <div className="flex flex-col lg:flex-row gap-4">
-            <MeasuredContainer className="w-full lg:w-1/2 h-44 min-w-0" minWidth={220} minHeight={176} height={176}>
-              {({ width, height }) => (
-                <PieChart width={width} height={height}>
-                  <Pie
-                    data={riskProfile.slices}
-                    dataKey="value"
-                    innerRadius={50}
-                    outerRadius={80}
-                    stroke="none"
-                    paddingAngle={1}
-                  >
-                    {riskProfile.slices.map(slice => (
-                      <Cell key={slice.id} fill={slice.color} />
-                    ))}
-                  </Pie>
-                  <text
-                    x="50%"
-                    y="50%"
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill="#e5e7eb"
-                    fontSize="16"
-                    fontWeight="600"
-                  >
-                    {(riskProfile.score ?? 0).toFixed(2)}
-                  </text>
-                </PieChart>
+      {showTechnical && (
+        <div className="space-y-4">
+          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Contract Overview</p>
+                <p className="text-sm text-gray-300 mt-1">{spotLine}</p>
+              </div>
+              {overviewBadges.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-[11px] text-gray-300">
+                  {overviewBadges.map(badge => (
+                    <span
+                      key={badge}
+                      className="px-2 py-1 rounded-full border border-gray-800 bg-gray-900/60"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                </div>
               )}
-            </MeasuredContainer>
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              {riskProfile.slices.map(slice => (
-                <div key={slice.id} className="rounded-xl border border-gray-900 bg-gray-950 p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} />
-                      <p className="text-gray-200 font-medium">{slice.label}</p>
-                    </div>
-                    <p className="text-white font-semibold">{Math.round((slice.value / totalRiskValue) * 100)}%</p>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">{slice.description}</p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              {contractMeta.map(item => (
+                <div key={item.label} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
+                  <p className="text-xs uppercase tracking-widest text-gray-500">{item.label}</p>
+                  <p className="text-base font-semibold text-white mt-1">{item.value}</p>
                 </div>
               ))}
             </div>
           </div>
-        ) : (
-          <p className="text-sm text-gray-500">Select a contract with Greeks and liquidity data to preview its risk mix.</p>
-        )}
-      </div>
+
+          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Greek Snapshot</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {metrics.map(metric => (
+                <div key={metric.key} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
+                  <p className="text-xs uppercase tracking-widest text-gray-500">{metric.label}</p>
+                  <p className="text-xl font-semibold text-white mt-1">
+                    {resolvedGreeks[metric.key] != null ? Number(resolvedGreeks[metric.key]).toFixed(4) : '—'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Risk Profile</p>
+                <p className="text-base font-semibold text-white">
+                  {riskProfile.label} {riskProfile.score != null ? `· ${(riskProfile.score * 100).toFixed(0)}%` : ''}
+                </p>
+                <p className="text-xs text-gray-400 max-w-xl">{riskProfile.description}</p>
+              </div>
+              {itmProbability != null && (
+                <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-emerald-200">ITM odds</p>
+                  <p className="text-lg font-semibold text-emerald-200">{itmProbability.toFixed(0)}%</p>
+                  <p className="text-[11px] text-emerald-100/80">Delta-based chance this contract expires in the money.</p>
+                </div>
+              )}
+            </div>
+            {riskProfile.slices.length ? (
+              <div className="flex flex-col lg:flex-row gap-4">
+                <MeasuredContainer className="w-full lg:w-1/2 h-44 min-w-0" minWidth={220} minHeight={176} height={176}>
+                  {({ width, height }) => (
+                    <PieChart width={width} height={height}>
+                      <Pie
+                        data={riskProfile.slices}
+                        dataKey="value"
+                        innerRadius={50}
+                        outerRadius={80}
+                        stroke="none"
+                        paddingAngle={1}
+                      >
+                        {riskProfile.slices.map(slice => (
+                          <Cell key={slice.id} fill={slice.color} />
+                        ))}
+                      </Pie>
+                      <text
+                        x="50%"
+                        y="50%"
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="#e5e7eb"
+                        fontSize="16"
+                        fontWeight="600"
+                      >
+                        {(riskProfile.score ?? 0).toFixed(2)}
+                      </text>
+                    </PieChart>
+                  )}
+                </MeasuredContainer>
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {riskProfile.slices.map(slice => (
+                    <div key={slice.id} className="rounded-xl border border-gray-900 bg-gray-950 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} />
+                          <p className="text-gray-200 font-medium">{slice.label}</p>
+                        </div>
+                        <p className="text-white font-semibold">{Math.round((slice.value / totalRiskValue) * 100)}%</p>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">{slice.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">Select a contract with Greeks and liquidity data to preview its risk mix.</p>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -501,170 +581,6 @@ function clamp01(value: number) {
   return Math.min(Math.max(value, 0), 1);
 }
 
-type ChecklistEntry = {
-  key: string;
-  label: string;
-  primary: string;
-  detail: string;
-  tone: 'good' | 'warn' | 'alert' | 'neutral';
-};
-
-function buildEntryChecklist(args: {
-  strike: number | null;
-  premium: number | null;
-  breakeven: number | null;
-  underlyingPrice: number | null | undefined;
-  delta: number | null;
-  iv: number | null;
-  theta: number | null;
-  openInterest: number | null;
-  spread: number | null;
-}): ChecklistEntry[] {
-  const entries: ChecklistEntry[] = [];
-  const { breakeven, underlyingPrice, delta, iv, theta, openInterest, spread } = args;
-  if (breakeven != null && typeof underlyingPrice === 'number') {
-    const diff = breakeven - underlyingPrice;
-    const moveNeeded = diff > 0 ? `$${Math.abs(diff).toFixed(2)} higher` : `$${Math.abs(diff).toFixed(2)} cushion`;
-    entries.push({
-      key: 'breakeven',
-      label: 'Break-even vs. Spot',
-      primary:
-        diff > 0
-          ? `Needs ${moveNeeded} to clear $${breakeven.toFixed(2)}`
-          : `Already beyond break-even by ${moveNeeded}`,
-      detail:
-        diff > 0
-          ? 'Only enter if price is accelerating toward this level—momentum + volume confirm follow-through.'
-          : 'When price is above break-even, focus on trailing risk and locking gains.',
-      tone: diff > 0 ? 'warn' : 'good',
-    });
-  } else {
-    entries.push({
-      key: 'breakeven',
-      label: 'Break-even vs. Spot',
-      primary: 'Need underlying + premium data to compare.',
-      detail: 'Select an option with a live underlying snapshot so we can gauge distance to break-even.',
-      tone: 'neutral',
-    });
-  }
-
-  if (typeof delta === 'number') {
-    const probability = Math.abs(delta) * 100;
-    entries.push({
-      key: 'delta',
-      label: 'Contract Delta',
-      primary: `Behaves like ${delta.toFixed(2)} shares (~${probability.toFixed(0)}% ITM odds).`,
-      detail:
-        probability >= 50
-          ? 'This is “stock-like” exposure—expect responsive P/L. Desk rule: stay above 0.50 for intraday scalps.'
-          : 'Below 0.50 delta trades slower and needs more time. Size smaller or pick a closer strike.',
-      tone: probability >= 50 ? 'good' : 'warn',
-    });
-  } else {
-    entries.push({
-      key: 'delta',
-      label: 'Contract Delta',
-      primary: 'Delta unavailable.',
-      detail: 'Cannot estimate chance of profit without delta. Reload the chain or pick another strike.',
-      tone: 'alert',
-    });
-  }
-
-  if (typeof iv === 'number') {
-    const ivPercent = iv * 100;
-    entries.push({
-      key: 'iv',
-      label: 'Implied Volatility',
-      primary: `IV at ${ivPercent.toFixed(1)}%.`,
-      detail:
-        ivPercent <= 35
-          ? 'Attractive levels—buying premium is efficient while IV trends lower.'
-          : 'Elevated IV: price can fall even if underlying rallies. Prefer entries after IV cools or use spreads.',
-      tone: ivPercent <= 35 ? 'good' : 'warn',
-    });
-  } else {
-    entries.push({
-      key: 'iv',
-      label: 'Implied Volatility',
-      primary: 'IV snapshot missing.',
-      detail: 'Wait for Massive to return IV or avoid entering blind—vol crush risk is real.',
-      tone: 'neutral',
-    });
-  }
-
-  if (typeof theta === 'number') {
-    entries.push({
-      key: 'theta',
-      label: 'Theta Decay',
-      primary: `Loses ${theta.toFixed(2)} per day if price stalls.`,
-      detail:
-        theta > -0.2
-          ? 'Time decay is manageable thanks to extra duration.'
-          : 'Aggressive theta bleed—intraday only unless you can actively manage risk.',
-      tone: theta > -0.2 ? 'good' : 'warn',
-    });
-  } else {
-    entries.push({
-      key: 'theta',
-      label: 'Theta Decay',
-      primary: 'Theta data unavailable.',
-      detail: 'Without theta we cannot track daily bleed—confirm the contract before entering.',
-      tone: 'neutral',
-    });
-  }
-
-  if (typeof openInterest === 'number' || typeof spread === 'number') {
-    const oi = openInterest ?? 0;
-    const spreadText = typeof spread === 'number' ? `$${spread.toFixed(2)}` : 'unknown';
-    const tightSpread = typeof spread === 'number' ? spread <= 0.1 : false;
-    entries.push({
-      key: 'liquidity',
-      label: 'Liquidity + Exit',
-      primary: `${oi.toLocaleString()} OI · Spread ${spreadText}.`,
-      detail: tightSpread
-        ? 'Depth looks healthy—fills should be smooth.'
-        : 'Wide spreads eat P/L immediately. Use limit orders or switch strikes.',
-      tone: oi >= 500 && tightSpread ? 'good' : oi < 200 ? 'alert' : 'warn',
-    });
-  } else {
-    entries.push({
-      key: 'liquidity',
-      label: 'Liquidity + Exit',
-      primary: 'Need OI and bid/ask data.',
-      detail: 'Never enter without confirming liquidity—slippage destroys trades.',
-      tone: 'alert',
-    });
-  }
-
-  return entries;
-}
-
-function toneToBorder(tone: ChecklistEntry['tone']) {
-  switch (tone) {
-    case 'good':
-      return 'border-emerald-500/40';
-    case 'warn':
-      return 'border-amber-500/40';
-    case 'alert':
-      return 'border-red-500/50';
-    default:
-      return 'border-gray-900';
-  }
-}
-
-function toneToBackground(tone: ChecklistEntry['tone']) {
-  switch (tone) {
-    case 'good':
-      return 'bg-emerald-500/10';
-    case 'warn':
-      return 'bg-amber-500/10';
-    case 'alert':
-      return 'bg-red-500/10';
-    default:
-      return 'bg-gray-950';
-  }
-}
-
 function pickNumber(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -685,10 +601,6 @@ function resolveQuoteMid(quote: Record<string, unknown> | undefined | null): num
     return (bid + ask) / 2;
   }
   return null;
-}
-
-function formatCurrency(value: number) {
-  return `$${value.toFixed(2)}`;
 }
 
 function resolveSpread(leg?: OptionLeg | null, contract?: OptionContractDetail | null): number | null {
