@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { getWatchlistReports } from '../options/services/watchlistReports';
 import { evaluateChecklistBatch, getStoredChecklist } from '../options/services/optionsChecklist';
 import { getDeskInsight } from './deskInsight';
+import { selectContract } from './contractSelection';
 
 const router = Router();
 
@@ -60,6 +61,20 @@ router.post('/checklist', async (req, res, next) => {
       results,
       fetchedAt: new Date().toISOString()
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/contract-select', async (req, res, next) => {
+  try {
+    const payload = req.body ?? {};
+    const ticker = typeof payload?.ticker === 'string' ? payload.ticker.trim().toUpperCase() : '';
+    if (!ticker) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    const selection = await selectContract(payload);
+    res.json(selection);
   } catch (error) {
     next(error);
   }

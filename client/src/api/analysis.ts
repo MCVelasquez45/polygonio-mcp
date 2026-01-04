@@ -38,6 +38,41 @@ export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
   return data;
 }
 
+export type ContractSelectionCandidate = {
+  symbol: string;
+  type: 'call' | 'put';
+  strike: number;
+  expiration: string;
+  delta: number | null;
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  openInterest: number | null;
+  volume: number | null;
+  iv: number | null;
+  dte: number | null;
+};
+
+export type ContractSelectionResult = {
+  selectedContract: string | null;
+  side: 'call' | 'put' | null;
+  confidence: number | null;
+  reasons: string[];
+  warnings: string[];
+  source: 'agent' | 'fallback';
+};
+
+export async function selectContract(payload: {
+  ticker: string;
+  underlyingPrice: number | null;
+  sentiment: 'bullish' | 'bearish' | 'neutral';
+  marketRegime?: 'trending' | 'choppy' | 'volatile';
+  candidates: ContractSelectionCandidate[];
+}): Promise<ContractSelectionResult> {
+  const { data } = await http.post<ContractSelectionResult>('/api/analysis/contract-select', payload);
+  return data;
+}
+
 export type ChecklistFactor = {
   key: string;
   label: string;

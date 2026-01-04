@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { OptionContractDetail, OptionLeg } from '../../types/market';
-import type { DeskInsight } from '../../api/analysis';
+import type { ContractSelectionResult, DeskInsight } from '../../api/analysis';
 import { PieChart, Pie, Cell } from 'recharts';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
 import { formatExpirationDate } from '../../utils/expirations';
@@ -21,6 +21,8 @@ type Props = {
   label?: string;
   underlyingPrice?: number | null;
   insight?: DeskInsight | null;
+  selection?: ContractSelectionResult | null;
+  selectionLoading?: boolean;
 };
 
 type RiskSlice = {
@@ -41,7 +43,15 @@ const EMPTY_GREEKS: Record<GreekKey, number | null> = {
   rho: null,
 };
 
-export function GreeksPanel({ contract, leg, label, underlyingPrice, insight }: Props) {
+export function GreeksPanel({
+  contract,
+  leg,
+  label,
+  underlyingPrice,
+  insight,
+  selection,
+  selectionLoading
+}: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
   const resolvedStrike = typeof contract?.strike === 'number' ? contract.strike : leg?.strike ?? null;
@@ -167,6 +177,8 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice, insight }: 
   ]
     .filter(Boolean)
     .slice(0, 4);
+  const selectionReasons = selection?.reasons?.filter(Boolean) ?? [];
+  const selectionWarnings = selection?.warnings?.filter(Boolean) ?? [];
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
@@ -231,6 +243,15 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice, insight }: 
         <p className="text-sm text-gray-300">
           {biasMismatch ? 'Bias mismatch — recheck direction or strike selection.' : 'Bias and contract are aligned.'}
         </p>
+        {selectionLoading && (
+          <p className="text-xs text-gray-500">Selecting the best contract based on liquidity + delta…</p>
+        )}
+        {selection?.selectedContract && (
+          <p className="text-xs text-gray-400">
+            Selected: <span className="text-gray-200">{selection.selectedContract}</span>
+            {selection.confidence != null ? ` · ${Math.round(selection.confidence * 100)}%` : ''}
+          </p>
+        )}
         {focusHighlights.length > 0 ? (
           <ul className="space-y-1 text-xs text-gray-400">
             {focusHighlights.map(item => (
@@ -242,6 +263,32 @@ export function GreeksPanel({ contract, leg, label, underlyingPrice, insight }: 
           </ul>
         ) : (
           <p className="text-xs text-gray-500">Select a contract to generate AI selection notes.</p>
+        )}
+        {selectionReasons.length > 0 && (
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Why this contract</p>
+            <ul className="mt-1 space-y-1 text-xs text-gray-400">
+              {selectionReasons.slice(0, 4).map(reason => (
+                <li key={reason} className="flex items-start gap-2">
+                  <span className="text-emerald-300">•</span>
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {selectionWarnings.length > 0 && (
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Risk notes</p>
+            <ul className="mt-1 space-y-1 text-xs text-amber-200">
+              {selectionWarnings.slice(0, 2).map(warning => (
+                <li key={warning} className="flex items-start gap-2">
+                  <span className="text-amber-200">!</span>
+                  <span>{warning}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
 

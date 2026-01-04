@@ -10,6 +10,7 @@ import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { analysisApi, chatApi, marketApi } from './api';
+import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
@@ -24,7 +25,7 @@ import type {
   TradePrint,
   WatchlistSnapshot,
 } from './types/market';
-import type { ChecklistResult, DeskInsight, WatchlistReport } from './api/analysis';
+import type { ChecklistResult, DeskInsight, WatchlistReport, ContractSelectionResult } from './api/analysis';
 import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
@@ -98,6 +99,7 @@ function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBu
 
 type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
+type PreferredSide = 'call' | 'put' | null;
 // Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
 
@@ -220,6 +222,9 @@ function App() {
   const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
+  const [contractSelection, setContractSelection] = useState<ContractSelectionResult | null>(null);
+  const [contractSelectionLoading, setContractSelectionLoading] = useState(false);
+  const contractSelectionKeyRef = useRef<string | null>(null);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
@@ -1273,6 +1278,9 @@ function App() {
     (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
       selectionSourceRef.current = source;
       setSelectedLeg(leg);
+      if (source === 'user') {
+        setContractSelection(null);
+      }
       if (leg?.ticker) {
         setDesiredContract(leg.ticker.toUpperCase());
         if (leg.expiration) {
@@ -1334,15 +1342,78 @@ function App() {
       preferredOptionSide && selectedType ? preferredOptionSide !== selectedType : false;
     if (selectedLeg && selectionSourceRef.current === 'user') return;
     if (selectedLeg && !biasMismatch) return;
-    const candidate = findPreferredLeg(
+
+    const candidates = buildContractCandidates(
       chainExpirations,
       selectedExpiration,
       resolvedUnderlyingPrice,
       preferredOptionSide
     );
-    if (candidate && candidate.ticker !== selectedLeg?.ticker) {
-      handleContractSelection(candidate, 'auto');
+    const filtered = applyContractConstraints(candidates);
+    if (!filtered.length) {
+      const fallback = findPreferredLeg(
+        chainExpirations,
+        selectedExpiration,
+        resolvedUnderlyingPrice,
+        preferredOptionSide
+      );
+      if (fallback && fallback.ticker !== selectedLeg?.ticker) {
+        setContractSelection({
+          selectedContract: fallback.ticker,
+          side: preferredOptionSide,
+          confidence: null,
+          reasons: ['No candidates met liquidity/delta constraints.'],
+          warnings: ['Fallback selection used.'],
+          source: 'fallback'
+        });
+        handleContractSelection(fallback, 'auto');
+      }
+      return;
     }
+
+    const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}-${filtered.length}`;
+    if (contractSelectionKeyRef.current === selectionKey) return;
+    contractSelectionKeyRef.current = selectionKey;
+    setContractSelectionLoading(true);
+    analysisApi
+      .selectContract({
+        ticker: deskInsightSymbol,
+        underlyingPrice: resolvedUnderlyingPrice ?? null,
+        sentiment: (deskInsight?.sentiment?.label?.toLowerCase() as 'bullish' | 'bearish' | 'neutral') ?? 'neutral',
+        candidates: filtered
+      })
+      .then(selection => {
+        setContractSelection(selection);
+        const selectedSymbol = selection.selectedContract?.toUpperCase();
+        if (!selectedSymbol) return;
+        const match = findLegByTicker(chainExpirations, selectedSymbol);
+        if (match && match.ticker !== selectedLeg?.ticker) {
+          handleContractSelection(match, 'auto');
+        }
+      })
+      .catch(error => {
+        console.warn('AI contract selection failed', error);
+        setContractSelection({
+          selectedContract: null,
+          side: preferredOptionSide,
+          confidence: null,
+          reasons: ['AI selection failed.'],
+          warnings: ['Using fallback selection.'],
+          source: 'fallback'
+        });
+        const fallback = findPreferredLeg(
+          chainExpirations,
+          selectedExpiration,
+          resolvedUnderlyingPrice,
+          preferredOptionSide
+        );
+        if (fallback && fallback.ticker !== selectedLeg?.ticker) {
+          handleContractSelection(fallback, 'auto');
+        }
+      })
+      .finally(() => {
+        setContractSelectionLoading(false);
+      });
   }, [
     timeframe,
     selectedLeg,
@@ -1350,7 +1421,9 @@ function App() {
     selectedExpiration,
     preferredOptionSide,
     resolvedUnderlyingPrice,
-    handleContractSelection
+    handleContractSelection,
+    deskInsightSymbol,
+    deskInsight?.sentiment?.label
   ]);
 
   const deskSummary = deskInsight?.summary || latestInsight;
@@ -1555,6 +1628,8 @@ function App() {
           label={displayTicker}
           underlyingPrice={greeksUnderlyingPrice}
           insight={deskInsight}
+          selection={contractSelection}
+          selectionLoading={contractSelectionLoading}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
@@ -1808,18 +1883,103 @@ function findPreferredLeg(
   return null;
 }
 
-function findFirstAvailableLeg(groups: OptionChainExpirationGroup[], preferredExpiration?: string | null): OptionLeg | null {
-  if (!groups.length) return null;
-  const ordered = preferredExpiration
-    ? [...groups.filter(group => group.expiration === preferredExpiration), ...groups.filter(group => group.expiration !== preferredExpiration)]
-    : groups;
-  for (const group of ordered) {
-    for (const row of group.strikes) {
-      if (row.call) return row.call;
-      if (row.put) return row.put;
+function buildContractCandidates(
+  groups: OptionChainExpirationGroup[],
+  preferredExpiration: string | null,
+  underlyingPrice: number | null,
+  preferredSide: PreferredSide
+) {
+  if (!groups.length) return [];
+  const activeGroup =
+    preferredExpiration != null
+      ? groups.find(group => group.expiration === preferredExpiration) ?? groups[0]
+      : groups[0];
+  if (!activeGroup) return [];
+  const strikes = activeGroup.strikes
+    .map(row => ({
+      strike: row.strike ?? row.call?.strike ?? row.put?.strike ?? null,
+      call: row.call ?? null,
+      put: row.put ?? null
+    }))
+    .filter(entry => entry.strike != null)
+    .sort((a, b) => {
+      if (underlyingPrice == null) return 0;
+      return Math.abs((a.strike ?? 0) - underlyingPrice) - Math.abs((b.strike ?? 0) - underlyingPrice);
+    })
+    .slice(0, 10);
+
+  const candidates: Array<{
+    symbol: string;
+    type: 'call' | 'put';
+    strike: number;
+    expiration: string;
+    delta: number | null;
+    bid: number | null;
+    ask: number | null;
+    spread: number | null;
+    openInterest: number | null;
+    volume: number | null;
+    iv: number | null;
+    dte: number | null;
+  }> = [];
+
+  strikes.forEach(entry => {
+    if (entry.call && (!preferredSide || preferredSide === 'call')) {
+      const spread =
+        typeof entry.call.bid === 'number' && typeof entry.call.ask === 'number'
+          ? entry.call.ask - entry.call.bid
+          : null;
+      candidates.push({
+        symbol: entry.call.ticker,
+        type: 'call',
+        strike: entry.call.strike ?? entry.strike ?? 0,
+        expiration: entry.call.expiration,
+        delta: typeof entry.call.delta === 'number' ? entry.call.delta : null,
+        bid: typeof entry.call.bid === 'number' ? entry.call.bid : null,
+        ask: typeof entry.call.ask === 'number' ? entry.call.ask : null,
+        spread,
+        openInterest: typeof entry.call.openInterest === 'number' ? entry.call.openInterest : null,
+        volume: typeof entry.call.volume === 'number' ? entry.call.volume : null,
+        iv: typeof entry.call.iv === 'number' ? entry.call.iv : null,
+        dte: computeExpirationDte(entry.call.expiration)
+      });
     }
-  }
-  return null;
+    if (entry.put && (!preferredSide || preferredSide === 'put')) {
+      const spread =
+        typeof entry.put.bid === 'number' && typeof entry.put.ask === 'number'
+          ? entry.put.ask - entry.put.bid
+          : null;
+      candidates.push({
+        symbol: entry.put.ticker,
+        type: 'put',
+        strike: entry.put.strike ?? entry.strike ?? 0,
+        expiration: entry.put.expiration,
+        delta: typeof entry.put.delta === 'number' ? entry.put.delta : null,
+        bid: typeof entry.put.bid === 'number' ? entry.put.bid : null,
+        ask: typeof entry.put.ask === 'number' ? entry.put.ask : null,
+        spread,
+        openInterest: typeof entry.put.openInterest === 'number' ? entry.put.openInterest : null,
+        volume: typeof entry.put.volume === 'number' ? entry.put.volume : null,
+        iv: typeof entry.put.iv === 'number' ? entry.put.iv : null,
+        dte: computeExpirationDte(entry.put.expiration)
+      });
+    }
+  });
+
+  return candidates;
+}
+
+function applyContractConstraints(candidates: ReturnType<typeof buildContractCandidates>) {
+  return candidates.filter(candidate => {
+    if (candidate.spread != null && candidate.spread > 0.5) return false;
+    if (candidate.openInterest != null && candidate.openInterest < 250) return false;
+    if (candidate.delta != null) {
+      const absDelta = Math.abs(candidate.delta);
+      if (absDelta < 0.4 || absDelta > 0.7) return false;
+    }
+    if (candidate.dte != null && (candidate.dte < 7 || candidate.dte > 45)) return false;
+    return true;
+  });
 }
 
 function buildNearMoneySymbols(
