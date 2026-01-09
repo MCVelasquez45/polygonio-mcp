@@ -46,6 +46,7 @@ const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
 const LIVE_CHAIN_STRIKE_ROWS = 3;
+const DESK_INSIGHT_DEBOUNCE_MS = 500;
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -100,6 +101,7 @@ function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBu
 type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
+type LiveTradePrint = TradePrint & { ticker: string };
 // Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
 
@@ -184,6 +186,9 @@ function App() {
   const [deskInsight, setDeskInsight] = useState<DeskInsight | null>(null);
   const [deskInsightLoading, setDeskInsightLoading] = useState(false);
   const deskInsightCacheRef = useRef<Map<string, DeskInsight>>(new Map());
+  const [deskInsightRefreshId, setDeskInsightRefreshId] = useState(0);
+  const deskInsightRefreshRef = useRef(0);
+  const deskInsightDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
@@ -213,6 +218,11 @@ function App() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const [checklistHighlights, setChecklistHighlights] = useState<Record<string, ChecklistResult>>({});
   const [checklistLoading, setChecklistLoading] = useState(false);
+  const [scannerRefreshId, setScannerRefreshId] = useState(0);
+  const scannerRequestIdRef = useRef(0);
+  const checklistRequestIdRef = useRef(0);
+  const lastScannerRefreshRef = useRef(0);
+  const lastChecklistRefreshRef = useRef(0);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
   const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
@@ -224,7 +234,9 @@ function App() {
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
   const [contractSelection, setContractSelection] = useState<ContractSelectionResult | null>(null);
   const [contractSelectionLoading, setContractSelectionLoading] = useState(false);
-  const contractSelectionKeyRef = useRef<string | null>(null);
+  const [contractSelectionRequestId, setContractSelectionRequestId] = useState(0);
+  const contractSelectionRequestRef = useRef(0);
+  const lastContractSelectionRequestRef = useRef(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
@@ -237,6 +249,18 @@ function App() {
   // Track watchlist changes pushed from sidebar/watchlist component.
   const handleWatchlistChange = useCallback((symbols: string[]) => {
     setWatchlistSymbols(symbols);
+  }, []);
+
+  const handleDeskInsightRefresh = useCallback(() => {
+    setDeskInsightRefreshId(prev => prev + 1);
+  }, []);
+
+  const handleScannerRefresh = useCallback(() => {
+    setScannerRefreshId(prev => prev + 1);
+  }, []);
+
+  const handleContractSelectionRequest = useCallback(() => {
+    setContractSelectionRequestId(prev => prev + 1);
   }, []);
 
   const watchlistSignature = watchlistSymbols.join(',');
@@ -355,6 +379,7 @@ function App() {
     const handleTrade = (payload: any) => {
       const normalized = normalizeLiveTrade(payload);
       if (!normalized) return;
+      if (!normalized.ticker) return;
       setLiveChainTrades(prev => ({ ...prev, [normalized.ticker]: normalized }));
       if (activeSymbol && normalized.ticker === activeSymbol) {
         setTrades(prev => {
@@ -379,83 +404,121 @@ function App() {
     };
   }, [activeContractSymbol, liveSocketConnected]);
 
-  // Poll trades + quote snapshots for the currently selected option contract.
+  // Reset scanner data when the watchlist changes; run scans on demand.
   useEffect(() => {
     if (!watchlistSignature) {
       setScannerReports([]);
-      setScannerLoading(false);
       setChecklistHighlights({});
+      setScannerLoading(false);
+      setChecklistLoading(false);
       return;
     }
-    let cancelled = false;
-    setScannerLoading(true);
-    analysisApi
-      .getWatchlistReports(watchlistSymbols)
-      .then(response => {
-        if (cancelled) return;
-        setScannerReports(response.reports ?? []);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        console.warn('Failed to load watchlist reports', error);
-        setScannerReports([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setScannerLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [watchlistSignature, watchlistSymbols]);
+    setScannerReports([]);
+    setChecklistHighlights({});
+  }, [watchlistSignature]);
 
   // Load the AI desk insight for the active ticker.
   useEffect(() => {
     if (!deskInsightSymbol) {
       setDeskInsight(null);
+      setDeskInsightLoading(false);
       return;
     }
     const cached = deskInsightCacheRef.current.get(deskInsightSymbol);
     if (cached) {
       setDeskInsight(cached);
     }
+    const refreshRequested = deskInsightRefreshRef.current !== deskInsightRefreshId;
+    if (refreshRequested) {
+      deskInsightRefreshRef.current = deskInsightRefreshId;
+    }
+    const shouldFetch = !cached || refreshRequested;
+    if (!shouldFetch) {
+      setDeskInsightLoading(false);
+      return;
+    }
+    if (deskInsightDebounceRef.current) {
+      clearTimeout(deskInsightDebounceRef.current);
+    }
     let cancelled = false;
-    setDeskInsightLoading(!cached);
+    setDeskInsightLoading(true);
+    deskInsightDebounceRef.current = setTimeout(() => {
+      analysisApi
+        .getDeskInsight(deskInsightSymbol)
+        .then(response => {
+          if (cancelled) return;
+          deskInsightCacheRef.current.set(deskInsightSymbol, response);
+          setDeskInsight(response);
+        })
+        .catch(error => {
+          if (cancelled) return;
+          console.warn('Failed to load AI desk insight', error);
+          setDeskInsight(null);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setDeskInsightLoading(false);
+          }
+        });
+    }, DESK_INSIGHT_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      if (deskInsightDebounceRef.current) {
+        clearTimeout(deskInsightDebounceRef.current);
+      }
+    };
+  }, [deskInsightSymbol, deskInsightRefreshId]);
+
+  useEffect(() => {
+    if (!scannerRefreshId) return;
+    if (lastScannerRefreshRef.current === scannerRefreshId) return;
+    lastScannerRefreshRef.current = scannerRefreshId;
+    if (!watchlistSignature) {
+      setScannerReports([]);
+      setScannerLoading(false);
+      return;
+    }
+    const requestId = ++scannerRequestIdRef.current;
+    let cancelled = false;
+    setScannerLoading(true);
     analysisApi
-      .getDeskInsight(deskInsightSymbol)
+      .getWatchlistReports(watchlistSymbols)
       .then(response => {
-        if (cancelled) return;
-        deskInsightCacheRef.current.set(deskInsightSymbol, response);
-        setDeskInsight(response);
+        if (cancelled || requestId !== scannerRequestIdRef.current) return;
+        setScannerReports(response.reports ?? []);
       })
       .catch(error => {
-        if (cancelled) return;
-        console.warn('Failed to load AI desk insight', error);
-        setDeskInsight(null);
+        if (cancelled || requestId !== scannerRequestIdRef.current) return;
+        console.warn('Failed to load watchlist reports', error);
+        setScannerReports([]);
       })
       .finally(() => {
-        if (!cancelled) {
-          setDeskInsightLoading(false);
+        if (!cancelled && requestId === scannerRequestIdRef.current) {
+          setScannerLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [deskInsightSymbol]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols]);
 
-  // Run the entry checklist for the current watchlist to highlight notable setups.
+  // Run the entry checklist scan for the current watchlist on demand.
   useEffect(() => {
+    if (!scannerRefreshId) return;
+    if (lastChecklistRefreshRef.current === scannerRefreshId) return;
+    lastChecklistRefreshRef.current = scannerRefreshId;
     if (!watchlistSignature) {
       setChecklistHighlights({});
+      setChecklistLoading(false);
       return;
     }
+    const requestId = ++checklistRequestIdRef.current;
     let cancelled = false;
     setChecklistLoading(true);
     analysisApi
       .runChecklist(watchlistSymbols)
       .then(response => {
-        if (cancelled) return;
+        if (cancelled || requestId !== checklistRequestIdRef.current) return;
         const nextMap: Record<string, ChecklistResult> = {};
         (response.results ?? []).forEach(result => {
           if (!result?.symbol) return;
@@ -464,19 +527,19 @@ function App() {
         setChecklistHighlights(nextMap);
       })
       .catch(error => {
-        if (cancelled) return;
+        if (cancelled || requestId !== checklistRequestIdRef.current) return;
         console.warn('Failed to load checklist highlights', error);
         setChecklistHighlights({});
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && requestId === checklistRequestIdRef.current) {
           setChecklistLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [watchlistSignature, watchlistSymbols]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols]);
 
 
   // Lazily fetch conversation transcripts when the user re-opens a chat session.
@@ -1350,6 +1413,51 @@ function App() {
       preferredOptionSide
     );
     const filtered = applyContractConstraints(candidates);
+    const fallback = findPreferredLeg(
+      chainExpirations,
+      selectedExpiration,
+      resolvedUnderlyingPrice,
+      preferredOptionSide
+    );
+    if (!fallback) return;
+    if (fallback.ticker !== selectedLeg?.ticker) {
+      const warnings = filtered.length
+        ? ['Baseline selection applied. Use AI selection for a refined pick.']
+        : ['No candidates met liquidity/delta constraints. Baseline selection used.'];
+      setContractSelection({
+        selectedContract: fallback.ticker,
+        side: preferredOptionSide,
+        confidence: null,
+        reasons: ['Deterministic selection (AI not invoked).'],
+        warnings,
+        source: 'fallback'
+      });
+      handleContractSelection(fallback, 'auto');
+    }
+  }, [
+    selectedLeg,
+    chainExpirations,
+    selectedExpiration,
+    preferredOptionSide,
+    resolvedUnderlyingPrice,
+    handleContractSelection,
+    deskInsightSymbol,
+    deskInsight?.sentiment?.label
+  ]);
+
+  useEffect(() => {
+    if (!contractSelectionRequestId) return;
+    if (lastContractSelectionRequestRef.current === contractSelectionRequestId) return;
+    lastContractSelectionRequestRef.current = contractSelectionRequestId;
+    if (!chainExpirations.length || !preferredOptionSide) return;
+
+    const candidates = buildContractCandidates(
+      chainExpirations,
+      selectedExpiration,
+      resolvedUnderlyingPrice,
+      preferredOptionSide
+    );
+    const filtered = applyContractConstraints(candidates);
     if (!filtered.length) {
       const fallback = findPreferredLeg(
         chainExpirations,
@@ -1357,23 +1465,21 @@ function App() {
         resolvedUnderlyingPrice,
         preferredOptionSide
       );
+      setContractSelection({
+        selectedContract: fallback?.ticker ?? null,
+        side: preferredOptionSide,
+        confidence: null,
+        reasons: ['No candidates met liquidity/delta constraints.'],
+        warnings: ['Using baseline selection instead of AI.'],
+        source: 'fallback'
+      });
       if (fallback && fallback.ticker !== selectedLeg?.ticker) {
-        setContractSelection({
-          selectedContract: fallback.ticker,
-          side: preferredOptionSide,
-          confidence: null,
-          reasons: ['No candidates met liquidity/delta constraints.'],
-          warnings: ['Fallback selection used.'],
-          source: 'fallback'
-        });
         handleContractSelection(fallback, 'auto');
       }
       return;
     }
 
-    const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}-${filtered.length}`;
-    if (contractSelectionKeyRef.current === selectionKey) return;
-    contractSelectionKeyRef.current = selectionKey;
+    const requestId = ++contractSelectionRequestRef.current;
     setContractSelectionLoading(true);
     analysisApi
       .selectContract({
@@ -1383,6 +1489,7 @@ function App() {
         candidates: filtered
       })
       .then(selection => {
+        if (requestId !== contractSelectionRequestRef.current) return;
         setContractSelection(selection);
         const selectedSymbol = selection.selectedContract?.toUpperCase();
         if (!selectedSymbol) return;
@@ -1392,6 +1499,7 @@ function App() {
         }
       })
       .catch(error => {
+        if (requestId !== contractSelectionRequestRef.current) return;
         console.warn('AI contract selection failed', error);
         setContractSelection({
           selectedContract: null,
@@ -1412,18 +1520,20 @@ function App() {
         }
       })
       .finally(() => {
-        setContractSelectionLoading(false);
+        if (requestId === contractSelectionRequestRef.current) {
+          setContractSelectionLoading(false);
+        }
       });
   }, [
-    timeframe,
-    selectedLeg,
+    contractSelectionRequestId,
     chainExpirations,
     selectedExpiration,
-    preferredOptionSide,
     resolvedUnderlyingPrice,
-    handleContractSelection,
+    preferredOptionSide,
     deskInsightSymbol,
-    deskInsight?.sentiment?.label
+    deskInsight?.sentiment?.label,
+    handleContractSelection,
+    selectedLeg
   ]);
 
   const deskSummary = deskInsight?.summary || latestInsight;
@@ -1575,13 +1685,23 @@ function App() {
               <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Latest Insight</p>
               <p className="text-sm text-gray-400">AI desk notes for {deskInsightSymbol}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsChatOpen(true)}
-              className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10"
-            >
-              Ask AI
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDeskInsightRefresh}
+                disabled={deskInsightLoading}
+                className="px-3 py-1 rounded-full border border-gray-800 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsChatOpen(true)}
+                className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10"
+              >
+                Ask AI
+              </button>
+            </div>
           </div>
           {deskInsightLoading ? (
             <div className="space-y-2 animate-pulse">
@@ -1630,6 +1750,7 @@ function App() {
           insight={deskInsight}
           selection={contractSelection}
           selectionLoading={contractSelectionLoading}
+          onRequestSelection={handleContractSelectionRequest}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
@@ -1726,6 +1847,8 @@ function App() {
                   isLoading={scannerLoading}
                   highlights={checklistHighlights}
                   highlightLoading={checklistLoading}
+                  onRunScan={handleScannerRefresh}
+                  runDisabled={!watchlistSymbols.length}
                   onTickerSelect={value => {
                     setTicker(value);
                     setView('trading');
@@ -2071,18 +2194,18 @@ function buildAiContext({
   };
 }
 
-function summarizeIndicators(indicators?: IndicatorBundle): { name: string; latest?: number | null; trend?: string | null }[] | null {
+function summarizeIndicators(
+  indicators?: IndicatorBundle
+): { name: string; latest: number | null; trend: string | null }[] | null {
   if (!indicators) return null;
   const entries = Object.entries(indicators).filter(([key]) => key !== 'ticker');
-  const summary = entries
-    .map(([key, value]) => {
-      if (!value || typeof value !== 'object') return null;
-      const latest = typeof value.latest === 'number' ? value.latest : null;
-      const trend = typeof value.trend === 'string' ? value.trend : null;
-      if (latest == null && trend == null) return null;
-      return { name: key.toUpperCase(), latest, trend };
-    })
-    .filter((entry): entry is { name: string; latest?: number | null; trend?: string | null } => Boolean(entry));
+  const summary = entries.flatMap(([key, value]) => {
+    if (!value || typeof value !== 'object') return [];
+    const latest = typeof value.latest === 'number' ? value.latest : null;
+    const trend = typeof value.trend === 'string' ? value.trend : null;
+    if (latest == null && trend == null) return [];
+    return [{ name: key.toUpperCase(), latest, trend }];
+  });
   return summary.length ? summary : null;
 }
 
@@ -2254,7 +2377,7 @@ function normalizeLiveQuote(event: any): QuoteSnapshot | null {
   };
 }
 
-function normalizeLiveTrade(event: any): TradePrint | null {
+function normalizeLiveTrade(event: any): LiveTradePrint | null {
   if (!event) return null;
   const ticker = normalizeLiveSymbol(event);
   if (!ticker) return null;
@@ -2268,6 +2391,7 @@ function normalizeLiveTrade(event: any): TradePrint | null {
 
   return {
     id: String(idSource),
+    ticker,
     price,
     size,
     timestamp,

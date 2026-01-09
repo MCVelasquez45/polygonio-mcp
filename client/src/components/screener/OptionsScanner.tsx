@@ -1,42 +1,14 @@
 import type { ChecklistResult, WatchlistReport } from '../../api/analysis';
 import { formatExpirationDate } from '../../utils/expirations';
 
-const FALLBACK_ROWS: WatchlistReport[] = [
-  {
-    symbol: 'NVDA',
-    contract: 'O:NVDA250307C00500000',
-    expiry: '2025-03-07',
-    ivRank: 72,
-    flow: '+$18.5M',
-    summary: 'Call sweeps stacked at 500 strike; momentum desk watching for breakout.',
-    sentiment: 'bullish'
-  },
-  {
-    symbol: 'TSLA',
-    contract: 'O:TSLA250314P00200000',
-    expiry: '2025-03-14',
-    ivRank: 54,
-    flow: '-$7.3M',
-    summary: 'Put protection rolling higher as implied vol cools.',
-    sentiment: 'bearish'
-  },
-  {
-    symbol: 'SPY',
-    contract: 'O:SPY250221C00525000',
-    expiry: '2025-02-21',
-    ivRank: 33,
-    flow: '+$24.9M',
-    summary: 'Gamma flip expected above 525 — dealers likely to chase delta.',
-    sentiment: 'neutral'
-  }
-];
-
 type Props = {
   reports?: WatchlistReport[];
   isLoading?: boolean;
   onTickerSelect?: (ticker: string) => void;
   highlights?: Record<string, ChecklistResult>;
   highlightLoading?: boolean;
+  onRunScan?: () => void;
+  runDisabled?: boolean;
 };
 
 function formatSentimentLabel(sentiment?: string | null) {
@@ -51,20 +23,48 @@ function formatSentimentLabel(sentiment?: string | null) {
   return { label: sentiment, color: 'text-gray-300', ring: 'border-gray-800' };
 }
 
-export function OptionsScanner({ reports, isLoading, onTickerSelect, highlights, highlightLoading }: Props) {
-  const rows = reports && reports.length ? reports : FALLBACK_ROWS;
+export function OptionsScanner({
+  reports,
+  isLoading,
+  onTickerSelect,
+  highlights,
+  highlightLoading,
+  onRunScan,
+  runDisabled
+}: Props) {
+  const hasReports = Boolean(reports?.length);
+  const rows = hasReports ? reports ?? [] : [];
+  const showEmptyState = !isLoading && !hasReports;
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
-      <div className="flex flex-col gap-2">
-        <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Options Scanner</p>
-        <h2 className="text-2xl font-semibold">Live flows + vol regimes</h2>
-        <p className="text-sm text-gray-400">Signals update as Massive publishes new contract trades. Click a ticker to load it on the desk.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Options Scanner</p>
+          <h2 className="text-2xl font-semibold">Live flows + vol regimes</h2>
+          <p className="text-sm text-gray-400">
+            Signals update as Massive publishes new contract trades. Click a ticker to load it on the desk.
+          </p>
+        </div>
+        {onRunScan && (
+          <button
+            type="button"
+            onClick={onRunScan}
+            disabled={runDisabled || isLoading || highlightLoading}
+            className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+          >
+            Run AI scan
+          </button>
+        )}
       </div>
 
       {isLoading ? (
         <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
           Fetching AI reports…
+        </div>
+      ) : showEmptyState ? (
+        <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
+          Run a scan to generate watchlist highlights.
         </div>
       ) : (
         <div className="space-y-3">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analysisApi, marketApi } from '../../api';
 import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
 import type { DeskInsight } from '../../api/analysis';
@@ -29,6 +29,8 @@ type OrderView = {
   filledAt?: string | null;
   expiresAt?: string | null;
 };
+
+const INSIGHT_TTL_MS = 60 * 60 * 1000;
 
 function toNumber(value: string | number | null | undefined, fallback = 0) {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -159,6 +161,9 @@ export function PortfolioPanel() {
   const [nextOpen, setNextOpen] = useState<string | null>(null);
   const [positionInsights, setPositionInsights] = useState<Record<string, DeskInsight>>({});
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const positionInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
+  const [insightsRefreshId, setInsightsRefreshId] = useState(0);
+  const lastInsightsRefreshRef = useRef(0);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
@@ -224,6 +229,11 @@ export function PortfolioPanel() {
     }
   }, []);
 
+  const handleRefreshInsights = useCallback(() => {
+    positionInsightCacheRef.current.clear();
+    setInsightsRefreshId(prev => prev + 1);
+  }, []);
+
   useEffect(() => {
     void loadPortfolio();
   }, [loadPortfolio]);
@@ -234,12 +244,33 @@ export function PortfolioPanel() {
     );
     if (!symbols.length) {
       setPositionInsights({});
+      setInsightsLoading(false);
+      return;
+    }
+    const refreshRequested = lastInsightsRefreshRef.current !== insightsRefreshId;
+    if (refreshRequested) {
+      lastInsightsRefreshRef.current = insightsRefreshId;
+    }
+    const now = Date.now();
+    const cached: Record<string, DeskInsight> = {};
+    const toFetch: string[] = [];
+    symbols.forEach(symbol => {
+      const entry = positionInsightCacheRef.current.get(symbol);
+      if (!refreshRequested && entry && now - entry.fetchedAt < INSIGHT_TTL_MS) {
+        cached[symbol] = entry.insight;
+      } else {
+        toFetch.push(symbol);
+      }
+    });
+    setPositionInsights(cached);
+    if (!toFetch.length) {
+      setInsightsLoading(false);
       return;
     }
     let cancelled = false;
     setInsightsLoading(true);
     Promise.all(
-      symbols.map(async symbol => {
+      toFetch.map(async symbol => {
         try {
           const insight = await analysisApi.getDeskInsight(symbol);
           return [symbol, insight] as const;
@@ -250,11 +281,13 @@ export function PortfolioPanel() {
     )
       .then(entries => {
         if (cancelled) return;
+        const fetchedAt = Date.now();
         setPositionInsights(prev => {
           const next = { ...prev };
           entries.forEach(entry => {
             if (!entry) return;
             const [symbol, insight] = entry;
+            positionInsightCacheRef.current.set(symbol, { insight, fetchedAt });
             next[symbol] = insight;
           });
           return next;
@@ -266,7 +299,7 @@ export function PortfolioPanel() {
     return () => {
       cancelled = true;
     };
-  }, [positions]);
+  }, [positions, insightsRefreshId]);
 
   useEffect(() => {
     const symbols = Array.from(
@@ -352,14 +385,24 @@ export function PortfolioPanel() {
             <p className="text-sm text-gray-400">Live view of Alpaca paper positions & buying power.</p>
           </div>
           <div className="text-right">
-            <button
-              type="button"
-              onClick={() => loadPortfolio()}
-              className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:bg-gray-900"
-              disabled={loading || ordersLoading}
-            >
-              Refresh
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => loadPortfolio()}
+                className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:bg-gray-900"
+                disabled={loading || ordersLoading}
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={handleRefreshInsights}
+                className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+                disabled={insightsLoading}
+              >
+                Refresh sentiment
+              </button>
+            </div>
             {lastUpdated && <p className="text-[11px] text-gray-500 mt-1">Last refresh {lastUpdated}</p>}
           </div>
         </div>

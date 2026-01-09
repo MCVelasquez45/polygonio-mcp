@@ -24,6 +24,7 @@ type Props = {
   insight?: DeskInsight | null;
   selection?: ContractSelectionResult | null;
   selectionLoading?: boolean;
+  onRequestSelection?: () => void;
 };
 
 type RiskSlice = {
@@ -51,7 +52,8 @@ export function GreeksPanel({
   underlyingPrice,
   insight,
   selection,
-  selectionLoading
+  selectionLoading,
+  onRequestSelection
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
@@ -259,17 +261,29 @@ export function GreeksPanel({
           <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Greeks + Risk</p>
           <p className="text-lg font-semibold text-gray-100">{displayName}</p>
         </div>
-        {(contract?.type ?? leg?.type) && (
-          <span
-            className={`px-3 py-1 text-xs rounded-full border ${
-              (contract?.type ?? leg?.type) === 'call'
-                ? 'border-emerald-500/40 text-emerald-300'
-                : 'border-red-500/40 text-red-300'
-            }`}
-          >
-            {(contract?.type ?? leg?.type)?.toUpperCase()}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {onRequestSelection && (
+            <button
+              type="button"
+              onClick={onRequestSelection}
+              disabled={selectionLoading}
+              className="px-3 py-1 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+            >
+              AI Select
+            </button>
+          )}
+          {(contract?.type ?? leg?.type) && (
+            <span
+              className={`px-3 py-1 text-xs rounded-full border ${
+                (contract?.type ?? leg?.type) === 'call'
+                  ? 'border-emerald-500/40 text-emerald-300'
+                  : 'border-red-500/40 text-red-300'
+              }`}
+            >
+              {(contract?.type ?? leg?.type)?.toUpperCase()}
+            </span>
+          )}
+        </div>
       </header>
 
       <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">

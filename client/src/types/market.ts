@@ -27,6 +27,7 @@ export type IndicatorBundle = {
 
 export type TradePrint = {
   id: string;
+  ticker?: string;
   price: number;
   size: number;
   timestamp: number;
