@@ -50,6 +50,7 @@ const DESK_INSIGHT_DEBOUNCE_MS = 500;
 const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
 const DESK_INSIGHT_THROTTLE_MS = 30_000;
 const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
+const CHART_ANALYSIS_MINUTE_WINDOW = 1_200;
 const AI_FEATURES_ENABLED_KEY = 'market-copilot.aiEnabled';
 const AI_DESK_INSIGHTS_ENABLED_KEY = 'market-copilot.aiDeskInsightsEnabled';
 const AI_CONTRACT_SELECTION_ENABLED_KEY = 'market-copilot.aiContractSelectionEnabled';
@@ -166,24 +167,26 @@ function getNyParts(timestamp: number) {
 
 function computeOpeningRange(bars: AggregateBar[]) {
   if (!bars.length) return null;
-  const lastParts = getNyParts(bars[bars.length - 1].timestamp);
-  if (!lastParts) return null;
-  const sessionKey = lastParts.dateKey;
-  let high = -Infinity;
-  let low = Infinity;
-  let found = false;
+  const ranges = new Map<string, { high: number; low: number }>();
   for (const bar of bars) {
     const parts = getNyParts(bar.timestamp);
-    if (!parts || parts.dateKey !== sessionKey) continue;
+    if (!parts) continue;
     const minuteOfDay = parts.hour * 60 + parts.minute;
-    if (minuteOfDay >= OPENING_RANGE_START_MINUTES && minuteOfDay < OPENING_RANGE_END_MINUTES) {
-      found = true;
-      if (bar.high > high) high = bar.high;
-      if (bar.low < low) low = bar.low;
+    if (minuteOfDay < OPENING_RANGE_START_MINUTES || minuteOfDay >= OPENING_RANGE_END_MINUTES) continue;
+    const existing = ranges.get(parts.dateKey);
+    if (!existing) {
+      ranges.set(parts.dateKey, { high: bar.high, low: bar.low });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
     }
   }
-  if (!found) return null;
-  return { sessionKey, high, low };
+  if (!ranges.size) return null;
+  const sessionKey = Array.from(ranges.keys()).sort().at(-1);
+  if (!sessionKey) return null;
+  const range = ranges.get(sessionKey);
+  if (!range) return null;
+  return { sessionKey, high: range.high, low: range.low };
 }
 
 type FiveMinuteBucket = {
@@ -1397,7 +1400,7 @@ function App() {
         shortInterestResult,
         shortVolumeResult
       ] = await Promise.allSettled([
-        marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'minute', window: 390 }),
+        marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'minute', window: CHART_ANALYSIS_MINUTE_WINDOW }),
         marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'hour', window: 24 }),
         marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'day', window: 60 }),
         marketApi.getShortInterest({ ticker: symbol, limit: 2, sort: 'settlement_date', order: 'desc' }),
@@ -1409,6 +1412,10 @@ function App() {
       const dayAggs = dayAggsResult.status === 'fulfilled' ? dayAggsResult.value : null;
       const shortInterest = shortInterestResult.status === 'fulfilled' ? shortInterestResult.value : null;
       const shortVolume = shortVolumeResult.status === 'fulfilled' ? shortVolumeResult.value : null;
+
+      if (minuteAggs?.resultGranularity && minuteAggs.resultGranularity !== 'intraday') {
+        throw new Error('Intraday minute bars are unavailable for this symbol right now.');
+      }
 
       const minuteBars = normalizeAggregateBars(minuteAggs?.results ?? []);
       if (!minuteBars.length) {
