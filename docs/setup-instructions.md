@@ -57,7 +57,7 @@ npm run dev
 The client dev server defaults to `http://localhost:5173` and proxies API calls to `http://localhost:4000`.
 
 ## 6. Optional Services
-- **FastAPI Brain**: start your FastAPI project and expose `/analysis/watchlist` + `/chat` equivalents. The Node server will call it automatically when `FASTAPI_BASE_URL` is defined.
+- **FastAPI Brain**: start your FastAPI project and expose `/analysis/watchlist` + `/chat` equivalents. The Node server will call it when `FASTAPI_BASE_URL` is defined and AI features are enabled in Settings.
 - **Aggregates Worker**: set `AGG_WORKER_ENABLED=true` if you want background caching. Leave it off during normal dev to avoid hitting Massive rate limits.
 
 ## 7. Testing / Linting

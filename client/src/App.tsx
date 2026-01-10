@@ -57,6 +57,7 @@ const AI_CONTRACT_ANALYSIS_ENABLED_KEY = 'market-copilot.aiContractAnalysisEnabl
 const AI_SCANNER_ENABLED_KEY = 'market-copilot.aiScannerEnabled';
 const AI_PORTFOLIO_SENTIMENT_ENABLED_KEY = 'market-copilot.aiPortfolioSentimentEnabled';
 const AI_CHAT_ENABLED_KEY = 'market-copilot.aiChatEnabled';
+const AI_CHART_ANALYSIS_ENABLED_KEY = 'market-copilot.aiChartAnalysisEnabled';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
@@ -364,6 +365,7 @@ function App() {
   const [aiScannerEnabled, setAiScannerEnabled] = useState(() => readStoredBoolean(AI_SCANNER_ENABLED_KEY, true));
   const [aiPortfolioSentimentEnabled, setAiPortfolioSentimentEnabled] = useState(() => readStoredBoolean(AI_PORTFOLIO_SENTIMENT_ENABLED_KEY, true));
   const [aiChatEnabled, setAiChatEnabled] = useState(() => readStoredBoolean(AI_CHAT_ENABLED_KEY, true));
+  const [aiChartAnalysisEnabled, setAiChartAnalysisEnabled] = useState(() => readStoredBoolean(AI_CHART_ANALYSIS_ENABLED_KEY, true));
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
@@ -371,6 +373,7 @@ function App() {
   const contractAnalysisAllowed = aiEnabled && aiContractAnalysisEnabled;
   const scannerAllowed = aiEnabled && aiScannerEnabled;
   const chatAllowed = aiEnabled && aiChatEnabled;
+  const chartAnalysisAllowed = aiEnabled && aiChartAnalysisEnabled;
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
@@ -557,6 +560,15 @@ function App() {
       // ignore persistence failures
     }
   }, [aiChatEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_CHART_ANALYSIS_ENABLED_KEY, String(aiChartAnalysisEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiChartAnalysisEnabled]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1366,6 +1378,10 @@ function App() {
   }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
 
   const handleChartAnalysisRun = useCallback(async () => {
+    if (!chartAnalysisAllowed) {
+      setChartAnalysisError('Chart analysis is disabled in Settings.');
+      return;
+    }
     if (!chartTicker) {
       setChartAnalysisError('Select a ticker to analyze.');
       return;
@@ -1514,7 +1530,7 @@ function App() {
     } finally {
       setChartAnalysisLoading(false);
     }
-  }, [chartTicker]);
+  }, [chartTicker, chartAnalysisAllowed]);
 
   useEffect(() => {
     const symbol = chartTicker;
@@ -2213,6 +2229,7 @@ function App() {
           analysisLoading={chartAnalysisLoading}
           analysisError={chartAnalysisError}
           analysisUpdatedAt={chartAnalysisUpdatedAt}
+          analysisDisabled={!chartAnalysisAllowed}
           fallbackPrice={
             underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
               ? underlyingSnapshot.price ?? null
@@ -2508,6 +2525,23 @@ function App() {
                   type="checkbox"
                   checked={aiContractAnalysisEnabled}
                   onChange={event => setAiContractAnalysisEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">5-minute chart analysis</span>
+                  <span className="block text-xs text-gray-500">Enable the opening-range analysis panel.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiChartAnalysisEnabled}
+                  onChange={event => setAiChartAnalysisEnabled(event.target.checked)}
                   disabled={!aiEnabled}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />

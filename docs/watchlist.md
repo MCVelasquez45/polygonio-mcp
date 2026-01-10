@@ -42,15 +42,16 @@ Environment variables:
   - Calls `marketApi.getWatchlistSnapshots()` whenever the watchlist changes to
     refresh prices/names.
   - Persists the list back to `localStorage` so tabs retain the user’s symbols.
-  - Emits `onWatchlistChange` so higher-level components can trigger analysis
-    (e.g., `OptionsScanner`).
+  - Emits `onWatchlistChange` so higher-level components can respond (for
+    example, enabling manual scans in `OptionsScanner` when the list updates).
 
 ## Typical Flow
 
 1. User adds/removes symbols in the sidebar. The component stores the new list
    locally and fires `onWatchlistChange`.
-2. App-level state reacts and calls `/api/analysis/watchlist`, which in turn
-   executes `getWatchlistReports()`.
+2. The Scanner view offers a manual “Run AI scan” button, which triggers
+   `/api/analysis/watchlist` and `/api/analysis/checklist` when enabled in
+   Settings.
 3. The server tries the agent first; when unavailable it builds snapshot notes.
 4. The client renders those notes (see `OptionsScanner`) and continues polling
    `/api/market/watchlist` for price updates.

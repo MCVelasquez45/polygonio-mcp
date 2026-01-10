@@ -21,7 +21,7 @@ This document summarizes how the desk should use the latest build. Share it with
 - 1-hour view uses a 24-bar lookback to show multiple sessions instead of just a single day.  
 - Backend always fetches 1m Massive bars, aggregates higher intervals locally, and caches results for 2–5 minutes.  
 - If Massive says the market is closed, we automatically fall back to the last session and show the “Frozen” badge.
-- “Run 5-min analysis” button on the chart runs an opening-range breakout read (5-minute range, volume confirmation, trend alignment, short interest/short volume context).
+- “Run 5-min analysis” button on the chart runs an opening-range breakout read (5-minute range, volume confirmation, trend alignment, short interest/short volume context). The button is disabled when chart analysis is turned off in Settings.
 
 ## 4. Selecting Contracts
 1. Pick any strike/expiration in the chain (grid updates in real time).  
@@ -43,7 +43,7 @@ This document summarizes how the desk should use the latest build. Share it with
 1. “Latest Insight” card shows the most recent AI blurb for the active ticker.  
 2. “Ask AI” opens ChatDock. Contract context, chart timeframe, and watchlist snapshot are piped into FastAPI so the assistant can answer position/risk questions.  
 3. Conversations persist locally (see `STORAGE_KEY = 'market-copilot.conversations'`).
-4. Settings → AI Request Controls lets you toggle AI features (chat, desk insights, contract selection/analysis, scanner, portfolio sentiment) and their auto modes.
+4. Settings → AI Request Controls lets you toggle AI features (master switch, chat, desk insights, contract selection/analysis, chart analysis, scanner, portfolio sentiment) and their auto modes.
 
 ## 7. Portfolio Panel (Alpaca Paper)
 - Displays buying power, equity, cash, and a card-per-position summary by calling Alpaca endpoints (`getBrokerAccount`, `getOptionPositions`).  

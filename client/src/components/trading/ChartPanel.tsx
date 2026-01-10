@@ -22,6 +22,7 @@ type Props = {
   analysisLoading?: boolean;
   analysisError?: string | null;
   analysisUpdatedAt?: number | null;
+  analysisDisabled?: boolean;
   fallbackPrice?: number | null;
   fallbackChange?: { absolute: number | null; percent: number | null };
   sessionMeta?: {
@@ -57,6 +58,7 @@ export function ChartPanel({
   analysisLoading,
   analysisError,
   analysisUpdatedAt,
+  analysisDisabled,
   fallbackPrice,
   fallbackChange,
   sessionMeta,
@@ -109,7 +111,7 @@ export function ChartPanel({
             <button
               type="button"
               onClick={onRunAnalysis}
-              disabled={analysisLoading}
+              disabled={analysisLoading || analysisDisabled}
               className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-60"
             >
               {analysisLoading ? 'Analyzing…' : 'Run 5-min analysis'}
