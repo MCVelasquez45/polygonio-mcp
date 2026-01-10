@@ -94,6 +94,7 @@ function formatCurrency(value: number, digits = 2) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
+    minimumFractionDigits: digits,
     maximumFractionDigits: digits
   }).format(value);
 }
@@ -657,7 +658,7 @@ function StatCard({ label, value }: StatProps) {
   return (
     <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
       <p className="text-xs uppercase tracking-[0.3em] text-gray-500">{label}</p>
-      <p className="text-2xl font-semibold text-white">${value.toFixed(2)}</p>
+      <p className="text-2xl font-semibold text-white">{formatCurrency(value, 2)}</p>
     </div>
   );
 }
