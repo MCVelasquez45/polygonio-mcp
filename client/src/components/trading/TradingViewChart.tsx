@@ -52,11 +52,10 @@ type ChartCanvasProps = {
 
 const DEFAULT_HEIGHT = 320;
 const SMA_PERIOD = 20;
-const OR_START_HOUR = 6;
-const OR_START_MINUTE = 30;
-const OR_END_MINUTE = 35;
-const PST_FORMATTER = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Los_Angeles',
+const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
+const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
+const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
@@ -173,8 +172,8 @@ const computeSma = (
   return result;
 };
 
-function getPstParts(timestamp: number) {
-  const parts = PST_FORMATTER.formatToParts(new Date(timestamp));
+function getNyParts(timestamp: number) {
+  const parts = NY_FORMATTER.formatToParts(new Date(timestamp));
   const bucket: Record<string, string> = {};
   for (const part of parts) {
     if (part.type !== 'literal') {
@@ -200,23 +199,26 @@ function computeOpeningRange(bars: AggregateBar[], timeframe: string) {
   const unit = resolveTimeframeUnit(timeframe);
   const isIntraday = unit === 'minute' || unit === 'hour';
   if (!isIntraday || bars.length === 0) return null;
-  const latest = getPstParts(bars[bars.length - 1].timestamp);
-  if (!latest) return null;
-  const sessionKey = latest.dateKey;
-  let high = -Infinity;
-  let low = Infinity;
-  let found = false;
+  const ranges = new Map<string, { high: number; low: number }>();
   for (const bar of bars) {
-    const parts = getPstParts(bar.timestamp);
-    if (!parts || parts.dateKey !== sessionKey) continue;
-    if (parts.hour === OR_START_HOUR && parts.minute >= OR_START_MINUTE && parts.minute < OR_END_MINUTE) {
-      found = true;
-      if (bar.high > high) high = bar.high;
-      if (bar.low < low) low = bar.low;
+    const parts = getNyParts(bar.timestamp);
+    if (!parts) continue;
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+    if (minuteOfDay < OPENING_RANGE_START_MINUTES || minuteOfDay >= OPENING_RANGE_END_MINUTES) continue;
+    const existing = ranges.get(parts.dateKey);
+    if (!existing) {
+      ranges.set(parts.dateKey, { high: bar.high, low: bar.low });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
     }
   }
-  if (!found) return null;
-  return { high, low };
+  if (!ranges.size) return null;
+  const sessionKey = Array.from(ranges.keys()).sort().at(-1);
+  if (!sessionKey) return null;
+  const range = ranges.get(sessionKey);
+  if (!range) return null;
+  return { high: range.high, low: range.low };
 }
 
 function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps) {

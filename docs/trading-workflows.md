@@ -21,6 +21,7 @@ This document summarizes how the desk should use the latest build. Share it with
 - 1-hour view uses a 24-bar lookback to show multiple sessions instead of just a single day.  
 - Backend always fetches 1m Massive bars, aggregates higher intervals locally, and caches results for 2–5 minutes.  
 - If Massive says the market is closed, we automatically fall back to the last session and show the “Frozen” badge.
+- RTH/EXT toggle (next to timeframes) switches between regular market hours (9:30–16:00 ET) and extended sessions.
 - “Run 5-min analysis” button on the chart runs an opening-range breakout read (5-minute range, volume confirmation, trend alignment, short interest/short volume context). The button is disabled when chart analysis is turned off in Settings.
 
 ## 4. Selecting Contracts

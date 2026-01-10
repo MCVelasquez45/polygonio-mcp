@@ -14,6 +14,8 @@ type Props = {
   indicators?: IndicatorBundle;
   isLoading: boolean;
   onTimeframeChange: (value: string) => void;
+  sessionMode?: 'regular' | 'extended';
+  onSessionModeChange?: (value: 'regular' | 'extended') => void;
   onRunAnalysis?: () => void;
   analysis?: {
     headline: string;
@@ -53,6 +55,8 @@ export function ChartPanel({
   indicators,
   isLoading,
   onTimeframeChange,
+  sessionMode,
+  onSessionModeChange,
   onRunAnalysis,
   analysis,
   analysisLoading,
@@ -107,6 +111,28 @@ export function ChartPanel({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 max-w-full w-full md:w-auto justify-start md:justify-end">
+          {sessionMode && onSessionModeChange && (
+            <div className="flex items-center gap-1 rounded-full border border-gray-900 bg-gray-950/60 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => onSessionModeChange('regular')}
+                className={`px-3 py-1 rounded-full ${
+                  sessionMode === 'regular' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
+                }`}
+              >
+                RTH
+              </button>
+              <button
+                type="button"
+                onClick={() => onSessionModeChange('extended')}
+                className={`px-3 py-1 rounded-full ${
+                  sessionMode === 'extended' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
+                }`}
+              >
+                EXT
+              </button>
+            </div>
+          )}
           {onRunAnalysis && (
             <button
               type="button"

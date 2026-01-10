@@ -59,6 +59,7 @@ const AI_SCANNER_ENABLED_KEY = 'market-copilot.aiScannerEnabled';
 const AI_PORTFOLIO_SENTIMENT_ENABLED_KEY = 'market-copilot.aiPortfolioSentimentEnabled';
 const AI_CHAT_ENABLED_KEY = 'market-copilot.aiChatEnabled';
 const AI_CHART_ANALYSIS_ENABLED_KEY = 'market-copilot.aiChartAnalysisEnabled';
+const CHART_SESSION_MODE_KEY = 'market-copilot.chartSessionMode';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
@@ -241,6 +242,35 @@ function formatPrice(value: number | null | undefined) {
   return `$${value.toFixed(2)}`;
 }
 
+function resolveChartWindow(config: { multiplier: number; timespan: 'minute' | 'hour' | 'day'; window?: number }, useRegularHours: boolean) {
+  const baseWindow = config.window ?? 180;
+  if (!useRegularHours || config.timespan === 'day') return baseWindow;
+  const minutesPerBar = config.multiplier * (config.timespan === 'hour' ? 60 : 1);
+  const extendedMinutes = 16 * 60;
+  const requiredBars = Math.ceil(extendedMinutes / minutesPerBar);
+  return Math.max(baseWindow, requiredBars);
+}
+
+function selectRegularSessionBars(bars: AggregateBar[]) {
+  const sessions = new Map<string, AggregateBar[]>();
+  for (const bar of bars) {
+    const parts = getNyParts(bar.timestamp);
+    if (!parts) continue;
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+    if (minuteOfDay < OPENING_RANGE_START_MINUTES || minuteOfDay >= 16 * 60) continue;
+    const bucket = sessions.get(parts.dateKey);
+    if (bucket) {
+      bucket.push(bar);
+    } else {
+      sessions.set(parts.dateKey, [bar]);
+    }
+  }
+  if (!sessions.size) return [];
+  const latestSessionKey = Array.from(sessions.keys()).sort().at(-1);
+  if (!latestSessionKey) return [];
+  return sessions.get(latestSessionKey) ?? [];
+}
+
 // Bundle any indicators we currently support so the chart can render overlays.
 function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBundle | undefined {
   if (!bars.length) return undefined;
@@ -261,10 +291,21 @@ function readStoredBoolean(key: string, fallback: boolean) {
   }
 }
 
+function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSessionMode {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === 'regular' || value === 'extended' ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
+type ChartSessionMode = 'regular' | 'extended';
 // Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
 
@@ -369,6 +410,9 @@ function App() {
   const [aiPortfolioSentimentEnabled, setAiPortfolioSentimentEnabled] = useState(() => readStoredBoolean(AI_PORTFOLIO_SENTIMENT_ENABLED_KEY, true));
   const [aiChatEnabled, setAiChatEnabled] = useState(() => readStoredBoolean(AI_CHAT_ENABLED_KEY, true));
   const [aiChartAnalysisEnabled, setAiChartAnalysisEnabled] = useState(() => readStoredBoolean(AI_CHART_ANALYSIS_ENABLED_KEY, true));
+  const [chartSessionMode, setChartSessionMode] = useState<ChartSessionMode>(
+    () => readStoredSessionMode(CHART_SESSION_MODE_KEY, 'regular')
+  );
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
@@ -377,6 +421,7 @@ function App() {
   const scannerAllowed = aiEnabled && aiScannerEnabled;
   const chatAllowed = aiEnabled && aiChatEnabled;
   const chartAnalysisAllowed = aiEnabled && aiChartAnalysisEnabled;
+  const useRegularHours = chartSessionMode === 'regular';
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
@@ -389,7 +434,6 @@ function App() {
       {
         timestamp: number;
         bars: AggregateBar[];
-        indicators?: IndicatorBundle;
         note?: string | null;
         session?: MarketSessionMeta | null;
       }
@@ -572,6 +616,15 @@ function App() {
       // ignore persistence failures
     }
   }, [aiChartAnalysisEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(CHART_SESSION_MODE_KEY, chartSessionMode);
+    } catch {
+      // ignore persistence failures
+    }
+  }, [chartSessionMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1417,12 +1470,12 @@ function App() {
         throw new Error('Intraday minute bars are unavailable for this symbol right now.');
       }
 
-      const minuteBars = normalizeAggregateBars(minuteAggs?.results ?? []);
+      const minuteBars = normalizeAggregateBars(minuteAggs?.results ?? []).sort((a, b) => a.timestamp - b.timestamp);
       if (!minuteBars.length) {
         throw new Error('No intraday bars available for analysis.');
       }
 
-      const openingRange = computeOpeningRange(minuteBars);
+      const openingRange = computeOpeningRange(useRegularHours ? selectRegularSessionBars(minuteBars) : minuteBars);
       if (!openingRange) {
         throw new Error('Unable to compute the opening 5-minute range.');
       }
@@ -1537,7 +1590,7 @@ function App() {
     } finally {
       setChartAnalysisLoading(false);
     }
-  }, [chartTicker, chartAnalysisAllowed]);
+  }, [chartTicker, chartAnalysisAllowed, useRegularHours]);
 
   useEffect(() => {
     const symbol = chartTicker;
@@ -1561,10 +1614,21 @@ function App() {
     const cacheKey = `${requestSymbol}-${timeframe}`;
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
-      setBars(cached.bars);
-      setIndicators(cached.indicators);
-      setMarketError(cached.note ?? null);
-      setMarketSessionMeta(cached.session ?? null);
+      const baseBars = cached.bars.slice().sort((a, b) => a.timestamp - b.timestamp);
+      const displayBars = useRegularHours && isIntraday ? selectRegularSessionBars(baseBars) : baseBars;
+      const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
+      const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
+      setBars(displayBars);
+      setIndicators(buildIndicatorBundle(requestSymbol, displayBars));
+      setMarketError(displayNote);
+      setMarketSessionMeta(
+        cached.session
+          ? {
+              ...cached.session,
+              note: displayNote ?? undefined
+            }
+          : null
+      );
       return;
     }
 
@@ -1577,11 +1641,12 @@ function App() {
       const intradaySourceNote = isIntraday ? `Intraday candles are rendered from ${requestSymbol}.` : null;
 
       const fetchAggregates = async () => {
+        const requestWindow = resolveChartWindow(config, useRegularHours);
         const response = await marketApi.getAggregates({
           ticker: requestSymbol,
           multiplier: config.multiplier,
           timespan: config.timespan,
-          window: config.window ?? 180,
+          window: requestWindow,
         });
         return response;
       };
@@ -1589,7 +1654,7 @@ function App() {
       const runFetch = async () => {
         const aggregates = await fetchAggregates();
         if (chartRequestIdRef.current !== requestId) return;
-        const bars = (aggregates.results ?? [])
+        const rawBars = (aggregates.results ?? [])
           .map(entry => {
             const timestamp = parseAggregateTimestamp(entry.t);
             if (timestamp == null) return null;
@@ -1603,12 +1668,19 @@ function App() {
             };
           })
           .filter((bar): bar is AggregateBar => Boolean(bar));
-        const indicatorBundle = buildIndicatorBundle(requestSymbol, bars);
-        setBars(bars);
+        rawBars.sort((a, b) => a.timestamp - b.timestamp);
+        const displayBars = useRegularHours && isIntraday ? selectRegularSessionBars(rawBars) : rawBars;
+        const indicatorBundle = buildIndicatorBundle(requestSymbol, displayBars);
+        setBars(displayBars);
         setIndicators(indicatorBundle);
         const nextError =
-          aggregates.note ?? (bars.length === 0 ? `No aggregate data available for ${requestSymbol} (${timeframe}).` : null);
-        const note = nextError ?? intradaySourceNote;
+          aggregates.note ??
+          (displayBars.length === 0
+            ? `No aggregate data available for ${requestSymbol} (${timeframe}).`
+            : null);
+        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
+        const baseNote = nextError ?? intradaySourceNote;
+        const note = [baseNote, sessionNote].filter(Boolean).join(' ') || null;
         const sessionMeta: MarketSessionMeta = {
           marketClosed: Boolean(aggregates.marketClosed),
           afterHours: Boolean(aggregates.afterHours),
@@ -1621,10 +1693,9 @@ function App() {
           fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined
         };
         chartCacheRef.current.set(cacheKey, {
-          bars,
-          indicators: indicatorBundle,
+          bars: rawBars,
           timestamp: Date.now(),
-          note,
+          note: baseNote ?? null,
           session: sessionMeta
         });
         setMarketSessionMeta(sessionMeta);
@@ -1676,7 +1747,7 @@ function App() {
         chartRefreshIntervalRef.current = null;
       }
     };
-  }, [chartTicker, timeframe, activeContractSymbol]);
+  }, [chartTicker, timeframe, activeContractSymbol, useRegularHours]);
 
   useEffect(() => {
     if (!activeContractSymbol) {
@@ -2231,6 +2302,8 @@ function App() {
           indicators={indicators}
           isLoading={chartLoading}
           onTimeframeChange={value => setTimeframe(value as TimeframeKey)}
+          sessionMode={chartSessionMode}
+          onSessionModeChange={setChartSessionMode}
           onRunAnalysis={handleChartAnalysisRun}
           analysis={chartAnalysis}
           analysisLoading={chartAnalysisLoading}
