@@ -14,6 +14,14 @@ type Props = {
   indicators?: IndicatorBundle;
   isLoading: boolean;
   onTimeframeChange: (value: string) => void;
+  onRunAnalysis?: () => void;
+  analysis?: {
+    headline: string;
+    bullets: string[];
+  } | null;
+  analysisLoading?: boolean;
+  analysisError?: string | null;
+  analysisUpdatedAt?: number | null;
   fallbackPrice?: number | null;
   fallbackChange?: { absolute: number | null; percent: number | null };
   sessionMeta?: {
@@ -44,6 +52,11 @@ export function ChartPanel({
   indicators,
   isLoading,
   onTimeframeChange,
+  onRunAnalysis,
+  analysis,
+  analysisLoading,
+  analysisError,
+  analysisUpdatedAt,
   fallbackPrice,
   fallbackChange,
   sessionMeta,
@@ -58,6 +71,7 @@ export function ChartPanel({
   const isMarketClosed = sessionMeta?.marketClosed ?? false;
   const usingLastSession = sessionMeta?.usingLastSession ?? false;
   const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
+  const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
 
   return (
     <section className="bg-gray-950/70 border border-gray-900/80 backdrop-blur-sm rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
@@ -91,6 +105,16 @@ export function ChartPanel({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 max-w-full w-full md:w-auto justify-start md:justify-end">
+          {onRunAnalysis && (
+            <button
+              type="button"
+              onClick={onRunAnalysis}
+              disabled={analysisLoading}
+              className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-60"
+            >
+              {analysisLoading ? 'Analyzing…' : 'Run 5-min analysis'}
+            </button>
+          )}
           {TIMEFRAMES.map(option => (
             <button
               key={option.value}
@@ -115,6 +139,33 @@ export function ChartPanel({
           <TradingViewChart bars={data} timeframe={timeframe} />
         )}
       </div>
+      {(analysis || analysisError || analysisLoading) && (
+        <div className="rounded-2xl border border-gray-900 bg-gray-950/60 p-4 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-gray-500">5-Minute Candle Analysis</p>
+              {analysisUpdatedLabel && (
+                <p className="text-[11px] text-gray-500">Last run {analysisUpdatedLabel}</p>
+              )}
+            </div>
+          </div>
+          {analysisLoading && <p className="text-xs text-gray-400">Building the opening-range read…</p>}
+          {!analysisLoading && analysisError && <p className="text-xs text-amber-200">{analysisError}</p>}
+          {!analysisLoading && analysis && (
+            <div className="space-y-2 text-sm text-gray-200">
+              <p className="font-semibold text-white">{analysis.headline}</p>
+              <ul className="space-y-1 text-xs text-gray-300">
+                {analysis.bullets.map(item => (
+                  <li key={item} className="flex items-start gap-2">
+                    <span className="text-emerald-300">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       {sessionMeta?.note && <p className="text-[11px] text-gray-500">{sessionMeta.note}</p>}
     </section>
   );

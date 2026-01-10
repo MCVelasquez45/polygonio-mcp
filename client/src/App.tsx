@@ -52,6 +52,24 @@ const DESK_INSIGHT_THROTTLE_MS = 30_000;
 const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
+const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
+const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
+const NY_TIMEZONE = 'America/New_York';
+
+type ChartAnalysis = {
+  headline: string;
+  bullets: string[];
+};
+
+const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: NY_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -96,6 +114,120 @@ function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries 
 
 function isAbortError(error: any): boolean {
   return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
+function normalizeAggregateBars(results: Array<{ t: string | number; o: number; h: number; l: number; c: number; v: number }>) {
+  return (results ?? [])
+    .map(entry => {
+      const timestamp = parseAggregateTimestamp(entry.t);
+      if (timestamp == null) return null;
+      return {
+        timestamp,
+        open: entry.o,
+        high: entry.h,
+        low: entry.l,
+        close: entry.c,
+        volume: entry.v
+      };
+    })
+    .filter((bar): bar is AggregateBar => Boolean(bar));
+}
+
+function getNyParts(timestamp: number) {
+  const parts = NY_FORMATTER.formatToParts(new Date(timestamp));
+  const bucket: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') {
+      bucket[part.type] = part.value;
+    }
+  }
+  const year = bucket.year ?? '';
+  const month = bucket.month ?? '';
+  const day = bucket.day ?? '';
+  const hour = Number(bucket.hour);
+  const minute = Number(bucket.minute);
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    hour,
+    minute
+  };
+}
+
+function computeOpeningRange(bars: AggregateBar[]) {
+  if (!bars.length) return null;
+  const lastParts = getNyParts(bars[bars.length - 1].timestamp);
+  if (!lastParts) return null;
+  const sessionKey = lastParts.dateKey;
+  let high = -Infinity;
+  let low = Infinity;
+  let found = false;
+  for (const bar of bars) {
+    const parts = getNyParts(bar.timestamp);
+    if (!parts || parts.dateKey !== sessionKey) continue;
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+    if (minuteOfDay >= OPENING_RANGE_START_MINUTES && minuteOfDay < OPENING_RANGE_END_MINUTES) {
+      found = true;
+      if (bar.high > high) high = bar.high;
+      if (bar.low < low) low = bar.low;
+    }
+  }
+  if (!found) return null;
+  return { sessionKey, high, low };
+}
+
+type FiveMinuteBucket = {
+  index: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+function buildFiveMinuteBuckets(bars: AggregateBar[], sessionKey: string): FiveMinuteBucket[] {
+  const buckets = new Map<number, FiveMinuteBucket>();
+  for (const bar of bars) {
+    const parts = getNyParts(bar.timestamp);
+    if (!parts || parts.dateKey !== sessionKey) continue;
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+    const minutesSinceOpen = minuteOfDay - OPENING_RANGE_START_MINUTES;
+    if (minutesSinceOpen < 0) continue;
+    const index = Math.floor(minutesSinceOpen / 5);
+    const existing = buckets.get(index);
+    if (!existing) {
+      buckets.set(index, {
+        index,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume
+      });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
+      existing.close = bar.close;
+      existing.volume += bar.volume;
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.index - b.index);
+}
+
+function computeTrend(bars: AggregateBar[], thresholdPct = 0.4) {
+  if (bars.length < 2) return 'unknown';
+  const first = bars[0]?.close ?? null;
+  const last = bars.at(-1)?.close ?? null;
+  if (first == null || last == null || first === 0) return 'unknown';
+  const pct = ((last - first) / first) * 100;
+  if (pct > thresholdPct) return 'up';
+  if (pct < -thresholdPct) return 'down';
+  return 'flat';
+}
+
+function formatPrice(value: number | null | undefined) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+  return `$${value.toFixed(2)}`;
 }
 
 // Bundle any indicators we currently support so the chart can render overlays.
@@ -191,6 +323,10 @@ function App() {
   const [bars, setBars] = useState<AggregateBar[]>([]);
   const [indicators, setIndicators] = useState<IndicatorBundle>();
   const [chartLoading, setChartLoading] = useState(false);
+  const [chartAnalysis, setChartAnalysis] = useState<ChartAnalysis | null>(null);
+  const [chartAnalysisLoading, setChartAnalysisLoading] = useState(false);
+  const [chartAnalysisError, setChartAnalysisError] = useState<string | null>(null);
+  const [chartAnalysisUpdatedAt, setChartAnalysisUpdatedAt] = useState<number | null>(null);
 
   const [quote, setQuote] = useState<QuoteSnapshot | null>(null);
   const [trades, setTrades] = useState<TradePrint[]>([]);
@@ -1099,6 +1235,157 @@ function App() {
     return normalizedTicker.slice(2);
   }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
 
+  const handleChartAnalysisRun = useCallback(async () => {
+    if (!chartTicker) {
+      setChartAnalysisError('Select a ticker to analyze.');
+      return;
+    }
+    const symbol = chartTicker.toUpperCase();
+    setChartAnalysisLoading(true);
+    setChartAnalysisError(null);
+    try {
+      const [
+        minuteAggsResult,
+        hourAggsResult,
+        dayAggsResult,
+        shortInterestResult,
+        shortVolumeResult
+      ] = await Promise.allSettled([
+        marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'minute', window: 390 }),
+        marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'hour', window: 24 }),
+        marketApi.getAggregates({ ticker: symbol, multiplier: 1, timespan: 'day', window: 60 }),
+        marketApi.getShortInterest({ ticker: symbol, limit: 2, sort: 'settlement_date', order: 'desc' }),
+        marketApi.getShortVolume({ ticker: symbol, limit: 12, sort: 'date', order: 'desc' })
+      ]);
+
+      const minuteAggs = minuteAggsResult.status === 'fulfilled' ? minuteAggsResult.value : null;
+      const hourAggs = hourAggsResult.status === 'fulfilled' ? hourAggsResult.value : null;
+      const dayAggs = dayAggsResult.status === 'fulfilled' ? dayAggsResult.value : null;
+      const shortInterest = shortInterestResult.status === 'fulfilled' ? shortInterestResult.value : null;
+      const shortVolume = shortVolumeResult.status === 'fulfilled' ? shortVolumeResult.value : null;
+
+      const minuteBars = normalizeAggregateBars(minuteAggs?.results ?? []);
+      if (!minuteBars.length) {
+        throw new Error('No intraday bars available for analysis.');
+      }
+
+      const openingRange = computeOpeningRange(minuteBars);
+      if (!openingRange) {
+        throw new Error('Unable to compute the opening 5-minute range.');
+      }
+
+      const buckets = buildFiveMinuteBuckets(minuteBars, openingRange.sessionKey);
+      const latestClose = minuteBars.at(-1)?.close ?? null;
+      const rangeHigh = openingRange.high;
+      const rangeLow = openingRange.low;
+      const range = rangeHigh - rangeLow;
+      const breakoutStatus =
+        latestClose != null && latestClose > rangeHigh
+          ? 'above'
+          : latestClose != null && latestClose < rangeLow
+          ? 'below'
+          : 'inside';
+
+      let breakoutVolumeRatio: number | null = null;
+      let breakoutStrength = 'neutral';
+      if (buckets.length > 1) {
+        const breakoutBucket = buckets.slice(1).find(bucket => bucket.close > rangeHigh || bucket.close < rangeLow);
+        if (breakoutBucket) {
+          const priorBuckets = buckets.filter(bucket => bucket.index < breakoutBucket.index);
+          const avgVolume =
+            priorBuckets.length > 0
+              ? priorBuckets.reduce((sum, bucket) => sum + bucket.volume, 0) / priorBuckets.length
+              : null;
+          breakoutVolumeRatio = avgVolume ? breakoutBucket.volume / avgVolume : null;
+          if (breakoutVolumeRatio != null) {
+            breakoutStrength =
+              breakoutVolumeRatio >= 1.5 ? 'strong' : breakoutVolumeRatio >= 1.1 ? 'moderate' : 'weak';
+          }
+        }
+      }
+
+      const hourlyTrend = computeTrend(normalizeAggregateBars(hourAggs?.results ?? []));
+      const dailyTrend = computeTrend(normalizeAggregateBars(dayAggs?.results ?? []));
+
+      const shortInterestLatest = shortInterest?.results?.[0] ?? null;
+      const shortInterestPrev = shortInterest?.results?.[1] ?? null;
+      const shortInterestChangePct =
+        typeof shortInterestLatest?.shortInterest === 'number' &&
+        typeof shortInterestPrev?.shortInterest === 'number' &&
+        shortInterestPrev.shortInterest !== 0
+          ? ((shortInterestLatest.shortInterest - shortInterestPrev.shortInterest) / shortInterestPrev.shortInterest) * 100
+          : null;
+      const daysToCover = typeof shortInterestLatest?.daysToCover === 'number' ? shortInterestLatest.daysToCover : null;
+      const shortInterestElevated =
+        (shortInterestChangePct != null && shortInterestChangePct >= 20) || (daysToCover != null && daysToCover >= 5);
+      const shortInterestFalling =
+        shortInterestChangePct != null && shortInterestChangePct <= -20 && (daysToCover == null || daysToCover <= 3);
+
+      const shortVolumeLatest = shortVolume?.results?.[0] ?? null;
+      const shortVolumeRecent = (shortVolume?.results ?? [])
+        .slice(1, 11)
+        .map(entry => entry.shortVolume)
+        .filter((value): value is number => typeof value === 'number');
+      const shortVolumeAverage =
+        shortVolumeRecent.length > 0 ? shortVolumeRecent.reduce((sum, value) => sum + value, 0) / shortVolumeRecent.length : null;
+      const shortVolumeSpike =
+        typeof shortVolumeLatest?.shortVolume === 'number' &&
+        typeof shortVolumeAverage === 'number' &&
+        shortVolumeAverage > 0
+          ? shortVolumeLatest.shortVolume >= shortVolumeAverage * 2
+          : false;
+      const shortVolumeRatio =
+        typeof shortVolumeLatest?.shortVolumeRatio === 'number' ? shortVolumeLatest.shortVolumeRatio : null;
+
+      const alignmentNote =
+        hourlyTrend === dailyTrend && (hourlyTrend === 'up' || hourlyTrend === 'down')
+          ? `Hourly and daily trends align (${hourlyTrend}).`
+          : `Hourly trend is ${hourlyTrend}, daily trend is ${dailyTrend}.`;
+
+      const breakoutLine =
+        breakoutStatus === 'inside'
+          ? 'Price is still inside the opening range — wait for a 5-minute close outside the range.'
+          : `Price is ${breakoutStatus} the opening range with ${breakoutStrength} volume confirmation.`;
+
+      const bullets = [
+        `Opening 5-minute range (${openingRange.sessionKey}): ${formatPrice(rangeLow)}–${formatPrice(rangeHigh)} (range ${formatPrice(range)}).`,
+        breakoutLine,
+        alignmentNote,
+        breakoutVolumeRatio != null
+          ? `Breakout volume was ${breakoutVolumeRatio.toFixed(2)}x the prior 5-minute average.`
+          : 'Volume confirmation is unavailable — watch for a higher-volume close outside the range.',
+        shortInterestLatest
+          ? shortInterestElevated
+            ? `Short interest is elevated (days to cover ${daysToCover?.toFixed(1) ?? '—'}, change ${shortInterestChangePct?.toFixed(1) ?? '—'}%).`
+            : shortInterestFalling
+            ? `Short interest is easing (change ${shortInterestChangePct?.toFixed(1) ?? '—'}%).`
+            : 'Short interest looks neutral versus recent history.'
+          : 'Short interest data unavailable for this symbol.',
+        shortVolumeLatest
+          ? shortVolumeSpike || (shortVolumeRatio != null && shortVolumeRatio >= 50)
+            ? `Short volume is elevated (ratio ${shortVolumeRatio?.toFixed(1) ?? '—'}%).`
+            : 'Short volume looks normal for the last sessions.'
+          : 'Short volume data unavailable for this symbol.',
+        'Use the 15- or 30-minute range as a confirmation layer if the 5-minute break looks noisy.'
+      ];
+
+      const headline =
+        breakoutStatus === 'above'
+          ? 'Opening-range breakout bias is bullish.'
+          : breakoutStatus === 'below'
+          ? 'Opening-range breakout bias is bearish.'
+          : 'Opening range is intact — no confirmed breakout yet.';
+
+      setChartAnalysis({ headline, bullets });
+      setChartAnalysisUpdatedAt(Date.now());
+    } catch (error: any) {
+      const message = error?.message ?? 'Unable to run chart analysis.';
+      setChartAnalysisError(message);
+    } finally {
+      setChartAnalysisLoading(false);
+    }
+  }, [chartTicker]);
+
   useEffect(() => {
     const symbol = chartTicker;
     const contractSymbol = activeContractSymbol?.trim().toUpperCase() ?? null;
@@ -1788,6 +2075,11 @@ function App() {
           indicators={indicators}
           isLoading={chartLoading}
           onTimeframeChange={value => setTimeframe(value as TimeframeKey)}
+          onRunAnalysis={handleChartAnalysisRun}
+          analysis={chartAnalysis}
+          analysisLoading={chartAnalysisLoading}
+          analysisError={chartAnalysisError}
+          analysisUpdatedAt={chartAnalysisUpdatedAt}
           fallbackPrice={
             underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
               ? underlyingSnapshot.price ?? null

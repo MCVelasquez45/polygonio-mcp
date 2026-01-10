@@ -10,8 +10,8 @@ This document summarizes how the desk should use the latest build. Share it with
 ## 2. Watchlist & Scanner Flow
 1. Use the sidebar search (supports equities or `O:` contracts).  
 2. Add to watchlist; the client immediately calls `GET /api/market/watchlist` to hydrate price, change, IV, and reference contracts.  
-3. Every watchlist change triggers `POST /api/analysis/watchlist`, so the AI scanner displays fresh desk notes. If FastAPI is offline we render the hardcoded fallback rows.
-4. In parallel the server runs `POST /api/analysis/checklist` for the same tickers. Any symbol that clears the full options entry checklist is highlighted as “High-ROI Ready” in the scanner and trading view.
+3. The Scanner tab uses a manual “Run AI Scan” button to call `POST /api/analysis/watchlist` and render desk notes (no automatic scan on load). If FastAPI is offline we render the hardcoded fallback rows.
+4. The same manual scan triggers `POST /api/analysis/checklist` for the watchlist symbols, highlighting any that clear the entry rules as “High-ROI Ready.”
 
 ## 3. Charting & Timeframes
 - Default timeframe is `1/day` to guarantee context at load.  
@@ -21,6 +21,7 @@ This document summarizes how the desk should use the latest build. Share it with
 - 1-hour view uses a 24-bar lookback to show multiple sessions instead of just a single day.  
 - Backend always fetches 1m Massive bars, aggregates higher intervals locally, and caches results for 2–5 minutes.  
 - If Massive says the market is closed, we automatically fall back to the last session and show the “Frozen” badge.
+- “Run 5-min analysis” button on the chart runs an opening-range breakout read (5-minute range, volume confirmation, trend alignment, short interest/short volume context).
 
 ## 4. Selecting Contracts
 1. Pick any strike/expiration in the chain (grid updates in real time).  
