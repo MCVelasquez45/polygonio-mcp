@@ -105,6 +105,34 @@ const mapBarsToVolumes = (bars: AggregateBar[], palette: ThemePalette): Histogra
     color: bar.close >= bar.open ? palette.volumeUp : palette.volumeDown,
   }));
 
+function resolveTimeframeUnit(timeframe: string) {
+  const unit = timeframe.split('/')[1] ?? 'day';
+  return unit;
+}
+
+function resolveDateFromTime(time: Time): Date | null {
+  if (typeof time === 'number') {
+    return new Date(time * 1000);
+  }
+  if (time && typeof time === 'object' && 'year' in time) {
+    return new Date(Date.UTC(time.year, time.month - 1, time.day));
+  }
+  return null;
+}
+
+function buildTickFormatter(timeframe: string) {
+  const unit = resolveTimeframeUnit(timeframe);
+  const isIntraday = unit === 'minute' || unit === 'hour';
+  const formatter = new Intl.DateTimeFormat(undefined, isIntraday
+    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric' }
+  );
+  return (time: Time) => {
+    const date = resolveDateFromTime(time);
+    return date ? formatter.format(date) : '';
+  };
+}
+
 const computeSma = (
   bars: AggregateBar[],
   period: number,
@@ -150,7 +178,7 @@ function getPstParts(timestamp: number) {
 }
 
 function computeOpeningRange(bars: AggregateBar[], timeframe: string) {
-  const unit = timeframe.split('/')[1] ?? 'day';
+  const unit = resolveTimeframeUnit(timeframe);
   const isIntraday = unit === 'minute' || unit === 'hour';
   if (!isIntraday || bars.length === 0) return null;
   const latest = getPstParts(bars[bars.length - 1].timestamp);
@@ -204,6 +232,8 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
         chartRef.current.remove();
       }
 
+      const unit = resolveTimeframeUnit(timeframe);
+      const isIntraday = unit === 'minute' || unit === 'hour';
       const chart = createChart(container, {
         width,
         height,
@@ -217,8 +247,9 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
         },
         crosshair: { mode: CrosshairMode.Normal },
         timeScale: {
-          timeVisible: true,
+          timeVisible: isIntraday,
           secondsVisible: false,
+          tickMarkFormatter: buildTickFormatter(timeframe),
         },
       });
 

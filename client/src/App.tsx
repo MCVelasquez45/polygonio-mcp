@@ -30,12 +30,12 @@ import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, C
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
 const TIMEFRAME_MAP = {
-  '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 240 },
-  '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 240 },
-  '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 240 },
-  '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 240 },
-  '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 240 },
-  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 180 },
+  '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 390 },
+  '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 130 },
+  '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 78 },
+  '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 26 },
+  '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 13 },
+  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 7 },
   '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 },
 };
 const AGG_TIMESTAMP_MS_THRESHOLD = 1_000_000_000_000;
@@ -1104,15 +1104,7 @@ function App() {
     const contractSymbol = activeContractSymbol?.trim().toUpperCase() ?? null;
     const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
     const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
-    const hasIntradayContract = Boolean(contractSymbol && contractSymbol.startsWith('O:'));
-    if (isIntraday && !hasIntradayContract) {
-      setMarketError('Intraday charts require an options contract. Select one in the chain.');
-      setBars([]);
-      setIndicators(undefined);
-      setChartLoading(false);
-      return;
-    }
-    const requestSymbol = isIntraday ? contractSymbol : symbol;
+    const requestSymbol = symbol ?? contractSymbol;
     if (!requestSymbol) {
       setBars([]);
       setIndicators(undefined);
@@ -1142,10 +1134,7 @@ function App() {
     const triggerFetch = () => {
       chartRequestIdRef.current += 1;
       const requestId = chartRequestIdRef.current;
-      const intradayContractNote =
-        isIntraday && contractSymbol && requestSymbol === contractSymbol
-          ? `Intraday candles are rendered from ${contractSymbol}.`
-          : null;
+      const intradaySourceNote = isIntraday ? `Intraday candles are rendered from ${requestSymbol}.` : null;
 
       const fetchAggregates = async () => {
         const response = await marketApi.getAggregates({
@@ -1179,7 +1168,7 @@ function App() {
         setIndicators(indicatorBundle);
         const nextError =
           aggregates.note ?? (bars.length === 0 ? `No aggregate data available for ${requestSymbol} (${timeframe}).` : null);
-        const note = nextError ?? intradayContractNote;
+        const note = nextError ?? intradaySourceNote;
         const sessionMeta: MarketSessionMeta = {
           marketClosed: Boolean(aggregates.marketClosed),
           afterHours: Boolean(aggregates.afterHours),
