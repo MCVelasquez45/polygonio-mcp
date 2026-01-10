@@ -35,7 +35,7 @@ const TIMEFRAME_MAP = {
   '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 78 },
   '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 26 },
   '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 13 },
-  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 7 },
+  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 24 },
   '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 },
 };
 const AGG_TIMESTAMP_MS_THRESHOLD = 1_000_000_000_000;
