@@ -164,6 +164,7 @@ export function PortfolioPanel() {
   const positionInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
   const [insightsRefreshId, setInsightsRefreshId] = useState(0);
   const lastInsightsRefreshRef = useRef(0);
+  const [insightsUpdatedAt, setInsightsUpdatedAt] = useState<number | null>(null);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
@@ -245,6 +246,7 @@ export function PortfolioPanel() {
     if (!symbols.length) {
       setPositionInsights({});
       setInsightsLoading(false);
+      setInsightsUpdatedAt(null);
       return;
     }
     const refreshRequested = lastInsightsRefreshRef.current !== insightsRefreshId;
@@ -254,15 +256,20 @@ export function PortfolioPanel() {
     const now = Date.now();
     const cached: Record<string, DeskInsight> = {};
     const toFetch: string[] = [];
+    let latestCachedAt: number | null = null;
     symbols.forEach(symbol => {
       const entry = positionInsightCacheRef.current.get(symbol);
       if (!refreshRequested && entry && now - entry.fetchedAt < INSIGHT_TTL_MS) {
         cached[symbol] = entry.insight;
+        if (latestCachedAt == null || entry.fetchedAt > latestCachedAt) {
+          latestCachedAt = entry.fetchedAt;
+        }
       } else {
         toFetch.push(symbol);
       }
     });
     setPositionInsights(cached);
+    setInsightsUpdatedAt(latestCachedAt);
     if (!toFetch.length) {
       setInsightsLoading(false);
       return;
@@ -292,6 +299,7 @@ export function PortfolioPanel() {
           });
           return next;
         });
+        setInsightsUpdatedAt(fetchedAt);
       })
       .finally(() => {
         if (!cancelled) setInsightsLoading(false);
@@ -404,6 +412,9 @@ export function PortfolioPanel() {
               </button>
             </div>
             {lastUpdated && <p className="text-[11px] text-gray-500 mt-1">Last refresh {lastUpdated}</p>}
+            {insightsUpdatedAt && (
+              <p className="text-[11px] text-gray-500">Sentiment updated {new Date(insightsUpdatedAt).toLocaleTimeString()}</p>
+            )}
           </div>
         </div>
       </header>

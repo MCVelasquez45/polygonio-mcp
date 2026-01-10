@@ -18,6 +18,8 @@ type Props = {
   liveTrades?: Record<string, TradePrint>;
   selectedContractDetail?: OptionContractDetail | null;
   preferredSide?: 'call' | 'put' | null;
+  onRequestAnalysis?: () => void;
+  analysisDisabled?: boolean;
 };
 
 type ChainRow = {
@@ -66,6 +68,8 @@ export function OptionsChainPanel({
   liveTrades,
   selectedContractDetail,
   preferredSide,
+  onRequestAnalysis,
+  analysisDisabled,
 }: Props) {
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -215,6 +219,16 @@ export function OptionsChainPanel({
             }`}
           />
         </div>
+        {onRequestAnalysis && (
+          <button
+            type="button"
+            onClick={onRequestAnalysis}
+            disabled={analysisDisabled}
+            className="inline-flex items-center justify-center rounded-full border border-gray-800 px-3 py-2 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60 w-full sm:w-auto"
+          >
+            Analyze with AI
+          </button>
+        )}
       </div>
     </div>
   );

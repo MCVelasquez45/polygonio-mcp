@@ -25,6 +25,7 @@ type Props = {
   selection?: ContractSelectionResult | null;
   selectionLoading?: boolean;
   onRequestSelection?: () => void;
+  analysisRequestId?: number;
 };
 
 type RiskSlice = {
@@ -53,7 +54,8 @@ export function GreeksPanel({
   insight,
   selection,
   selectionLoading,
-  onRequestSelection
+  onRequestSelection,
+  analysisRequestId
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
@@ -124,7 +126,7 @@ export function GreeksPanel({
   const [explanation, setExplanation] = useState<ContractExplanationResult | null>(null);
   const [explanationLoading, setExplanationLoading] = useState(false);
   const [explanationError, setExplanationError] = useState<string | null>(null);
-  const explanationKeyRef = useRef<string | null>(null);
+  const analysisRequestRef = useRef(0);
 
   const ivPercent = typeof resolvedIV === 'number' ? resolvedIV * 100 : null;
   const ivLabel =
@@ -220,15 +222,21 @@ export function GreeksPanel({
     (riskProfile.label ? `${riskProfile.label}${riskProfile.score != null ? ` — ${Math.round(riskProfile.score * 100)}%` : ''}` : null);
 
   useEffect(() => {
+    setExplanation(null);
+    setExplanationError(null);
+    setExplanationLoading(false);
+  }, [contractSymbol, resolvedStrike, resolvedExpiration, contractType]);
+
+  useEffect(() => {
+    if (!analysisRequestId) return;
+    if (analysisRequestRef.current === analysisRequestId) return;
+    analysisRequestRef.current = analysisRequestId;
     if (!explanationPayload) {
       setExplanation(null);
-      setExplanationError(null);
-      explanationKeyRef.current = null;
+      setExplanationError('Select a contract to analyze.');
+      setExplanationLoading(false);
       return;
     }
-    const key = JSON.stringify(explanationPayload);
-    if (explanationKeyRef.current === key) return;
-    explanationKeyRef.current = key;
     let cancelled = false;
     setExplanation(null);
     setExplanationLoading(true);
@@ -250,9 +258,8 @@ export function GreeksPanel({
     return () => {
       cancelled = true;
     };
-  }, [explanationPayload]);
-  const showExplanationPlaceholder =
-    Boolean(explanationPayload) && !explanation && !explanationError;
+  }, [analysisRequestId, explanationPayload]);
+  const showExplanationPlaceholder = explanationLoading && !explanation && !explanationError;
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
@@ -361,7 +368,7 @@ export function GreeksPanel({
           </div>
         ) : (
           !explanationLoading && !explanationError && (
-            <p className="text-xs text-gray-500">Select a contract to generate an explanation.</p>
+            <p className="text-xs text-gray-500">Select a contract and run “Analyze with AI” to generate an explanation.</p>
           )
         )}
       </div>

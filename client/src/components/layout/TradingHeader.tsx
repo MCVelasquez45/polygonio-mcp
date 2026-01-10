@@ -12,6 +12,8 @@ type Props = {
   onToggleSidebar: () => void;
   onToggleChat: () => void;
   isChatOpen: boolean;
+  onToggleSettings: () => void;
+  isSettingsOpen?: boolean;
 };
 
 const views: { id: View; label: string; icon: ReactNode }[] = [
@@ -29,6 +31,8 @@ export function TradingHeader({
   onToggleSidebar,
   onToggleChat,
   isChatOpen,
+  onToggleSettings,
+  isSettingsOpen,
 }: Props) {
   const [tickerInput, setTickerInput] = useState(selectedTicker);
 
@@ -126,7 +130,10 @@ export function TradingHeader({
           </button>
           <button
             type="button"
-            className="hidden sm:inline-flex items-center justify-center h-10 w-10 rounded-xl border border-gray-800 text-gray-400 hover:text-white"
+            onClick={onToggleSettings}
+            className={`hidden sm:inline-flex items-center justify-center h-10 w-10 rounded-xl border ${
+              isSettingsOpen ? 'border-emerald-500/60 text-emerald-300' : 'border-gray-800 text-gray-400 hover:text-white'
+            }`}
             aria-label="Settings"
           >
             <Settings className="h-5 w-5" />

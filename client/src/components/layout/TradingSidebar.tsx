@@ -92,9 +92,18 @@ type Props = {
   onSelectTicker: (ticker: string, snapshot?: WatchlistSnapshot | null) => void;
   onSnapshotUpdate?: (ticker: string, snapshot: WatchlistSnapshot | null) => void;
   onWatchlistChange?: (symbols: string[]) => void;
+  onRequestAutoSelect?: () => void;
+  autoSelectDisabled?: boolean;
 };
 
-export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdate, onWatchlistChange }: Props) {
+export function TradingSidebar({
+  selectedTicker,
+  onSelectTicker,
+  onSnapshotUpdate,
+  onWatchlistChange,
+  onRequestAutoSelect,
+  autoSelectDisabled,
+}: Props) {
   // Local UI mode (watchlist vs intel alerts).
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
   const [tickerInput, setTickerInput] = useState('');
@@ -352,6 +361,16 @@ export function TradingSidebar({ selectedTicker, onSelectTicker, onSnapshotUpdat
                   </span>
                 </button>
               </div>
+              {onRequestAutoSelect && (
+                <button
+                  type="button"
+                  onClick={onRequestAutoSelect}
+                  disabled={autoSelectDisabled}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-800 px-3 py-2 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+                >
+                  Auto-Select Contract
+                </button>
+              )}
               {feedback && <p className="text-xs text-amber-400">{feedback}</p>}
               {watchlistError && <p className="text-xs text-red-400">{watchlistError}</p>}
             </form>

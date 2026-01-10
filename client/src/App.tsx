@@ -47,6 +47,11 @@ const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
 const LIVE_CHAIN_STRIKE_ROWS = 3;
 const DESK_INSIGHT_DEBOUNCE_MS = 500;
+const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
+const DESK_INSIGHT_THROTTLE_MS = 30_000;
+const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
+const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
+const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -96,6 +101,17 @@ function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBu
     ticker: symbol,
     sma: computeSMA(bars),
   };
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const value = window.localStorage.getItem(key);
+    if (value == null) return fallback;
+    return value === 'true';
+  } catch {
+    return fallback;
+  }
 }
 
 type View = 'trading' | 'scanner' | 'portfolio';
@@ -185,11 +201,16 @@ function App() {
   const [latestInsight, setLatestInsight] = useState('');
   const [deskInsight, setDeskInsight] = useState<DeskInsight | null>(null);
   const [deskInsightLoading, setDeskInsightLoading] = useState(false);
-  const deskInsightCacheRef = useRef<Map<string, DeskInsight>>(new Map());
+  const [deskInsightUpdatedAt, setDeskInsightUpdatedAt] = useState<number | null>(null);
+  const deskInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
+  const deskInsightThrottleRef = useRef<Map<string, number>>(new Map());
   const [deskInsightRefreshId, setDeskInsightRefreshId] = useState(0);
   const deskInsightRefreshRef = useRef(0);
   const deskInsightDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, true));
+  const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, true));
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
@@ -237,6 +258,9 @@ function App() {
   const [contractSelectionRequestId, setContractSelectionRequestId] = useState(0);
   const contractSelectionRequestRef = useRef(0);
   const lastContractSelectionRequestRef = useRef(0);
+  const contractSelectionThrottleRef = useRef<Map<string, number>>(new Map());
+  const autoContractSelectionKeyRef = useRef<string | null>(null);
+  const [contractAnalysisRequestId, setContractAnalysisRequestId] = useState(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
@@ -263,6 +287,10 @@ function App() {
     setContractSelectionRequestId(prev => prev + 1);
   }, []);
 
+  const handleContractAnalysisRequest = useCallback(() => {
+    setContractAnalysisRequestId(prev => prev + 1);
+  }, []);
+
   const watchlistSignature = watchlistSymbols.join(',');
   const deskInsightSymbol = useMemo(() => {
     if (normalizedTicker.startsWith('O:')) {
@@ -270,6 +298,29 @@ function App() {
     }
     return normalizedTicker;
   }, [normalizedTicker]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AUTO_DESK_INSIGHTS_KEY, String(autoDeskInsights));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [autoDeskInsights]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AUTO_CONTRACT_SELECTION_KEY, String(autoContractSelection));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [autoContractSelection]);
+
+  useEffect(() => {
+    if (autoContractSelection) return;
+    autoContractSelectionKeyRef.current = null;
+  }, [autoContractSelection]);
 
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
@@ -422,18 +473,29 @@ function App() {
     if (!deskInsightSymbol) {
       setDeskInsight(null);
       setDeskInsightLoading(false);
+      setDeskInsightUpdatedAt(null);
       return;
     }
-    const cached = deskInsightCacheRef.current.get(deskInsightSymbol);
-    if (cached) {
-      setDeskInsight(cached);
+    const now = Date.now();
+    const cachedEntry = deskInsightCacheRef.current.get(deskInsightSymbol);
+    const cacheFresh = cachedEntry ? now - cachedEntry.fetchedAt < DESK_INSIGHT_TTL_MS : false;
+    if (cachedEntry) {
+      setDeskInsight(cachedEntry.insight);
+      setDeskInsightUpdatedAt(cachedEntry.fetchedAt);
+    } else {
+      setDeskInsightUpdatedAt(null);
     }
     const refreshRequested = deskInsightRefreshRef.current !== deskInsightRefreshId;
     if (refreshRequested) {
       deskInsightRefreshRef.current = deskInsightRefreshId;
     }
-    const shouldFetch = !cached || refreshRequested;
+    const shouldFetch = refreshRequested || (autoDeskInsights && !cacheFresh);
     if (!shouldFetch) {
+      setDeskInsightLoading(false);
+      return;
+    }
+    const lastFetchAt = deskInsightThrottleRef.current.get(deskInsightSymbol) ?? 0;
+    if (now - lastFetchAt < DESK_INSIGHT_THROTTLE_MS) {
       setDeskInsightLoading(false);
       return;
     }
@@ -443,12 +505,15 @@ function App() {
     let cancelled = false;
     setDeskInsightLoading(true);
     deskInsightDebounceRef.current = setTimeout(() => {
+      const startedAt = Date.now();
+      deskInsightThrottleRef.current.set(deskInsightSymbol, startedAt);
       analysisApi
         .getDeskInsight(deskInsightSymbol)
         .then(response => {
           if (cancelled) return;
-          deskInsightCacheRef.current.set(deskInsightSymbol, response);
+          deskInsightCacheRef.current.set(deskInsightSymbol, { insight: response, fetchedAt: startedAt });
           setDeskInsight(response);
+          setDeskInsightUpdatedAt(startedAt);
         })
         .catch(error => {
           if (cancelled) return;
@@ -467,7 +532,7 @@ function App() {
         clearTimeout(deskInsightDebounceRef.current);
       }
     };
-  }, [deskInsightSymbol, deskInsightRefreshId]);
+  }, [deskInsightSymbol, deskInsightRefreshId, autoDeskInsights]);
 
   useEffect(() => {
     if (!scannerRefreshId) return;
@@ -1333,6 +1398,8 @@ function App() {
         underlyingSnapshotRef.current = snapshot ?? null;
       }}
       onWatchlistChange={handleWatchlistChange}
+      onRequestAutoSelect={handleContractSelectionRequest}
+      autoSelectDisabled={contractSelectionLoading || !chainExpirations.length}
     />
   );
 
@@ -1446,6 +1513,23 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!autoContractSelection) return;
+    if (!chainExpirations.length || !preferredOptionSide) return;
+    if (selectedLeg && selectionSourceRef.current === 'user') return;
+    const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}`;
+    if (autoContractSelectionKeyRef.current === selectionKey) return;
+    autoContractSelectionKeyRef.current = selectionKey;
+    setContractSelectionRequestId(prev => prev + 1);
+  }, [
+    autoContractSelection,
+    chainExpirations,
+    preferredOptionSide,
+    selectedExpiration,
+    deskInsightSymbol,
+    selectedLeg
+  ]);
+
+  useEffect(() => {
     if (!contractSelectionRequestId) return;
     if (lastContractSelectionRequestRef.current === contractSelectionRequestId) return;
     lastContractSelectionRequestRef.current = contractSelectionRequestId;
@@ -1478,6 +1562,15 @@ function App() {
       }
       return;
     }
+
+    const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}`;
+    const now = Date.now();
+    const lastRequestedAt = contractSelectionThrottleRef.current.get(selectionKey) ?? 0;
+    if (now - lastRequestedAt < CONTRACT_SELECTION_THROTTLE_MS) {
+      setContractSelectionLoading(false);
+      return;
+    }
+    contractSelectionThrottleRef.current.set(selectionKey, now);
 
     const requestId = ++contractSelectionRequestRef.current;
     setContractSelectionLoading(true);
@@ -1554,6 +1647,7 @@ function App() {
       : sentimentLabel ?? (sentimentScore != null ? sentimentScore.toFixed(2) : null);
   const fedEvent = deskInsight?.fedEvent ?? null;
   const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
+  const deskInsightUpdatedLabel = deskInsightUpdatedAt ? new Date(deskInsightUpdatedAt).toLocaleTimeString() : null;
 
   // Subscribe to a near-the-money strip so the chain shows live prices.
   useEffect(() => {
@@ -1684,6 +1778,9 @@ function App() {
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Latest Insight</p>
               <p className="text-sm text-gray-400">AI desk notes for {deskInsightSymbol}</p>
+              {deskInsightUpdatedLabel && (
+                <p className="text-[11px] text-gray-500">Last updated {deskInsightUpdatedLabel}</p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1751,6 +1848,7 @@ function App() {
           selection={contractSelection}
           selectionLoading={contractSelectionLoading}
           onRequestSelection={handleContractSelectionRequest}
+          analysisRequestId={contractAnalysisRequestId}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
@@ -1787,6 +1885,8 @@ function App() {
           liveTrades={liveChainTrades}
           selectedContractDetail={contractDetail}
           preferredSide={preferredOptionSide}
+          onRequestAnalysis={handleContractAnalysisRequest}
+          analysisDisabled={!selectedLeg && !contractDetail}
         />
       </div>
     </div>
@@ -1816,7 +1916,60 @@ function App() {
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
         onToggleChat={() => setIsChatOpen(prev => !prev)}
         isChatOpen={isChatOpen}
+        onToggleSettings={() => setSettingsOpen(prev => !prev)}
+        isSettingsOpen={settingsOpen}
       />
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 p-5 space-y-4"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Settings</p>
+                <h2 className="text-lg font-semibold">AI Request Controls</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-full border border-gray-800 px-3 py-1 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 text-sm text-gray-300">
+              <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
+                <span>
+                  <span className="block text-sm font-semibold text-white">Auto desk insights</span>
+                  <span className="block text-xs text-gray-500">Automatically fetch AI insight when you change tickers.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoDeskInsights}
+                  onChange={event => setAutoDeskInsights(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
+                <span>
+                  <span className="block text-sm font-semibold text-white">Auto contract selection</span>
+                  <span className="block text-xs text-gray-500">Let AI pick a contract when the chain loads.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoContractSelection}
+                  onChange={event => setAutoContractSelection(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden bg-gray-950 relative">
         {sidebarOpen && (
