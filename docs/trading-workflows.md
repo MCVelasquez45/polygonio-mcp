@@ -16,6 +16,9 @@ This document summarizes how the desk should use the latest build. Share it with
 ## 3. Charting & Timeframes
 - Default timeframe is `1/day` to guarantee context at load.  
 - Buttons expose `1m | 3m | 5m | 15m | 30m | 1h | 1d`.  
+- Intraday charts use the underlying ticker so the candles reflect the full trading session, even when an option contract is thinly traded.  
+- Time axes and tooltips render in the user’s local timezone (standard time for their locale).  
+- 1-hour view uses a 24-bar lookback to show multiple sessions instead of just a single day.  
 - Backend always fetches 1m Massive bars, aggregates higher intervals locally, and caches results for 2–5 minutes.  
 - If Massive says the market is closed, we automatically fall back to the last session and show the “Frozen” badge.
 
