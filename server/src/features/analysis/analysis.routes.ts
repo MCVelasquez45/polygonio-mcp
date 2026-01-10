@@ -6,6 +6,7 @@ import { evaluateChecklistBatch, getStoredChecklist } from '../options/services/
 import { getDeskInsight } from './deskInsight';
 import { selectContract } from './contractSelection';
 import { summarizeContract } from './contractSummary';
+import { resolveAiUserKey } from '../../shared/ai/controls';
 
 const router = Router();
 
@@ -23,7 +24,8 @@ router.post('/watchlist', async (req, res, next) => {
       return res.status(400).json({ error: 'tickers array is required' });
     }
     const limited = Array.from(new Set(tickers)).slice(0, 12);
-    const { reports, source } = await getWatchlistReports(limited);
+    const userKey = resolveAiUserKey(req);
+    const { reports, source } = await getWatchlistReports(limited, { userKey, feature: 'analysis.watchlist' });
     res.json({
       reports,
       source,
@@ -41,7 +43,8 @@ router.post('/insight', async (req, res, next) => {
     if (!symbol) {
       return res.status(400).json({ error: 'symbol is required' });
     }
-    const insight = await getDeskInsight(symbol);
+    const userKey = resolveAiUserKey(req);
+    const insight = await getDeskInsight(symbol, { userKey, feature: 'analysis.insight' });
     res.json(insight);
   } catch (error) {
     next(error);
@@ -74,7 +77,8 @@ router.post('/contract-select', async (req, res, next) => {
     if (!ticker) {
       return res.status(400).json({ error: 'underlying is required' });
     }
-    const selection = await selectContract(payload);
+    const userKey = resolveAiUserKey(req);
+    const selection = await selectContract(payload, { userKey, feature: 'analysis.contract-select' });
     res.json(selection);
   } catch (error) {
     next(error);
@@ -93,7 +97,8 @@ router.post('/contract-summary', async (req, res, next) => {
     if (!ticker) {
       return res.status(400).json({ error: 'ticker is required' });
     }
-    const summary = await summarizeContract(payload);
+    const userKey = resolveAiUserKey(req);
+    const summary = await summarizeContract(payload, { userKey, feature: 'analysis.contract-summary' });
     res.json(summary);
   } catch (error) {
     next(error);

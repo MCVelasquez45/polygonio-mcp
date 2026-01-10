@@ -1,11 +1,17 @@
-import axios from 'axios';
 // Builds summary reports for watchlist tickers. Prefers AI-generated summaries
 // (agent service) but falls back to deterministic Massive snapshots when the
 // agent is offline.
 import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../../shared/data/massive';
 import { getRecentAggregateBars } from '../../market/services/aggregatesStore';
+import { agentAnalyze, type AiRequestMeta } from '../../assistant/agentClient';
 
-const AGENT_API_URL = process.env.AGENT_API_URL || process.env.FASTAPI_URL || '';
+const AGENT_API_URL = process.env.AGENT_API_URL || process.env.FASTAPI_URL || process.env.PYTHON_URL || '';
+const WATCHLIST_REPORTS_TTL_MS = Number(process.env.WATCHLIST_REPORTS_TTL_MS ?? 10 * 60 * 1000);
+const watchlistReportsCache = new Map<
+  string,
+  { reports: WatchlistReport[]; source: 'agent' | 'snapshot' | 'empty'; cachedAt: number }
+>();
+const watchlistReportsInFlight = new Map<string, Promise<{ reports: WatchlistReport[]; source: 'agent' | 'snapshot' | 'empty' }>>();
 
 export type WatchlistReport = {
   symbol: string;
@@ -61,6 +67,10 @@ function normalizeBars(bars: { timestamp: number; open: number; high: number; lo
       c: bar.close,
       v: bar.volume
     }));
+}
+
+function buildCacheKey(tickers: string[]): string {
+  return tickers.map(ticker => ticker.toUpperCase()).sort().join(',');
 }
 
 function summarizeShortInterest(payload: { results: any[] } | null): ShortInterestSnapshot | null {
@@ -151,7 +161,10 @@ async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContex
 // Invokes the agent to generate more opinionated reports if available; returns null on failure.
 // Attempts to use the MCP/AI agent to generate human-friendly summaries. If
 // parsing fails or the agent errors, returns null so we can fall back.
-async function fetchAgentReports(tickers: string[]): Promise<WatchlistReport[] | null> {
+async function fetchAgentReports(
+  tickers: string[],
+  meta?: AiRequestMeta
+): Promise<WatchlistReport[] | null> {
   if (!AGENT_API_URL) return null;
   if (!tickers.length) return [];
   const context = await buildWatchlistContext(tickers);
@@ -171,11 +184,10 @@ async function fetchAgentReports(tickers: string[]): Promise<WatchlistReport[] |
     'Use the options snapshot (reference contract, volume, open interest) to infer put/call bias when possible.'
   ].join('\n');
   try {
-    const { data } = await axios.post(
-      `${AGENT_API_URL.replace(/\/$/, '')}/analyze`,
-      { query: prompt, session_name: 'watchlist-reports' },
-      { timeout: 20_000 }
-    );
+    const data = await agentAnalyze(prompt, { watchlistReports: context }, {
+      ...meta,
+      feature: meta?.feature ?? 'analysis.watchlist'
+    });
     const output = data?.output ?? data?.result ?? '';
     if (typeof output !== 'string') {
       return null;
@@ -260,16 +272,44 @@ async function buildSnapshotReports(tickers: string[]): Promise<WatchlistReport[
  * when available, otherwise snapshot-based summaries.
  */
 export async function getWatchlistReports(
-  tickers: string[]
+  tickers: string[],
+  meta?: AiRequestMeta
 ): Promise<{ reports: WatchlistReport[]; source: 'agent' | 'snapshot' | 'empty' }> {
   const unique = Array.from(new Set(tickers.map(ticker => ticker.toUpperCase()))).filter(Boolean);
   if (!unique.length) {
     return { reports: [], source: 'empty' };
   }
-  const agentReports = await fetchAgentReports(unique);
-  if (agentReports && agentReports.length) {
-    return { reports: agentReports, source: 'agent' };
+  const cacheKey = buildCacheKey(unique);
+  const now = Date.now();
+  if (WATCHLIST_REPORTS_TTL_MS > 0) {
+    const cached = watchlistReportsCache.get(cacheKey);
+    if (cached && now - cached.cachedAt < WATCHLIST_REPORTS_TTL_MS) {
+      return { reports: cached.reports, source: cached.source };
+    }
   }
-  const fallbackReports = await buildSnapshotReports(unique);
-  return { reports: fallbackReports, source: 'snapshot' };
+
+  const inFlight = watchlistReportsInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async () => {
+    const agentReports = await fetchAgentReports(unique, meta);
+    if (agentReports && agentReports.length) {
+      return { reports: agentReports, source: 'agent' as const };
+    }
+    const fallbackReports = await buildSnapshotReports(unique);
+    return { reports: fallbackReports, source: 'snapshot' as const };
+  })();
+
+  watchlistReportsInFlight.set(cacheKey, task);
+  try {
+    const result = await task;
+    if (WATCHLIST_REPORTS_TTL_MS > 0) {
+      watchlistReportsCache.set(cacheKey, { ...result, cachedAt: Date.now() });
+    }
+    return result;
+  } finally {
+    watchlistReportsInFlight.delete(cacheKey);
+  }
 }

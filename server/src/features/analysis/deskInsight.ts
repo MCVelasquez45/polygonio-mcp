@@ -1,4 +1,4 @@
-import { agentAnalyze } from '../assistant/agentClient';
+import { agentAnalyze, type AiRequestMeta } from '../assistant/agentClient';
 import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../shared/data/massive';
 import { getRecentAggregateBars } from '../market/services/aggregatesStore';
 
@@ -24,6 +24,10 @@ export type DeskInsight = {
   source: 'agent' | 'snapshot';
   updatedAt: string;
 };
+
+const DESK_INSIGHT_TTL_MS = Number(process.env.DESK_INSIGHT_TTL_MS ?? 30 * 60 * 1000);
+const deskInsightCache = new Map<string, { insight: DeskInsight; cachedAt: number }>();
+const deskInsightInFlight = new Map<string, Promise<DeskInsight>>();
 
 type DeskContext = {
   symbol: string;
@@ -273,7 +277,11 @@ function parseAgentInsight(symbol: string, parsed: any): DeskInsight | null {
   };
 }
 
-async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<DeskInsight | null> {
+async function fetchAgentInsight(
+  symbol: string,
+  context: DeskContext,
+  meta?: AiRequestMeta
+): Promise<DeskInsight | null> {
   const prompt = [
     'You are the AI desk for a trading app.',
     `Provide a concise insight for ${symbol}.`,
@@ -297,7 +305,10 @@ async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<
   ].join('\n');
 
   try {
-    const data = await agentAnalyze(prompt);
+    const data = await agentAnalyze(prompt, { deskInsight: context }, {
+      ...meta,
+      feature: meta?.feature ?? 'analysis.insight'
+    });
     const output = data?.output ?? data?.result ?? '';
     if (typeof output !== 'string') return null;
     const parsed = JSON.parse(output);
@@ -308,16 +319,42 @@ async function fetchAgentInsight(symbol: string, context: DeskContext): Promise<
   }
 }
 
-export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
+export async function getDeskInsight(symbol: string, meta?: AiRequestMeta): Promise<DeskInsight> {
   const upper = symbol.toUpperCase();
-  const context = await buildDeskContext(upper);
-  const shortBias = deriveShortInterestBias(
-    context.metrics?.shortInterest as ShortInterestSnapshot | undefined,
-    context.metrics?.shortVolume as ShortVolumeSnapshot | undefined
-  );
-  const agentInsight = await fetchAgentInsight(upper, context);
-  if (agentInsight) {
-    return { ...agentInsight, shortBias: { label: shortBias.label, reasons: shortBias.reasons } };
+  const now = Date.now();
+  if (DESK_INSIGHT_TTL_MS > 0) {
+    const cached = deskInsightCache.get(upper);
+    if (cached && now - cached.cachedAt < DESK_INSIGHT_TTL_MS) {
+      return cached.insight;
+    }
   }
-  return buildFallbackInsight(upper, context);
+
+  const inFlight = deskInsightInFlight.get(upper);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async () => {
+    const context = await buildDeskContext(upper);
+    const shortBias = deriveShortInterestBias(
+      context.metrics?.shortInterest as ShortInterestSnapshot | undefined,
+      context.metrics?.shortVolume as ShortVolumeSnapshot | undefined
+    );
+    const agentInsight = await fetchAgentInsight(upper, context, meta);
+    if (agentInsight) {
+      return { ...agentInsight, shortBias: { label: shortBias.label, reasons: shortBias.reasons } };
+    }
+    return buildFallbackInsight(upper, context);
+  })();
+
+  deskInsightInFlight.set(upper, task);
+  try {
+    const insight = await task;
+    if (DESK_INSIGHT_TTL_MS > 0) {
+      deskInsightCache.set(upper, { insight, cachedAt: Date.now() });
+    }
+    return insight;
+  } finally {
+    deskInsightInFlight.delete(upper);
+  }
 }

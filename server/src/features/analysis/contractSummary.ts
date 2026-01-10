@@ -1,4 +1,4 @@
-import { agentAnalyze } from '../assistant/agentClient';
+import { agentAnalyze, type AiRequestMeta } from '../assistant/agentClient';
 
 type ContractExplanationInput = {
   underlying: string;
@@ -120,10 +120,16 @@ function buildFallbackSummary(input: ContractExplanationInput): ContractExplanat
   };
 }
 
-export async function summarizeContract(input: ContractExplanationInput): Promise<ContractExplanationResult> {
+export async function summarizeContract(
+  input: ContractExplanationInput,
+  meta?: AiRequestMeta
+): Promise<ContractExplanationResult> {
   const prompt = buildPrompt(input);
   try {
-    const response = await agentAnalyze(prompt, { contractSummary: input });
+    const response = await agentAnalyze(prompt, { contractSummary: input }, {
+      ...meta,
+      feature: meta?.feature ?? 'analysis.contract-summary'
+    });
     const output = response?.output ?? response?.result ?? response?.reply ?? response;
     const parsed = parseJsonFromText(typeof output === 'string' ? output : '');
     if (parsed && typeof parsed === 'object') {

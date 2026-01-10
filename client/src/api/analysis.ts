@@ -17,8 +17,11 @@ type WatchlistReportsResponse = {
   fetchedAt?: string;
 };
 
-export async function getWatchlistReports(tickers: string[]): Promise<WatchlistReportsResponse> {
-  const { data } = await http.post<WatchlistReportsResponse>('/api/analysis/watchlist', { tickers });
+export async function getWatchlistReports(
+  tickers: string[],
+  signal?: AbortSignal
+): Promise<WatchlistReportsResponse> {
+  const { data } = await http.post<WatchlistReportsResponse>('/api/analysis/watchlist', { tickers }, { signal });
   return data;
 }
 
@@ -33,8 +36,8 @@ export type DeskInsight = {
   updatedAt?: string;
 };
 
-export async function getDeskInsight(symbol: string): Promise<DeskInsight> {
-  const { data } = await http.post<DeskInsight>('/api/analysis/insight', { symbol });
+export async function getDeskInsight(symbol: string, signal?: AbortSignal): Promise<DeskInsight> {
+  const { data } = await http.post<DeskInsight>('/api/analysis/insight', { symbol }, { signal });
   return data;
 }
 
@@ -62,14 +65,17 @@ export type ContractSelectionResult = {
   source: 'agent' | 'fallback';
 };
 
-export async function selectContract(payload: {
-  ticker: string;
-  underlyingPrice: number | null;
-  sentiment: 'bullish' | 'bearish' | 'neutral';
-  marketRegime?: 'trending' | 'choppy' | 'volatile';
-  candidates: ContractSelectionCandidate[];
-}): Promise<ContractSelectionResult> {
-  const { data } = await http.post<ContractSelectionResult>('/api/analysis/contract-select', payload);
+export async function selectContract(
+  payload: {
+    ticker: string;
+    underlyingPrice: number | null;
+    sentiment: 'bullish' | 'bearish' | 'neutral';
+    marketRegime?: 'trending' | 'choppy' | 'volatile';
+    candidates: ContractSelectionCandidate[];
+  },
+  signal?: AbortSignal
+): Promise<ContractSelectionResult> {
+  const { data } = await http.post<ContractSelectionResult>('/api/analysis/contract-select', payload, { signal });
   return data;
 }
 
@@ -82,34 +88,37 @@ export type ContractExplanationResult = {
   source: 'agent' | 'fallback';
 };
 
-export async function getContractExplanation(payload: {
-  underlying: string;
-  spotPrice: number | null;
-  breakeven: number | null;
-  breakevenPct: number | null;
-  contract: {
-    symbol: string;
-    type: 'call' | 'put';
-    strike: number | null;
-    expiration: string | null;
-    price: number | null;
-  };
-  decision: {
-    selectedContract: string | null;
-    side: 'call' | 'put' | null;
-    confidence: number | null;
-    reasons: string[];
-    warnings: string[];
-    source: 'agent' | 'fallback';
-    fallbackUsed: boolean;
-    constraintsFailed: string[];
-  };
-  risk: {
-    score: number | null;
-    label: string | null;
-  };
-}): Promise<ContractExplanationResult> {
-  const { data } = await http.post<ContractExplanationResult>('/api/analysis/contract-summary', payload);
+export async function getContractExplanation(
+  payload: {
+    underlying: string;
+    spotPrice: number | null;
+    breakeven: number | null;
+    breakevenPct: number | null;
+    contract: {
+      symbol: string;
+      type: 'call' | 'put';
+      strike: number | null;
+      expiration: string | null;
+      price: number | null;
+    };
+    decision: {
+      selectedContract: string | null;
+      side: 'call' | 'put' | null;
+      confidence: number | null;
+      reasons: string[];
+      warnings: string[];
+      source: 'agent' | 'fallback';
+      fallbackUsed: boolean;
+      constraintsFailed: string[];
+    };
+    risk: {
+      score: number | null;
+      label: string | null;
+    };
+  },
+  signal?: AbortSignal
+): Promise<ContractExplanationResult> {
+  const { data } = await http.post<ContractExplanationResult>('/api/analysis/contract-summary', payload, { signal });
   return data;
 }
 
@@ -167,7 +176,11 @@ type ChecklistResponse = {
   fetchedAt?: string;
 };
 
-export async function runChecklist(tickers: string[], force = false): Promise<ChecklistResponse> {
-  const { data } = await http.post<ChecklistResponse>('/api/analysis/checklist', { tickers, force });
+export async function runChecklist(
+  tickers: string[],
+  force = false,
+  signal?: AbortSignal
+): Promise<ChecklistResponse> {
+  const { data } = await http.post<ChecklistResponse>('/api/analysis/checklist', { tickers, force }, { signal });
   return data;
 }

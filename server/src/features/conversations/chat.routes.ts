@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { agentChat } from '../assistant/agentClient';
+import { resolveAiUserKey } from '../../shared/ai/controls';
 import { appendMessages } from './services/conversationStore';
 
 // Handles `/api/chat` requests and persists transcripts for later retrieval.
@@ -17,6 +18,7 @@ router.post('/', async (req, res, next) => {
 
     const resolvedSessionId =
       typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : randomUUID();
+    const userKey = resolveAiUserKey(req);
 
     console.log('[SERVER] /api/chat forwarding payload:', {
       message,
@@ -24,7 +26,10 @@ router.post('/', async (req, res, next) => {
       hasContext: Boolean(context),
     });
 
-    const data = await agentChat(message, resolvedSessionId, context);
+    const data = await agentChat(message, resolvedSessionId, context, {
+      userKey,
+      feature: 'assistant.chat'
+    });
     console.log('[SERVER] /api/chat response from agent:', data);
 
     const conversation = await appendMessages(
@@ -68,7 +73,11 @@ router.post('/report', async (req, res, next) => {
       'Return only the confirmation string from save_analysis_report.',
     ].join('\n');
 
-    const data = await agentChat(prompt, sessionId, context);
+    const userKey = resolveAiUserKey(req);
+    const data = await agentChat(prompt, sessionId, context, {
+      userKey,
+      feature: 'assistant.report'
+    });
     res.json({ result: data.reply ?? '(no reply)' });
   } catch (error: any) {
     const errorDetail =

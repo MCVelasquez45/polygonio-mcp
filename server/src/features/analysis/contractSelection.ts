@@ -1,4 +1,4 @@
-import { agentAnalyze } from '../assistant/agentClient';
+import { agentAnalyze, type AiRequestMeta } from '../assistant/agentClient';
 
 type Candidate = {
   symbol: string;
@@ -80,7 +80,10 @@ function parseJsonFromText(raw: string): any | null {
   }
 }
 
-export async function selectContract(payload: ContractSelectionRequest): Promise<ContractSelectionResult> {
+export async function selectContract(
+  payload: ContractSelectionRequest,
+  meta?: AiRequestMeta
+): Promise<ContractSelectionResult> {
   const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
   if (!candidates.length) {
     return {
@@ -94,7 +97,10 @@ export async function selectContract(payload: ContractSelectionRequest): Promise
   }
 
   const prompt = buildPrompt(payload);
-  const response = await agentAnalyze(prompt, { contractSelection: payload });
+  const response = await agentAnalyze(prompt, { contractSelection: payload }, {
+    ...meta,
+    feature: meta?.feature ?? 'analysis.contract-select'
+  });
   const output = response?.output ?? response?.result ?? response?.reply ?? response;
   const parsed = parseJsonFromText(typeof output === 'string' ? output : '');
 

@@ -46,6 +46,10 @@ const EMPTY_GREEKS: Record<GreekKey, number | null> = {
   rho: null,
 };
 
+function isAbortError(error: any): boolean {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
 export function GreeksPanel({
   contract,
   leg,
@@ -238,25 +242,36 @@ export function GreeksPanel({
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     setExplanation(null);
     setExplanationLoading(true);
     setExplanationError(null);
     analysisApi
-      .getContractExplanation(explanationPayload)
+      .getContractExplanation(explanationPayload, controller.signal)
       .then(result => {
         if (!cancelled) setExplanation(result);
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch(error => {
+        if (cancelled || isAbortError(error)) return;
+        if (error?.response?.status === 429) {
+          const retryAfterMs = error?.response?.data?.retryAfterMs;
+          const retryLabel =
+            typeof retryAfterMs === 'number' && retryAfterMs > 0
+              ? ` Try again in ${Math.ceil(retryAfterMs / 1000)}s.`
+              : '';
           setExplanation(null);
-          setExplanationError('Unable to generate an explanation yet.');
+          setExplanationError(`AI request limit reached.${retryLabel}`);
+          return;
         }
+        setExplanation(null);
+        setExplanationError('Unable to generate an explanation yet.');
       })
       .finally(() => {
         if (!cancelled) setExplanationLoading(false);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [analysisRequestId, explanationPayload]);
   const showExplanationPlaceholder = explanationLoading && !explanation && !explanationError;

@@ -94,6 +94,10 @@ function computeSMA(bars: AggregateBar[], window = SMA_WINDOW): IndicatorSeries 
   return { latest: typeof latest === 'number' ? latest : null, trend, values };
 }
 
+function isAbortError(error: any): boolean {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
 // Bundle any indicators we currently support so the chart can render overlays.
 function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBundle | undefined {
   if (!bars.length) return undefined;
@@ -195,6 +199,7 @@ function App() {
 
   // Conversation/chat state (AI insights dock).
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [aiRequestWarning, setAiRequestWarning] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [transcripts, setTranscripts] = useState<Record<string, ChatMessage[]>>({});
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -209,8 +214,8 @@ function App() {
   const deskInsightDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, true));
-  const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, true));
+  const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
+  const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
@@ -289,6 +294,18 @@ function App() {
 
   const handleContractAnalysisRequest = useCallback(() => {
     setContractAnalysisRequestId(prev => prev + 1);
+  }, []);
+
+  const handleAiLimit = useCallback((error: any) => {
+    if (error?.response?.status !== 429) return false;
+    const baseMessage = error?.response?.data?.error ?? 'AI request limit reached.';
+    const retryAfterMs = error?.response?.data?.retryAfterMs;
+    const retryLabel =
+      typeof retryAfterMs === 'number' && retryAfterMs > 0
+        ? ` Retry in ${Math.ceil(retryAfterMs / 1000)}s.`
+        : '';
+    setAiRequestWarning(`${baseMessage}${retryLabel}`);
+    return true;
   }, []);
 
   const watchlistSignature = watchlistSymbols.join(',');
@@ -503,12 +520,13 @@ function App() {
       clearTimeout(deskInsightDebounceRef.current);
     }
     let cancelled = false;
+    const controller = new AbortController();
     setDeskInsightLoading(true);
     deskInsightDebounceRef.current = setTimeout(() => {
       const startedAt = Date.now();
       deskInsightThrottleRef.current.set(deskInsightSymbol, startedAt);
       analysisApi
-        .getDeskInsight(deskInsightSymbol)
+        .getDeskInsight(deskInsightSymbol, controller.signal)
         .then(response => {
           if (cancelled) return;
           deskInsightCacheRef.current.set(deskInsightSymbol, { insight: response, fetchedAt: startedAt });
@@ -517,6 +535,8 @@ function App() {
         })
         .catch(error => {
           if (cancelled) return;
+          if (isAbortError(error)) return;
+          if (handleAiLimit(error)) return;
           console.warn('Failed to load AI desk insight', error);
           setDeskInsight(null);
         })
@@ -531,8 +551,9 @@ function App() {
       if (deskInsightDebounceRef.current) {
         clearTimeout(deskInsightDebounceRef.current);
       }
+      controller.abort();
     };
-  }, [deskInsightSymbol, deskInsightRefreshId, autoDeskInsights]);
+  }, [deskInsightSymbol, deskInsightRefreshId, autoDeskInsights, handleAiLimit]);
 
   useEffect(() => {
     if (!scannerRefreshId) return;
@@ -545,15 +566,18 @@ function App() {
     }
     const requestId = ++scannerRequestIdRef.current;
     let cancelled = false;
+    const controller = new AbortController();
     setScannerLoading(true);
     analysisApi
-      .getWatchlistReports(watchlistSymbols)
+      .getWatchlistReports(watchlistSymbols, controller.signal)
       .then(response => {
         if (cancelled || requestId !== scannerRequestIdRef.current) return;
         setScannerReports(response.reports ?? []);
       })
       .catch(error => {
         if (cancelled || requestId !== scannerRequestIdRef.current) return;
+        if (isAbortError(error)) return;
+        if (handleAiLimit(error)) return;
         console.warn('Failed to load watchlist reports', error);
         setScannerReports([]);
       })
@@ -564,8 +588,9 @@ function App() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [scannerRefreshId, watchlistSignature, watchlistSymbols]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, handleAiLimit]);
 
   // Run the entry checklist scan for the current watchlist on demand.
   useEffect(() => {
@@ -579,9 +604,10 @@ function App() {
     }
     const requestId = ++checklistRequestIdRef.current;
     let cancelled = false;
+    const controller = new AbortController();
     setChecklistLoading(true);
     analysisApi
-      .runChecklist(watchlistSymbols)
+      .runChecklist(watchlistSymbols, false, controller.signal)
       .then(response => {
         if (cancelled || requestId !== checklistRequestIdRef.current) return;
         const nextMap: Record<string, ChecklistResult> = {};
@@ -593,6 +619,8 @@ function App() {
       })
       .catch(error => {
         if (cancelled || requestId !== checklistRequestIdRef.current) return;
+        if (isAbortError(error)) return;
+        if (handleAiLimit(error)) return;
         console.warn('Failed to load checklist highlights', error);
         setChecklistHighlights({});
       })
@@ -603,8 +631,9 @@ function App() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [scannerRefreshId, watchlistSignature, watchlistSymbols]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, handleAiLimit]);
 
 
   // Lazily fetch conversation transcripts when the user re-opens a chat session.
@@ -1573,6 +1602,8 @@ function App() {
     contractSelectionThrottleRef.current.set(selectionKey, now);
 
     const requestId = ++contractSelectionRequestRef.current;
+    let cancelled = false;
+    const controller = new AbortController();
     setContractSelectionLoading(true);
     analysisApi
       .selectContract({
@@ -1580,9 +1611,9 @@ function App() {
         underlyingPrice: resolvedUnderlyingPrice ?? null,
         sentiment: (deskInsight?.sentiment?.label?.toLowerCase() as 'bullish' | 'bearish' | 'neutral') ?? 'neutral',
         candidates: filtered
-      })
+      }, controller.signal)
       .then(selection => {
-        if (requestId !== contractSelectionRequestRef.current) return;
+        if (cancelled || requestId !== contractSelectionRequestRef.current) return;
         setContractSelection(selection);
         const selectedSymbol = selection.selectedContract?.toUpperCase();
         if (!selectedSymbol) return;
@@ -1592,7 +1623,9 @@ function App() {
         }
       })
       .catch(error => {
-        if (requestId !== contractSelectionRequestRef.current) return;
+        if (cancelled || requestId !== contractSelectionRequestRef.current) return;
+        if (isAbortError(error)) return;
+        if (handleAiLimit(error)) return;
         console.warn('AI contract selection failed', error);
         setContractSelection({
           selectedContract: null,
@@ -1613,10 +1646,14 @@ function App() {
         }
       })
       .finally(() => {
-        if (requestId === contractSelectionRequestRef.current) {
+        if (!cancelled && requestId === contractSelectionRequestRef.current) {
           setContractSelectionLoading(false);
         }
       });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [
     contractSelectionRequestId,
     chainExpirations,
@@ -1626,7 +1663,8 @@ function App() {
     deskInsightSymbol,
     deskInsight?.sentiment?.label,
     handleContractSelection,
-    selectedLeg
+    selectedLeg,
+    handleAiLimit
   ]);
 
   const deskSummary = deskInsight?.summary || latestInsight;
@@ -1991,6 +2029,18 @@ function App() {
                 {marketError}
               </div>
             )}
+            {aiRequestWarning && (
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-100 px-4 py-3 flex items-start justify-between gap-4">
+                <span>{aiRequestWarning}</span>
+                <button
+                  type="button"
+                  onClick={() => setAiRequestWarning(null)}
+                  className="text-xs uppercase tracking-[0.2em] text-amber-200 hover:text-white"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             {view === 'trading' && tradingView}
             {view === 'scanner' && (
@@ -2351,14 +2401,15 @@ function summarizeIndicators(
   indicators?: IndicatorBundle
 ): { name: string; latest: number | null; trend: string | null }[] | null {
   if (!indicators) return null;
-  const entries = Object.entries(indicators).filter(([key]) => key !== 'ticker');
-  const summary = entries.flatMap(([key, value]) => {
-    if (!value || typeof value !== 'object') return [];
+  const summary: { name: string; latest: number | null; trend: string | null }[] = [];
+  for (const [key, value] of Object.entries(indicators)) {
+    if (key === 'ticker') continue;
+    if (!value || typeof value !== 'object') continue;
     const latest = typeof value.latest === 'number' ? value.latest : null;
     const trend = typeof value.trend === 'string' ? value.trend : null;
-    if (latest == null && trend == null) return [];
-    return [{ name: key.toUpperCase(), latest, trend }];
-  });
+    if (latest == null && trend == null) continue;
+    summary.push({ name: key.toUpperCase(), latest, trend });
+  }
   return summary.length ? summary : null;
 }
 

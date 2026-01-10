@@ -98,6 +98,10 @@ function formatCurrency(value: number, digits = 2) {
   }).format(value);
 }
 
+function isAbortError(error: any): boolean {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
 function isOpenOrder(status?: string | null) {
   if (!status) return false;
   const normalized = status.toLowerCase();
@@ -161,6 +165,7 @@ export function PortfolioPanel() {
   const [nextOpen, setNextOpen] = useState<string | null>(null);
   const [positionInsights, setPositionInsights] = useState<Record<string, DeskInsight>>({});
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
   const positionInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
   const [insightsRefreshId, setInsightsRefreshId] = useState(0);
   const lastInsightsRefreshRef = useRef(0);
@@ -247,6 +252,7 @@ export function PortfolioPanel() {
       setPositionInsights({});
       setInsightsLoading(false);
       setInsightsUpdatedAt(null);
+      setInsightsError(null);
       return;
     }
     const refreshRequested = lastInsightsRefreshRef.current !== insightsRefreshId;
@@ -275,13 +281,21 @@ export function PortfolioPanel() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    let rateLimited = false;
     setInsightsLoading(true);
+    setInsightsError(null);
     Promise.all(
       toFetch.map(async symbol => {
         try {
-          const insight = await analysisApi.getDeskInsight(symbol);
+          const insight = await analysisApi.getDeskInsight(symbol, controller.signal);
           return [symbol, insight] as const;
         } catch (error) {
+          if (isAbortError(error)) return null;
+          if (error?.response?.status === 429) {
+            rateLimited = true;
+            return null;
+          }
           return null;
         }
       })
@@ -299,13 +313,18 @@ export function PortfolioPanel() {
           });
           return next;
         });
-        setInsightsUpdatedAt(fetchedAt);
+        if (rateLimited) {
+          setInsightsError('AI request limit reached. Try again soon.');
+        } else {
+          setInsightsUpdatedAt(fetchedAt);
+        }
       })
       .finally(() => {
         if (!cancelled) setInsightsLoading(false);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [positions, insightsRefreshId]);
 
@@ -415,6 +434,7 @@ export function PortfolioPanel() {
             {insightsUpdatedAt && (
               <p className="text-[11px] text-gray-500">Sentiment updated {new Date(insightsUpdatedAt).toLocaleTimeString()}</p>
             )}
+            {insightsError && <p className="text-[11px] text-amber-200">{insightsError}</p>}
           </div>
         </div>
       </header>

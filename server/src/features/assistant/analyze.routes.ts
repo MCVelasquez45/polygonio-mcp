@@ -1,6 +1,7 @@
 import { Router } from 'express';
 // Assistant router: validates analyze requests and forwards them to the Python agent service.
 import { agentAnalyze } from './agentClient';
+import { resolveAiUserKey } from '../../shared/ai/controls';
 
 const router = Router();
 
@@ -20,7 +21,8 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'query is required' });
     }
     console.log('[SERVER] /api/analyze forwarding payload:', { query, hasContext: Boolean(context) });
-    const data = await agentAnalyze(query, context);
+    const userKey = resolveAiUserKey(req);
+    const data = await agentAnalyze(query, context, { userKey, feature: 'assistant.analyze' });
     console.log('[SERVER] /api/analyze response from agent:', data);
     res.json(data);
   } catch (error) {
