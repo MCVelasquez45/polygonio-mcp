@@ -25,7 +25,9 @@ type Props = {
   selection?: ContractSelectionResult | null;
   selectionLoading?: boolean;
   onRequestSelection?: () => void;
+  selectionDisabled?: boolean;
   analysisRequestId?: number;
+  analysisDisabled?: boolean;
 };
 
 type RiskSlice = {
@@ -59,7 +61,9 @@ export function GreeksPanel({
   selection,
   selectionLoading,
   onRequestSelection,
-  analysisRequestId
+  selectionDisabled,
+  analysisRequestId,
+  analysisDisabled
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
@@ -233,6 +237,12 @@ export function GreeksPanel({
 
   useEffect(() => {
     if (!analysisRequestId) return;
+    if (analysisDisabled) {
+      setExplanation(null);
+      setExplanationError('AI contract analysis is disabled in Settings.');
+      setExplanationLoading(false);
+      return;
+    }
     if (analysisRequestRef.current === analysisRequestId) return;
     analysisRequestRef.current = analysisRequestId;
     if (!explanationPayload) {
@@ -273,7 +283,7 @@ export function GreeksPanel({
       cancelled = true;
       controller.abort();
     };
-  }, [analysisRequestId, explanationPayload]);
+  }, [analysisRequestId, analysisDisabled, explanationPayload]);
   const showExplanationPlaceholder = explanationLoading && !explanation && !explanationError;
 
   return (
@@ -288,7 +298,7 @@ export function GreeksPanel({
             <button
               type="button"
               onClick={onRequestSelection}
-              disabled={selectionLoading}
+              disabled={selectionLoading || selectionDisabled}
               className="px-3 py-1 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
             >
               AI Select

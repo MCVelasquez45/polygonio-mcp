@@ -50,6 +50,13 @@ const DESK_INSIGHT_DEBOUNCE_MS = 500;
 const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
 const DESK_INSIGHT_THROTTLE_MS = 30_000;
 const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
+const AI_FEATURES_ENABLED_KEY = 'market-copilot.aiEnabled';
+const AI_DESK_INSIGHTS_ENABLED_KEY = 'market-copilot.aiDeskInsightsEnabled';
+const AI_CONTRACT_SELECTION_ENABLED_KEY = 'market-copilot.aiContractSelectionEnabled';
+const AI_CONTRACT_ANALYSIS_ENABLED_KEY = 'market-copilot.aiContractAnalysisEnabled';
+const AI_SCANNER_ENABLED_KEY = 'market-copilot.aiScannerEnabled';
+const AI_PORTFOLIO_SENTIMENT_ENABLED_KEY = 'market-copilot.aiPortfolioSentimentEnabled';
+const AI_CHAT_ENABLED_KEY = 'market-copilot.aiChatEnabled';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
@@ -350,8 +357,20 @@ function App() {
   const deskInsightDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(() => readStoredBoolean(AI_FEATURES_ENABLED_KEY, true));
+  const [aiDeskInsightsEnabled, setAiDeskInsightsEnabled] = useState(() => readStoredBoolean(AI_DESK_INSIGHTS_ENABLED_KEY, true));
+  const [aiContractSelectionEnabled, setAiContractSelectionEnabled] = useState(() => readStoredBoolean(AI_CONTRACT_SELECTION_ENABLED_KEY, true));
+  const [aiContractAnalysisEnabled, setAiContractAnalysisEnabled] = useState(() => readStoredBoolean(AI_CONTRACT_ANALYSIS_ENABLED_KEY, true));
+  const [aiScannerEnabled, setAiScannerEnabled] = useState(() => readStoredBoolean(AI_SCANNER_ENABLED_KEY, true));
+  const [aiPortfolioSentimentEnabled, setAiPortfolioSentimentEnabled] = useState(() => readStoredBoolean(AI_PORTFOLIO_SENTIMENT_ENABLED_KEY, true));
+  const [aiChatEnabled, setAiChatEnabled] = useState(() => readStoredBoolean(AI_CHAT_ENABLED_KEY, true));
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
+  const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
+  const contractSelectionAllowed = aiEnabled && aiContractSelectionEnabled;
+  const contractAnalysisAllowed = aiEnabled && aiContractAnalysisEnabled;
+  const scannerAllowed = aiEnabled && aiScannerEnabled;
+  const chatAllowed = aiEnabled && aiChatEnabled;
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
@@ -417,20 +436,44 @@ function App() {
   }, []);
 
   const handleDeskInsightRefresh = useCallback(() => {
+    if (!deskInsightsAllowed) {
+      setAiRequestWarning('AI desk insights are disabled in Settings.');
+      return;
+    }
     setDeskInsightRefreshId(prev => prev + 1);
-  }, []);
+  }, [deskInsightsAllowed]);
 
   const handleScannerRefresh = useCallback(() => {
+    if (!scannerAllowed) {
+      setAiRequestWarning('AI scanner is disabled in Settings.');
+      return;
+    }
     setScannerRefreshId(prev => prev + 1);
-  }, []);
+  }, [scannerAllowed]);
 
   const handleContractSelectionRequest = useCallback(() => {
+    if (!contractSelectionAllowed) {
+      setAiRequestWarning('AI contract selection is disabled in Settings.');
+      return;
+    }
     setContractSelectionRequestId(prev => prev + 1);
-  }, []);
+  }, [contractSelectionAllowed]);
 
   const handleContractAnalysisRequest = useCallback(() => {
+    if (!contractAnalysisAllowed) {
+      setAiRequestWarning('AI contract analysis is disabled in Settings.');
+      return;
+    }
     setContractAnalysisRequestId(prev => prev + 1);
-  }, []);
+  }, [contractAnalysisAllowed]);
+
+  const handleToggleChat = useCallback(() => {
+    if (!chatAllowed) {
+      setAiRequestWarning('AI chat is disabled in Settings.');
+      return;
+    }
+    setIsChatOpen(prev => !prev);
+  }, [chatAllowed]);
 
   const handleAiLimit = useCallback((error: any) => {
     if (error?.response?.status !== 429) return false;
@@ -455,6 +498,69 @@ function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
+      window.localStorage.setItem(AI_FEATURES_ENABLED_KEY, String(aiEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_DESK_INSIGHTS_ENABLED_KEY, String(aiDeskInsightsEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiDeskInsightsEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_CONTRACT_SELECTION_ENABLED_KEY, String(aiContractSelectionEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiContractSelectionEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_CONTRACT_ANALYSIS_ENABLED_KEY, String(aiContractAnalysisEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiContractAnalysisEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_SCANNER_ENABLED_KEY, String(aiScannerEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiScannerEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_PORTFOLIO_SENTIMENT_ENABLED_KEY, String(aiPortfolioSentimentEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiPortfolioSentimentEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(AI_CHAT_ENABLED_KEY, String(aiChatEnabled));
+    } catch {
+      // ignore persistence failures
+    }
+  }, [aiChatEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
       window.localStorage.setItem(AUTO_DESK_INSIGHTS_KEY, String(autoDeskInsights));
     } catch {
       // ignore persistence failures
@@ -469,6 +575,18 @@ function App() {
       // ignore persistence failures
     }
   }, [autoContractSelection]);
+
+  useEffect(() => {
+    if (!chatAllowed && isChatOpen) {
+      setIsChatOpen(false);
+    }
+  }, [chatAllowed, isChatOpen]);
+
+  useEffect(() => {
+    if (!contractSelectionAllowed) {
+      setContractSelectionLoading(false);
+    }
+  }, [contractSelectionAllowed]);
 
   useEffect(() => {
     if (autoContractSelection) return;
@@ -629,6 +747,10 @@ function App() {
       setDeskInsightUpdatedAt(null);
       return;
     }
+    if (!deskInsightsAllowed) {
+      setDeskInsightLoading(false);
+      return;
+    }
     const now = Date.now();
     const cachedEntry = deskInsightCacheRef.current.get(deskInsightSymbol);
     const cacheFresh = cachedEntry ? now - cachedEntry.fetchedAt < DESK_INSIGHT_TTL_MS : false;
@@ -689,9 +811,13 @@ function App() {
       }
       controller.abort();
     };
-  }, [deskInsightSymbol, deskInsightRefreshId, autoDeskInsights, handleAiLimit]);
+  }, [deskInsightSymbol, deskInsightRefreshId, autoDeskInsights, deskInsightsAllowed, handleAiLimit]);
 
   useEffect(() => {
+    if (!scannerAllowed) {
+      setScannerLoading(false);
+      return;
+    }
     if (!scannerRefreshId) return;
     if (lastScannerRefreshRef.current === scannerRefreshId) return;
     lastScannerRefreshRef.current = scannerRefreshId;
@@ -726,10 +852,14 @@ function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, handleAiLimit]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, scannerAllowed, handleAiLimit]);
 
   // Run the entry checklist scan for the current watchlist on demand.
   useEffect(() => {
+    if (!scannerAllowed) {
+      setChecklistLoading(false);
+      return;
+    }
     if (!scannerRefreshId) return;
     if (lastChecklistRefreshRef.current === scannerRefreshId) return;
     lastChecklistRefreshRef.current = scannerRefreshId;
@@ -769,7 +899,7 @@ function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, handleAiLimit]);
+  }, [scannerRefreshId, watchlistSignature, watchlistSymbols, scannerAllowed, handleAiLimit]);
 
 
   // Lazily fetch conversation transcripts when the user re-opens a chat session.
@@ -1704,7 +1834,7 @@ function App() {
       }}
       onWatchlistChange={handleWatchlistChange}
       onRequestAutoSelect={handleContractSelectionRequest}
-      autoSelectDisabled={contractSelectionLoading || !chainExpirations.length}
+      autoSelectDisabled={contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed}
     />
   );
 
@@ -1818,7 +1948,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!autoContractSelection) return;
+    if (!contractSelectionAllowed || !autoContractSelection) return;
     if (!chainExpirations.length || !preferredOptionSide) return;
     if (selectedLeg && selectionSourceRef.current === 'user') return;
     const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}`;
@@ -1827,6 +1957,7 @@ function App() {
     setContractSelectionRequestId(prev => prev + 1);
   }, [
     autoContractSelection,
+    contractSelectionAllowed,
     chainExpirations,
     preferredOptionSide,
     selectedExpiration,
@@ -1835,6 +1966,7 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!contractSelectionAllowed) return;
     if (!contractSelectionRequestId) return;
     if (lastContractSelectionRequestRef.current === contractSelectionRequestId) return;
     lastContractSelectionRequestRef.current = contractSelectionRequestId;
@@ -1932,6 +2064,7 @@ function App() {
     };
   }, [
     contractSelectionRequestId,
+    contractSelectionAllowed,
     chainExpirations,
     selectedExpiration,
     resolvedUnderlyingPrice,
@@ -2105,15 +2238,16 @@ function App() {
               <button
                 type="button"
                 onClick={handleDeskInsightRefresh}
-                disabled={deskInsightLoading}
+                disabled={deskInsightLoading || !deskInsightsAllowed}
                 className="px-3 py-1 rounded-full border border-gray-800 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
               >
                 Refresh
               </button>
               <button
                 type="button"
-                onClick={() => setIsChatOpen(true)}
-                className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10"
+                onClick={handleToggleChat}
+                disabled={!chatAllowed}
+                className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-60"
               >
                 Ask AI
               </button>
@@ -2167,7 +2301,9 @@ function App() {
           selection={contractSelection}
           selectionLoading={contractSelectionLoading}
           onRequestSelection={handleContractSelectionRequest}
+          selectionDisabled={!contractSelectionAllowed}
           analysisRequestId={contractAnalysisRequestId}
+          analysisDisabled={!contractAnalysisAllowed}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
@@ -2205,7 +2341,7 @@ function App() {
           selectedContractDetail={contractDetail}
           preferredSide={preferredOptionSide}
           onRequestAnalysis={handleContractAnalysisRequest}
-          analysisDisabled={!selectedLeg && !contractDetail}
+          analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
         />
       </div>
     </div>
@@ -2233,10 +2369,11 @@ function App() {
         currentView={view}
         onViewChange={setView}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
-        onToggleChat={() => setIsChatOpen(prev => !prev)}
+        onToggleChat={handleToggleChat}
         isChatOpen={isChatOpen}
         onToggleSettings={() => setSettingsOpen(prev => !prev)}
         isSettingsOpen={settingsOpen}
+        chatDisabled={!chatAllowed}
       />
       {settingsOpen && (
         <div
@@ -2263,6 +2400,56 @@ function App() {
             <div className="space-y-4 text-sm text-gray-300">
               <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
                 <span>
+                  <span className="block text-sm font-semibold text-white">Enable AI features</span>
+                  <span className="block text-xs text-gray-500">Master switch for all AI-powered tools.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiEnabled}
+                  onChange={event => setAiEnabled(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">AI chat</span>
+                  <span className="block text-xs text-gray-500">Enable the AI Desk chat dock.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiChatEnabled}
+                  onChange={event => setAiChatEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">Desk insights</span>
+                  <span className="block text-xs text-gray-500">Enable AI summaries, sentiment, and highlights.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiDeskInsightsEnabled}
+                  onChange={event => setAiDeskInsightsEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !deskInsightsAllowed ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
                   <span className="block text-sm font-semibold text-white">Auto desk insights</span>
                   <span className="block text-xs text-gray-500">Automatically fetch AI insight when you change tickers.</span>
                 </span>
@@ -2270,10 +2457,32 @@ function App() {
                   type="checkbox"
                   checked={autoDeskInsights}
                   onChange={event => setAutoDeskInsights(event.target.checked)}
+                  disabled={!deskInsightsAllowed}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />
               </label>
-              <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">AI contract selection</span>
+                  <span className="block text-xs text-gray-500">Enable AI-driven contract picks on demand.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiContractSelectionEnabled}
+                  onChange={event => setAiContractSelectionEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !contractSelectionAllowed ? 'opacity-50' : ''
+                }`}
+              >
                 <span>
                   <span className="block text-sm font-semibold text-white">Auto contract selection</span>
                   <span className="block text-xs text-gray-500">Let AI pick a contract when the chain loads.</span>
@@ -2282,6 +2491,58 @@ function App() {
                   type="checkbox"
                   checked={autoContractSelection}
                   onChange={event => setAutoContractSelection(event.target.checked)}
+                  disabled={!contractSelectionAllowed}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">AI contract analysis</span>
+                  <span className="block text-xs text-gray-500">Enable “Analyze with AI” explanations.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiContractAnalysisEnabled}
+                  onChange={event => setAiContractAnalysisEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">AI watchlist scanner</span>
+                  <span className="block text-xs text-gray-500">Enable AI scanner reports + checklist highlights.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiScannerEnabled}
+                  onChange={event => setAiScannerEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
+                  !aiEnabled ? 'opacity-50' : ''
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">Portfolio sentiment</span>
+                  <span className="block text-xs text-gray-500">Enable AI sentiment refresh for positions.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={aiPortfolioSentimentEnabled}
+                  onChange={event => setAiPortfolioSentimentEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />
               </label>
@@ -2332,7 +2593,8 @@ function App() {
                   highlights={checklistHighlights}
                   highlightLoading={checklistLoading}
                   onRunScan={handleScannerRefresh}
-                  runDisabled={!watchlistSymbols.length}
+                  runDisabled={!watchlistSymbols.length || !scannerAllowed}
+                  aiDisabled={!scannerAllowed}
                   onTickerSelect={value => {
                     setTicker(value);
                     setView('trading');
@@ -2342,7 +2604,7 @@ function App() {
             )}
             {view === 'portfolio' && (
               <div className="pb-24">
-                <PortfolioPanel />
+                <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
               </div>
             )}
           </div>
@@ -2350,7 +2612,7 @@ function App() {
       </div>
 
       <ChatDock
-        isOpen={isChatOpen}
+        isOpen={isChatOpen && chatAllowed}
         onClose={() => setIsChatOpen(false)}
         conversations={conversations}
         transcripts={transcripts}

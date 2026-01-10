@@ -12,6 +12,7 @@ type Props = {
   onToggleSidebar: () => void;
   onToggleChat: () => void;
   isChatOpen: boolean;
+  chatDisabled?: boolean;
   onToggleSettings: () => void;
   isSettingsOpen?: boolean;
 };
@@ -31,6 +32,7 @@ export function TradingHeader({
   onToggleSidebar,
   onToggleChat,
   isChatOpen,
+  chatDisabled,
   onToggleSettings,
   isSettingsOpen,
 }: Props) {
@@ -121,8 +123,13 @@ export function TradingHeader({
           <button
             type="button"
             onClick={onToggleChat}
+            disabled={chatDisabled}
             className={`inline-flex items-center justify-center h-10 w-10 rounded-xl border ${
-              isChatOpen ? 'border-emerald-500 text-emerald-300' : 'border-gray-800 text-gray-400 hover:text-white'
+              isChatOpen
+                ? 'border-emerald-500 text-emerald-300'
+                : chatDisabled
+                ? 'border-gray-900 text-gray-600'
+                : 'border-gray-800 text-gray-400 hover:text-white'
             }`}
             aria-label="Toggle chat"
           >

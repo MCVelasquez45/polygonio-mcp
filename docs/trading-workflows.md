@@ -43,6 +43,7 @@ This document summarizes how the desk should use the latest build. Share it with
 1. “Latest Insight” card shows the most recent AI blurb for the active ticker.  
 2. “Ask AI” opens ChatDock. Contract context, chart timeframe, and watchlist snapshot are piped into FastAPI so the assistant can answer position/risk questions.  
 3. Conversations persist locally (see `STORAGE_KEY = 'market-copilot.conversations'`).
+4. Settings → AI Request Controls lets you toggle AI features (chat, desk insights, contract selection/analysis, scanner, portfolio sentiment) and their auto modes.
 
 ## 7. Portfolio Panel (Alpaca Paper)
 - Displays buying power, equity, cash, and a card-per-position summary by calling Alpaca endpoints (`getBrokerAccount`, `getOptionPositions`).  

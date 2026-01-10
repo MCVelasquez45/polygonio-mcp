@@ -32,6 +32,11 @@ type OrderView = {
 
 const INSIGHT_TTL_MS = 60 * 60 * 1000;
 
+type Props = {
+  aiEnabled?: boolean;
+  sentimentEnabled?: boolean;
+};
+
 function toNumber(value: string | number | null | undefined, fallback = 0) {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -148,7 +153,7 @@ function buildPositionInsight(position: PositionView) {
   };
 }
 
-export function PortfolioPanel() {
+export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Props) {
   const [positions, setPositions] = useState<PositionView[]>([]);
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [accountSummary, setAccountSummary] = useState<{ buyingPower: number; equity: number; cash: number }>({
@@ -173,6 +178,7 @@ export function PortfolioPanel() {
   const [insightsUpdatedAt, setInsightsUpdatedAt] = useState<number | null>(null);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const insightsAllowed = aiEnabled && sentimentEnabled;
 
   const loadPortfolio = useCallback(async () => {
     setLoading(true);
@@ -237,15 +243,24 @@ export function PortfolioPanel() {
   }, []);
 
   const handleRefreshInsights = useCallback(() => {
+    if (!insightsAllowed) {
+      setInsightsError('AI sentiment is disabled in Settings.');
+      return;
+    }
     positionInsightCacheRef.current.clear();
     setInsightsRefreshId(prev => prev + 1);
-  }, []);
+  }, [insightsAllowed]);
 
   useEffect(() => {
     void loadPortfolio();
   }, [loadPortfolio]);
 
   useEffect(() => {
+    if (!insightsAllowed) {
+      setInsightsLoading(false);
+      setInsightsError(null);
+      return;
+    }
     const symbols = Array.from(
       new Set(positions.map(position => getUnderlyingSymbol(position.symbol)).filter(Boolean))
     );
@@ -327,7 +342,7 @@ export function PortfolioPanel() {
       cancelled = true;
       controller.abort();
     };
-  }, [positions, insightsRefreshId]);
+  }, [positions, insightsRefreshId, insightsAllowed]);
 
   useEffect(() => {
     const symbols = Array.from(
@@ -426,7 +441,7 @@ export function PortfolioPanel() {
                 type="button"
                 onClick={handleRefreshInsights}
                 className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
-                disabled={insightsLoading}
+                disabled={insightsLoading || !insightsAllowed}
               >
                 Refresh sentiment
               </button>
@@ -435,6 +450,7 @@ export function PortfolioPanel() {
             {insightsUpdatedAt && (
               <p className="text-[11px] text-gray-500">Sentiment updated {new Date(insightsUpdatedAt).toLocaleTimeString()}</p>
             )}
+            {!insightsAllowed && <p className="text-[11px] text-gray-500">AI sentiment disabled in Settings.</p>}
             {insightsError && <p className="text-[11px] text-amber-200">{insightsError}</p>}
           </div>
         </div>

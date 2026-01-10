@@ -9,6 +9,7 @@ type Props = {
   highlightLoading?: boolean;
   onRunScan?: () => void;
   runDisabled?: boolean;
+  aiDisabled?: boolean;
 };
 
 function formatSentimentLabel(sentiment?: string | null) {
@@ -30,11 +31,13 @@ export function OptionsScanner({
   highlights,
   highlightLoading,
   onRunScan,
-  runDisabled
+  runDisabled,
+  aiDisabled
 }: Props) {
   const hasReports = Boolean(reports?.length);
   const rows = hasReports ? reports ?? [] : [];
   const showEmptyState = !isLoading && !hasReports;
+  const showDisabledState = aiDisabled && !isLoading && !hasReports;
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
@@ -58,7 +61,11 @@ export function OptionsScanner({
         )}
       </div>
 
-      {isLoading ? (
+      {showDisabledState ? (
+        <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
+          AI scanner is disabled in Settings.
+        </div>
+      ) : isLoading ? (
         <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
           Fetching AI reports…
         </div>
