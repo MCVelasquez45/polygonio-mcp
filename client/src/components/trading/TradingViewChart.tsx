@@ -115,22 +115,41 @@ function resolveDateFromTime(time: Time): Date | null {
     return new Date(time * 1000);
   }
   if (time && typeof time === 'object' && 'year' in time) {
-    return new Date(Date.UTC(time.year, time.month - 1, time.day));
+    return new Date(time.year, time.month - 1, time.day);
   }
   return null;
+}
+
+function getUserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
 }
 
 function buildTickFormatter(timeframe: string) {
   const unit = resolveTimeframeUnit(timeframe);
   const isIntraday = unit === 'minute' || unit === 'hour';
+  const timeZone = getUserTimeZone();
   const formatter = new Intl.DateTimeFormat(undefined, isIntraday
-    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-    : { month: 'short', day: 'numeric' }
+    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone }
+    : { month: 'short', day: 'numeric', timeZone }
   );
   return (time: Time) => {
     const date = resolveDateFromTime(time);
     return date ? formatter.format(date) : '';
   };
+}
+
+function buildTooltipFormatter(timeframe: string) {
+  const unit = resolveTimeframeUnit(timeframe);
+  const isIntraday = unit === 'minute' || unit === 'hour';
+  const timeZone = getUserTimeZone();
+  return new Intl.DateTimeFormat(undefined, isIntraday
+    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone }
+    : { month: 'short', day: 'numeric', timeZone }
+  );
 }
 
 const computeSma = (
@@ -296,14 +315,7 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
     const volume = volumeSeriesRef.current;
     if (!chart || !tooltip || !candles || !volume) return;
 
-    const unit = timeframe.split('/')[1] ?? 'day';
-    const isDailyView = unit === 'day';
-    const timeFormatter = new Intl.DateTimeFormat(undefined, isDailyView ? { month: 'short', day: 'numeric' } : {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    const timeFormatter = buildTooltipFormatter(timeframe);
 
     const handler: MouseEventHandler<Time> = param => {
       if (!param.time || !param.point) {
