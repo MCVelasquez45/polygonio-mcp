@@ -50,6 +50,38 @@ type OrderDraft = {
   aiConfidence?: number;
 };
 
+type FieldHelpState = {
+  side: boolean;
+  qtyMode: boolean;
+  quantity: boolean;
+  orderType: boolean;
+  stopPrice: boolean;
+  limitPrice: boolean;
+  trailingStop: boolean;
+  timeInForce: boolean;
+  review: boolean;
+};
+
+type HelpToggleProps = {
+  checked: boolean;
+  onChange: () => void;
+  label?: string;
+};
+
+function HelpToggle({ checked, onChange, label = 'Explain' }: HelpToggleProps) {
+  return (
+    <label className="flex items-center gap-2 text-[11px] text-gray-500">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 function formatCountdown(value?: string | null): string | null {
   if (!value) return null;
   const target = Date.parse(value);
@@ -106,6 +138,17 @@ export function OrderTicketPanel({
   const [tipsOpen, setTipsOpen] = useState(true);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
+  const [fieldHelp, setFieldHelp] = useState<FieldHelpState>({
+    side: false,
+    qtyMode: false,
+    quantity: false,
+    orderType: false,
+    stopPrice: false,
+    limitPrice: false,
+    trailingStop: false,
+    timeInForce: false,
+    review: false,
+  });
 
   useEffect(() => {
     setQuantity(1);
@@ -297,30 +340,6 @@ export function OrderTicketPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="border border-gray-900 rounded-2xl">
-          <button
-            type="button"
-            onClick={() => setTipsOpen(open => !open)}
-            className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-300"
-          >
-            <span>Beginner Guide</span>
-            {tipsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-          {tipsOpen && (
-            <div className="px-4 pb-4 space-y-2 text-xs text-gray-400">
-              <p>1) Choose Buy or Sell. Buy opens a position, Sell closes it.</p>
-              <p>2) Pick an order type. Market = fastest, Limit = price control.</p>
-              <p>3) Fill in any required prices, then review before submitting.</p>
-              {assetType === 'option' ? (
-                <p>Options trade in contracts (1 contract = 100 shares).</p>
-              ) : (
-                <p>Stocks trade in shares (or dollars when available).</p>
-              )}
-              <p>Time in force: DAY expires today, GTC stays until canceled.</p>
-            </div>
-          )}
-        </div>
-
         {(marketClosed || afterHours) && (
           <div
             className={`rounded-xl border px-3 py-2 text-xs ${
@@ -341,6 +360,13 @@ export function OrderTicketPanel({
           </div>
         )}
 
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+          <span>Side</span>
+          <HelpToggle
+            checked={fieldHelp.side}
+            onChange={() => setFieldHelp(prev => ({ ...prev, side: !prev.side }))}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
           <button
             type="button"
@@ -361,6 +387,11 @@ export function OrderTicketPanel({
             Sell
           </button>
         </div>
+        {fieldHelp.side && (
+          <p className="text-xs text-white">
+            Buy opens a new position. Sell closes an existing position.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2">
@@ -374,7 +405,18 @@ export function OrderTicketPanel({
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Quantity Mode</p>
+          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+            <span>Quantity Mode</span>
+            <HelpToggle
+              checked={fieldHelp.qtyMode}
+              onChange={() => setFieldHelp(prev => ({ ...prev, qtyMode: !prev.qtyMode }))}
+            />
+          </div>
+        {fieldHelp.qtyMode && (
+          <p className="text-xs text-white">
+            Contracts are standard for options (1 contract = 100 shares). Shares is for stock orders.
+          </p>
+        )}
           <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
             <button
               type="button"
@@ -405,8 +447,19 @@ export function OrderTicketPanel({
           )}
         </div>
 
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+          <span>Quantity ({quantityLabel.toLowerCase()})</span>
+          <HelpToggle
+            checked={fieldHelp.quantity}
+            onChange={() => setFieldHelp(prev => ({ ...prev, quantity: !prev.quantity }))}
+          />
+        </div>
+        {fieldHelp.quantity && (
+          <p className="text-xs text-white">
+            Enter how many contracts or shares you want to trade. Start small while learning.
+          </p>
+        )}
         <label className="flex flex-col gap-1 text-sm">
-          Quantity ({quantityLabel.toLowerCase()})
           <input
             type="number"
             min={1}
@@ -416,8 +469,19 @@ export function OrderTicketPanel({
           />
         </label>
 
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+          <span>Order Type</span>
+          <HelpToggle
+            checked={fieldHelp.orderType}
+            onChange={() => setFieldHelp(prev => ({ ...prev, orderType: !prev.orderType }))}
+          />
+        </div>
+        {fieldHelp.orderType && (
+          <p className="text-xs text-white">
+            Market fills fast at the next price. Limit waits for your price. Stop triggers when the market reaches your trigger.
+          </p>
+        )}
         <label className="flex flex-col gap-1 text-sm">
-          Order Type
           <select
             value={orderType}
             onChange={event => setOrderType(event.target.value as OrderType)}
@@ -433,24 +497,41 @@ export function OrderTicketPanel({
 
         {requiresStop && (
           <label className="flex flex-col gap-1 text-sm">
-            Stop Price
+            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+              <span>Stop Price</span>
+              <HelpToggle
+                checked={fieldHelp.stopPrice}
+                onChange={() => setFieldHelp(prev => ({ ...prev, stopPrice: !prev.stopPrice }))}
+              />
+            </div>
             <input
               type="number"
               step="0.01"
               min={0}
               value={stopPrice}
               onChange={event => setStopPrice(event.target.value)}
-              className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
+              className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
             />
+            {fieldHelp.stopPrice && (
+              <span className="text-xs text-white">
+                Stop price is the trigger. When the market hits it, the order activates.
+              </span>
+            )}
             {marketPriceDisplay !== '—' && (
-              <span className="text-xs text-gray-500">Market: {marketPriceDisplay}</span>
+              <span className="text-xs text-white">Market: {marketPriceDisplay}</span>
             )}
           </label>
         )}
 
         {requiresLimit && (
           <label className="flex flex-col gap-1 text-sm">
-            Limit Price
+            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+              <span>Limit Price</span>
+              <HelpToggle
+                checked={fieldHelp.limitPrice}
+                onChange={() => setFieldHelp(prev => ({ ...prev, limitPrice: !prev.limitPrice }))}
+              />
+            </div>
             <input
               type="number"
               step="0.01"
@@ -459,8 +540,13 @@ export function OrderTicketPanel({
               onChange={event => setLimitPrice(event.target.value)}
               className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
             />
+            {fieldHelp.limitPrice && (
+              <span className="text-xs text-white">
+                Limit price is the maximum you pay (buy) or minimum you accept (sell).
+              </span>
+            )}
             {marketPriceDisplay !== '—' && (
-              <span className="text-xs text-gray-500">Market: {marketPriceDisplay}</span>
+              <span className="text-xs text-white">Market: {marketPriceDisplay}</span>
             )}
           </label>
         )}
@@ -474,7 +560,18 @@ export function OrderTicketPanel({
 
         {requiresTrail && (
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Trailing Stop</p>
+            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+              <span>Trailing Stop</span>
+              <HelpToggle
+                checked={fieldHelp.trailingStop}
+                onChange={() => setFieldHelp(prev => ({ ...prev, trailingStop: !prev.trailingStop }))}
+              />
+            </div>
+            {fieldHelp.trailingStop && (
+              <p className="text-xs text-white">
+                A trailing stop follows price by a fixed percent or dollar amount, locking in gains if price reverses.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
               <button
                 type="button"
@@ -507,14 +604,25 @@ export function OrderTicketPanel({
                 min={0}
                 value={trailValue}
                 onChange={event => setTrailValue(event.target.value)}
-                className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
+                className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
               />
             </label>
           </div>
         )}
 
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Time in Force</p>
+          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+            <span>Time in Force</span>
+            <HelpToggle
+              checked={fieldHelp.timeInForce}
+              onChange={() => setFieldHelp(prev => ({ ...prev, timeInForce: !prev.timeInForce }))}
+            />
+          </div>
+          {fieldHelp.timeInForce && (
+            <p className="text-xs text-white">
+              DAY expires at today’s close. GTC stays active until you cancel.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
             <button
               type="button"
@@ -586,6 +694,18 @@ export function OrderTicketPanel({
           )}
         </div>
 
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
+          <span>Review</span>
+          <HelpToggle
+            checked={fieldHelp.review}
+            onChange={() => setFieldHelp(prev => ({ ...prev, review: !prev.review }))}
+          />
+        </div>
+        {fieldHelp.review && (
+          <p className="text-xs text-white">
+            Review shows a summary before sending the order to Alpaca.
+          </p>
+        )}
         <button
           type="button"
           disabled={!canSubmit}

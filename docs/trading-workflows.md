@@ -35,21 +35,25 @@ This document summarizes how the desk should use the latest build. Share it with
    - Risk donut (directional/convexity/decay/vol/liquidity mix) with a delta-based ITM probability badge.
 4. The “Entry Checklist” card above the Greeks panel mirrors the backend status (green when all auto rules pass, amber when factors are missing).
 
-## 5. Market Closed Experience
+## 5. Order Ticket (Beginner Mode)
+- Each input has an “Explain” checkbox that reveals a plain-English tip for that field.  
+- Use the toggles when onboarding new users so they can follow the order flow step by step.
+
+## 6. Market Closed Experience
 - When `marketClosed=true`, the UI displays a banner, freezes the last candle with a lock badge, and pauses live polling.  
 - Order ticket converts BUY into “Submit DAY Order (Queued)” language and disables market orders (coming from OrderTicketPanel logic).  
 - Options chain still loads but warns that quotes are stale.
 
-## 6. AI Desk & Chat
+## 7. AI Desk & Chat
 1. “Latest Insight” card shows the most recent AI blurb for the active ticker.  
 2. “Ask AI” opens ChatDock. Contract context, chart timeframe, and watchlist snapshot are piped into FastAPI so the assistant can answer position/risk questions.  
 3. Conversations persist locally (see `STORAGE_KEY = 'market-copilot.conversations'`).
 4. Settings → AI Request Controls lets you toggle AI features (master switch, chat, desk insights, contract selection/analysis, chart analysis, scanner, portfolio sentiment) and their auto modes.
 
-## 7. Portfolio Panel (Alpaca Paper)
+## 8. Portfolio Panel (Alpaca Paper)
 - Displays buying power, equity, cash, and a card-per-position summary by calling Alpaca endpoints (`getBrokerAccount`, `getOptionPositions`).  
 - Errors are surfaced inline so ops can see Alpaca outages.
 
-## 8. Background Worker Usage
+## 9. Background Worker Usage
 - Leave `AGG_WORKER_ENABLED` off for local dev.  
 - Enable it only when you need continuous cache warming; it respects Massive rate limits but still counts toward your quota.
