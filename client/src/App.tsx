@@ -2478,7 +2478,7 @@ function App() {
           onClick={() => setSettingsOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 p-5 space-y-4"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-gray-800 bg-gray-950 p-5 space-y-4"
             onClick={event => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
