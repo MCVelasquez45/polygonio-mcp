@@ -1566,11 +1566,16 @@ function App() {
     return normalizedTicker.slice(2);
   }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
 
+  const chartDataSymbol = useMemo(() => {
+    if (activeContractSymbol) return activeContractSymbol.toUpperCase();
+    return chartTicker?.toUpperCase() ?? null;
+  }, [activeContractSymbol, chartTicker]);
+
   useEffect(() => {
     const targets = new Set<string>();
     watchlistSymbols.forEach(symbol => targets.add(symbol.toUpperCase()));
     if (chartTicker) targets.add(chartTicker.toUpperCase());
-    if (activeContractSymbol) targets.add(activeContractSymbol.toUpperCase());
+    if (chartDataSymbol) targets.add(chartDataSymbol.toUpperCase());
     const tickers = Array.from(targets).filter(Boolean);
     if (!tickers.length) return;
     if (warmTickersTimeoutRef.current) {
@@ -1749,11 +1754,10 @@ function App() {
   }, [chartTicker, chartAnalysisAllowed, useRegularHours]);
 
   useEffect(() => {
-    const symbol = chartTicker?.trim().toUpperCase() ?? null;
-    const contractSymbol = activeContractSymbol?.trim().toUpperCase() ?? null;
+    const symbol = chartDataSymbol?.trim().toUpperCase() ?? null;
     const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
     const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
-    const requestSymbol = symbol ?? contractSymbol;
+    const requestSymbol = symbol;
     if (!requestSymbol) {
       chartStreamRef.current = null;
       setBars([]);
@@ -1781,9 +1785,13 @@ function App() {
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
       const isDailyFallback = cached.session?.resultGranularity === 'daily';
+      const isSparseCacheFallback =
+        cached.session?.resultGranularity === 'cache' && cached.bars.length <= 1;
       const baseBars = cached.bars.slice().sort((a, b) => a.timestamp - b.timestamp);
       const displayBars =
-        useRegularHours && isIntraday && !isDailyFallback ? selectRegularSessionBars(baseBars) : baseBars;
+        useRegularHours && isIntraday && !isDailyFallback && !isSparseCacheFallback
+          ? selectRegularSessionBars(baseBars)
+          : baseBars;
       const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
       const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
       const hasData = displayBars.length > 0;
@@ -1850,8 +1858,12 @@ function App() {
           .filter((bar): bar is AggregateBar => Boolean(bar));
         rawBars.sort((a, b) => a.timestamp - b.timestamp);
         const isDailyFallback = aggregates.resultGranularity === 'daily';
+        const isSparseCacheFallback =
+          aggregates.resultGranularity === 'cache' && rawBars.length <= 1;
         const displayBars =
-          useRegularHours && isIntraday && !isDailyFallback ? selectRegularSessionBars(rawBars) : rawBars;
+          useRegularHours && isIntraday && !isDailyFallback && !isSparseCacheFallback
+            ? selectRegularSessionBars(rawBars)
+            : rawBars;
         const indicatorBundle = buildIndicatorBundle(requestSymbol, displayBars);
         setBars(displayBars);
         setIndicators(indicatorBundle);
@@ -1931,11 +1943,7 @@ function App() {
         ? config.multiplier * 3_600_000
         : 300_000;
     const useLiveAggregates =
-      liveSocketConnected &&
-      liveAggActive &&
-      requestSymbol.startsWith('O:') &&
-      contractSymbol === requestSymbol &&
-      config.timespan === 'minute';
+      liveSocketConnected && liveAggActive && requestSymbol.startsWith('O:') && config.timespan === 'minute';
     if (!useLiveAggregates) {
       chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
     }
@@ -1950,7 +1958,7 @@ function App() {
         chartRefreshIntervalRef.current = null;
       }
     };
-  }, [chartTicker, timeframe, activeContractSymbol, useRegularHours, liveSocketConnected, liveAggActive]);
+  }, [chartDataSymbol, timeframe, useRegularHours, liveSocketConnected, liveAggActive]);
 
   useEffect(() => {
     setLiveAggActive(false);
