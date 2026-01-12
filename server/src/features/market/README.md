@@ -14,6 +14,7 @@ stable format (candles, chains, quotes, trades, metadata).
 | `services/aggregatesStore.ts` | Persists aggregate bars locally to enable cache hits + offline fallbacks. |
 | `services/aggregatesWorker.ts` | Optional background worker that pre-populates aggregates for a ticker set. Controlled via env vars. |
 | `services/marketStatus.ts` | Provides a normalized market status snapshot (open/closed/after-hours) for UI banners. |
+| `services/liveFeed.ts` | Bridges Massive WS channels (trades, quotes, aggregates) to socket.io for the client. |
 
 ## Environment Variables
 
@@ -21,7 +22,7 @@ stable format (candles, chains, quotes, trades, metadata).
 | --- | --- |
 | `MASSIVE_API_KEY` / `MASSIVE_BASE_URL` | Credentials + host for Massive.com APIs. Required for live data. |
 | `MASSIVE_OPTIONS_WS_URL` | Override the Massive options WS endpoint (default `wss://socket.massive.com/options`). |
-| `MASSIVE_OPTIONS_WS_CHANNELS` | Comma-separated WS channels (e.g. `T,Q,AM`) for option subscriptions. |
+| `MASSIVE_OPTIONS_WS_CHANNELS` | Comma-separated WS channels (e.g. `T,Q,AM,A`) for option subscriptions. `AM` streams 1m aggregates; `A` streams 1s aggregates. |
 | `AGG_WORKER_ENABLED` | When `true`, `aggregatesWorker` polls tickers in the background. |
 | `AGG_WORKER_TICKERS`, `AGG_WORKER_INTERVAL_MS`, `AGG_WORKER_REQUEST_DELAY_MS` | Fine-tune the worker's behavior. |
 

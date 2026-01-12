@@ -13,7 +13,7 @@ Fetches live watchlist snapshots (underlyings + contracts). Pass `tickers=SPY,AA
 Explicit variant used by the trading sidebar when the user toggles symbols. Identical schema to the default route.
 
 ### `GET /api/market/aggs`
-Parameters: `ticker`, `multiplier`, `timespan`, `window`. Always returns normalized candles with ISO timestamps plus `sessionMeta` fields (`marketClosed`, `usingLastSession`, etc.). The backend only pulls 1‑minute Massive bars and aggregates 3/5/15/30 locally, so keep the interval choices aligned with the UI options: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `1d`.
+Parameters: `ticker`, `multiplier`, `timespan`, `window`. Always returns normalized candles with ISO timestamps plus `sessionMeta` fields (`marketClosed`, `usingLastSession`, etc.). The backend caches Massive aggregate responses and serves the UI intervals: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `1d`. Option 1m charts may switch to live WebSocket aggregates once the socket feed is connected.
 
 ### `GET /api/market/options/chain/:ticker`
 Resolves the option chain grouped by expiration. Response embeds strikes, legs (calls/puts), and contract metadata (volume, OI, greeks, IV). Used by the chain panel and the entry checklist.
@@ -35,6 +35,21 @@ Recent prints for the active option, capped at 100.
 
 ### `GET /api/market/watchlist?tickers=<list>`
 Same contract as above but used by the watchlist scanner to hydrate multiple names at once.
+
+## WebSocket (Options Live Feed)
+
+Base URL: `ws://localhost:4000` via socket.io (client uses `io()` against the server).
+
+### `live:subscribe`
+Payload: `{ symbol: "O:SPY251219C00650000" }`. Subscribes the socket to Massive option streams for that contract.
+
+### `live:unsubscribe`
+Payload: `{ symbol: "O:SPY251219C00650000" }`. Stops live events for the contract.
+
+### Server Events
+- `live:quote` – NBBO updates for the subscribed contract (`bp`, `ap`, `bs`, `as`, timestamps).
+- `live:trades` – trade prints (`p`, `s`, `t`, `x`, `c`).
+- `live:agg` – aggregate bars for the subscribed contract (`ev` is `AM` for per-minute, `A` for per-second).
 
 ## Analysis & AI
 

@@ -271,6 +271,13 @@ function selectRegularSessionBars(bars: AggregateBar[]) {
   return sessions.get(latestSessionKey) ?? [];
 }
 
+function isRegularSessionTimestamp(timestamp: number) {
+  const parts = getNyParts(timestamp);
+  if (!parts) return false;
+  const minuteOfDay = parts.hour * 60 + parts.minute;
+  return minuteOfDay >= OPENING_RANGE_START_MINUTES && minuteOfDay < 16 * 60;
+}
+
 // Bundle any indicators we currently support so the chart can render overlays.
 function buildIndicatorBundle(symbol: string, bars: AggregateBar[]): IndicatorBundle | undefined {
   if (!bars.length) return undefined;
@@ -305,6 +312,12 @@ type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
+type LiveAggregate = {
+  ticker: string;
+  start: number;
+  bar: AggregateBar;
+  ev: string;
+};
 type ChartSessionMode = 'regular' | 'extended';
 // Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
@@ -320,6 +333,16 @@ type MarketSessionMeta = {
   nextOpen?: string | null;
   nextClose?: string | null;
   fetchedAt?: string;
+};
+
+type ChartStreamConfig = {
+  symbol: string | null;
+  timespan: 'minute' | 'hour' | 'day';
+  multiplier: number;
+  useRegularHours: boolean;
+  isIntraday: boolean;
+  isOptionSymbol: boolean;
+  cacheKey: string | null;
 };
 
 // Convert ISO timestamps (next open/close) into small relative labels.
@@ -439,6 +462,8 @@ function App() {
       }
     >
   >(new Map());
+  const chartStreamRef = useRef<ChartStreamConfig | null>(null);
+  const liveAggStateRef = useRef<Map<string, number>>(new Map());
   const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chartRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartRequestIdRef = useRef(0);
@@ -458,6 +483,7 @@ function App() {
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
   const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
   const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
+  const [liveAggActive, setLiveAggActive] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
   const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
@@ -717,6 +743,7 @@ function App() {
     socket.on('disconnect', () => {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
+      setLiveAggActive(false);
     });
     socket.on('live:error', payload => {
       console.warn('[CLIENT] live feed error', payload);
@@ -726,7 +753,47 @@ function App() {
       socketRef.current = null;
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
+      setLiveAggActive(false);
     };
+  }, []);
+
+  const applyLiveAggregate = useCallback((liveAgg: LiveAggregate) => {
+    const stream = chartStreamRef.current;
+    if (!stream || !stream.symbol) return;
+    if (!stream.isIntraday || stream.timespan !== 'minute' || stream.multiplier !== 1) return;
+    if (!stream.isOptionSymbol || liveAgg.ticker !== stream.symbol) return;
+    if (stream.useRegularHours && !isRegularSessionTimestamp(liveAgg.start)) return;
+
+    const lastSeen = liveAggStateRef.current.get(liveAgg.ticker) ?? 0;
+    if (liveAgg.start < lastSeen) return;
+    liveAggStateRef.current.set(liveAgg.ticker, liveAgg.start);
+
+    const cacheKey = stream.cacheKey;
+    const cacheEntry = cacheKey ? chartCacheRef.current.get(cacheKey) : undefined;
+    const baseBars = cacheEntry?.bars ?? [];
+    const nextBars = baseBars.length ? baseBars.slice() : baseBars;
+    const lastBar = nextBars.at(-1);
+    if (lastBar && liveAgg.start < lastBar.timestamp) return;
+    const existingIndex = nextBars.findIndex(bar => bar.timestamp === liveAgg.start);
+    if (existingIndex >= 0) {
+      nextBars[existingIndex] = { ...liveAgg.bar, timestamp: liveAgg.start };
+    } else {
+      nextBars.push({ ...liveAgg.bar, timestamp: liveAgg.start });
+    }
+    nextBars.sort((a, b) => a.timestamp - b.timestamp);
+
+    if (cacheKey) {
+      chartCacheRef.current.set(cacheKey, {
+        timestamp: Date.now(),
+        bars: nextBars,
+        note: cacheEntry?.note ?? null,
+        session: cacheEntry?.session ?? null
+      });
+    }
+
+    const displayBars = stream.useRegularHours ? selectRegularSessionBars(nextBars) : nextBars;
+    setBars(displayBars);
+    setIndicators(buildIndicatorBundle(stream.symbol, displayBars));
   }, []);
 
   // Manage live feed events for the active contract + near-the-money strip.
@@ -781,18 +848,30 @@ function App() {
       }
     };
 
+    const handleAggregate = (payload: any) => {
+      const normalized = normalizeLiveAggregate(payload);
+      if (!normalized) return;
+      if (activeSymbol && normalized.ticker === activeSymbol) {
+        setLiveSubscriptionActive(true);
+        setLiveAggActive(true);
+      }
+      applyLiveAggregate(normalized);
+    };
+
     socket.on('live:subscribed', handleSubscribed);
     socket.on('live:unsubscribed', handleUnsubscribed);
     socket.on('live:quote', handleQuote);
     socket.on('live:trades', handleTrade);
+    socket.on('live:agg', handleAggregate);
 
     return () => {
       socket.off('live:subscribed', handleSubscribed);
       socket.off('live:unsubscribed', handleUnsubscribed);
       socket.off('live:quote', handleQuote);
       socket.off('live:trades', handleTrade);
+      socket.off('live:agg', handleAggregate);
     };
-  }, [activeContractSymbol, liveSocketConnected]);
+  }, [activeContractSymbol, liveSocketConnected, applyLiveAggregate]);
 
   // Reset scanner data when the watchlist changes; run scans on demand.
   useEffect(() => {
@@ -1593,16 +1672,27 @@ function App() {
   }, [chartTicker, chartAnalysisAllowed, useRegularHours]);
 
   useEffect(() => {
-    const symbol = chartTicker;
+    const symbol = chartTicker?.trim().toUpperCase() ?? null;
     const contractSymbol = activeContractSymbol?.trim().toUpperCase() ?? null;
     const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
     const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
     const requestSymbol = symbol ?? contractSymbol;
     if (!requestSymbol) {
+      chartStreamRef.current = null;
       setBars([]);
       setIndicators(undefined);
       return;
     }
+    const cacheKey = `${requestSymbol}-${timeframe}`;
+    chartStreamRef.current = {
+      symbol: requestSymbol,
+      timespan: config.timespan,
+      multiplier: config.multiplier,
+      useRegularHours,
+      isIntraday,
+      isOptionSymbol: requestSymbol.startsWith('O:'),
+      cacheKey
+    };
     if (chartFetchTimeoutRef.current) {
       clearTimeout(chartFetchTimeoutRef.current);
       chartFetchTimeoutRef.current = null;
@@ -1611,7 +1701,6 @@ function App() {
       clearInterval(chartRefreshIntervalRef.current);
       chartRefreshIntervalRef.current = null;
     }
-    const cacheKey = `${requestSymbol}-${timeframe}`;
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
       const baseBars = cached.bars.slice().sort((a, b) => a.timestamp - b.timestamp);
@@ -1735,7 +1824,16 @@ function App() {
         : config.timespan === 'hour'
         ? config.multiplier * 3_600_000
         : 300_000;
-    chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
+    const useLiveAggregates =
+      liveSocketConnected &&
+      liveAggActive &&
+      requestSymbol.startsWith('O:') &&
+      contractSymbol === requestSymbol &&
+      config.timespan === 'minute' &&
+      config.multiplier === 1;
+    if (!useLiveAggregates) {
+      chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
+    }
 
     return () => {
       if (chartFetchTimeoutRef.current) {
@@ -1747,7 +1845,12 @@ function App() {
         chartRefreshIntervalRef.current = null;
       }
     };
-  }, [chartTicker, timeframe, activeContractSymbol, useRegularHours]);
+  }, [chartTicker, timeframe, activeContractSymbol, useRegularHours, liveSocketConnected, liveAggActive]);
+
+  useEffect(() => {
+    setLiveAggActive(false);
+    liveAggStateRef.current.clear();
+  }, [activeContractSymbol]);
 
   useEffect(() => {
     if (!activeContractSymbol) {
@@ -3258,6 +3361,32 @@ function normalizeLiveTrade(event: any): LiveTradePrint | null {
     timestamp,
     exchange: exchange != null ? String(exchange) : undefined,
     conditions: conditionsSource ? conditionsSource.map((value: any) => String(value)) : undefined,
+  };
+}
+
+function normalizeLiveAggregate(event: any): LiveAggregate | null {
+  if (!event) return null;
+  const ticker = normalizeLiveSymbol(event);
+  if (!ticker) return null;
+  const open = coerceNumber(event.o ?? event.open);
+  const high = coerceNumber(event.h ?? event.high);
+  const low = coerceNumber(event.l ?? event.low);
+  const close = coerceNumber(event.c ?? event.close);
+  if (open == null || high == null || low == null || close == null) return null;
+  const volume = coerceNumber(event.v ?? event.volume) ?? 0;
+  const start = coerceTimestamp(event.s ?? event.start ?? event.t ?? event.timestamp ?? event.receivedAt);
+  return {
+    ticker,
+    start,
+    bar: {
+      timestamp: start,
+      open,
+      high,
+      low,
+      close,
+      volume
+    },
+    ev: String(event.ev ?? event.event ?? '')
   };
 }
 

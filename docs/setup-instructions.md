@@ -28,6 +28,8 @@ MASSIVE_API_KEY=...
 MASSIVE_BASE_URL=https://api.massive.com
 FASTAPI_BASE_URL=http://localhost:8000 (optional)
 AGG_WORKER_ENABLED=false
+MASSIVE_OPTIONS_WS_URL=wss://socket.massive.com/options (optional)
+MASSIVE_OPTIONS_WS_CHANNELS=T,Q,AM (optional, AM streams 1m aggregates)
 ```
 Alpaca (optional):
 ```
@@ -70,4 +72,4 @@ cd server && npm run lint    # if ESLint is configured
 1. `cd client && npm run build` to output static assets.  
 2. Deploy the server (Node 20 runtime) and serve the `client/dist` directory via your hosting stack (or front the Node server with a static host).  
 3. Make sure env vars are set, including `MASSIVE_API_KEY` and `MONGO_URI`.  
-4. Monitor Massive rate-limit headers; only one 1m pull per ticker is required thanks to local aggregation.
+4. Monitor Massive rate-limit headers; the live WebSocket feed can reduce 1m REST polling for option contracts when enabled.
