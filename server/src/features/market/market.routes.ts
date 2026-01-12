@@ -25,6 +25,7 @@ import { fetchWithCache } from './services/marketCache';
 import { getLatestSelection, saveSelection } from '../options/services/selectionStore';
 import { getCachedChainSnapshot, saveChainSnapshot } from '../options/services/optionsChainStore';
 import { resolveAggregates } from './services/aggregatesService';
+import { addWarmTickers, getWarmTickers } from './services/aggregatesWarmList';
 
 const router = Router();
 const STABLE_CHAIN_MAX_AGE_MS = 10 * 60 * 1000;
@@ -92,6 +93,13 @@ router.get('/aggs', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// POST /api/market/aggs/warm – add tickers to the aggregates warm list.
+router.post('/aggs/warm', async (req, res) => {
+  const tickers = Array.isArray(req.body?.tickers) ? req.body.tickers : [];
+  addWarmTickers(tickers);
+  res.json({ tickers: getWarmTickers() });
 });
 
 // GET /api/market/trades/:ticker – thin proxy to Massive trades with caching.

@@ -85,6 +85,11 @@ export async function getAggregates(params: {
   return data;
 }
 
+export async function warmAggregates(tickers: string[]): Promise<{ tickers: string[] }> {
+  const { data } = await http.post<{ tickers: string[] }>('/api/market/aggs/warm', { tickers });
+  return data;
+}
+
 export async function getTrades(ticker: string): Promise<TradesResponse> {
   const { data } = await http.get<TradesResponse>(`/api/market/trades/${ticker}`);
   return data;

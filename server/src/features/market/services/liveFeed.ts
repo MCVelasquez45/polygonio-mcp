@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import { MassiveWsClient } from '../../../shared/data/massiveWs';
+import { upsertAggregateBars } from './aggregatesStore';
 
 type SocketSymbolMap = Map<string, Set<string>>;
 type SymbolSocketMap = Map<string, Set<string>>;
@@ -11,8 +12,13 @@ let wsClient: MassiveWsClient | null = null;
 
 const MASSIVE_WS_URL = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
 const MASSIVE_WS_KEY = process.env.MASSIVE_API_KEY ?? '';
-const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q,AM';
+const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q,AM,A';
 const OPTIONS_WS_ALLOWED_CHANNELS = new Set(['T', 'Q', 'AM', 'A']);
+const STORE_LIVE_AGGS_RAW = process.env.MASSIVE_OPTIONS_WS_STORE_AGGS;
+const STORE_LIVE_AGGS =
+  STORE_LIVE_AGGS_RAW == null || STORE_LIVE_AGGS_RAW === ''
+    ? process.env.NODE_ENV !== 'production'
+    : STORE_LIVE_AGGS_RAW.toLowerCase() === 'true';
 
 function normalizeContractSymbol(value?: string | null) {
   if (!value) return null;
@@ -42,6 +48,28 @@ function broadcast(symbol: string, event: string, payload: any) {
   ioServer.to(symbol).emit(event, payload);
 }
 
+async function persistLiveAggregate(symbol: string, event: any) {
+  if (!STORE_LIVE_AGGS) return;
+  const timestamp = typeof event?.s === 'number' ? event.s : typeof event?.t === 'number' ? event.t : null;
+  if (timestamp == null) return;
+  const bar = {
+    timestamp,
+    open: Number(event.o),
+    high: Number(event.h),
+    low: Number(event.l),
+    close: Number(event.c),
+    volume: Number(event.v) || 0,
+    vwap: typeof event.vw === 'number' ? event.vw : null,
+    transactions: typeof event.n === 'number' ? event.n : null
+  };
+  if (![bar.open, bar.high, bar.low, bar.close].every(value => Number.isFinite(value))) return;
+  try {
+    await upsertAggregateBars(symbol, 1, 'minute', [bar], { source: 'massive' });
+  } catch (error) {
+    console.warn('[LiveFeed] aggregate cache write failed', { symbol, error: (error as Error)?.message });
+  }
+}
+
 function handleWsMessage(event: any) {
   if (!event) return;
   const type = event.ev;
@@ -61,6 +89,9 @@ function handleWsMessage(event: any) {
   }
   if (type === 'AM' || type === 'A') {
     broadcast(symbol, 'live:agg', payload);
+    if (type === 'AM') {
+      void persistLiveAggregate(symbol, event);
+    }
     return;
   }
   broadcast(symbol, 'live:raw', payload);

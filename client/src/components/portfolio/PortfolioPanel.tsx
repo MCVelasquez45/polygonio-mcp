@@ -202,6 +202,19 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           marketValue: Number(pos.market_value ?? 0),
           unrealizedPnl: Number(pos.unrealized_pl ?? 0)
         })) ?? [];
+      const warmTargets = Array.from(
+        new Set(
+          normalizedPositions.flatMap(position => [
+            position.symbol.toUpperCase(),
+            getUnderlyingSymbol(position.symbol)
+          ])
+        )
+      ).filter(Boolean);
+      if (warmTargets.length) {
+        marketApi.warmAggregates(warmTargets).catch(error => {
+          console.warn('Failed to warm aggregate cache', error);
+        });
+      }
       setPositions(normalizedPositions);
       setAccountSummary({
         buyingPower: Number(account.buying_power ?? 0),

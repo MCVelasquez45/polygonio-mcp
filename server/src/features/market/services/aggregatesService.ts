@@ -295,7 +295,7 @@ async function fetchRemoteBars(args: {
       status,
       message: error?.message
     });
-    if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
+    if ((status === 403 || status === 429) && (timespan === 'minute' || timespan === 'hour')) {
       blockIntradayAggs(ticker, { status });
       return [];
     }

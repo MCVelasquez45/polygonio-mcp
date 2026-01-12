@@ -15,6 +15,9 @@ Explicit variant used by the trading sidebar when the user toggles symbols. Iden
 ### `GET /api/market/aggs`
 Parameters: `ticker`, `multiplier`, `timespan`, `window`. Always returns normalized candles with ISO timestamps plus `sessionMeta` fields (`marketClosed`, `usingLastSession`, etc.). The backend caches Massive aggregate responses and serves the UI intervals: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `1d`. Option 1m charts may switch to live WebSocket aggregates once the socket feed is connected.
 
+### `POST /api/market/aggs/warm`
+Body: `{ tickers: string[] }`. Appends tickers to the server-side warm list so the aggregates worker pre-fetches bars for those symbols.
+
 ### `GET /api/market/options/chain/:ticker`
 Resolves the option chain grouped by expiration. Response embeds strikes, legs (calls/puts), and contract metadata (volume, OI, greeks, IV). Used by the chain panel and the entry checklist.
 

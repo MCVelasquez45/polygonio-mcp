@@ -23,6 +23,7 @@ stable format (candles, chains, quotes, trades, metadata).
 | `MASSIVE_API_KEY` / `MASSIVE_BASE_URL` | Credentials + host for Massive.com APIs. Required for live data. |
 | `MASSIVE_OPTIONS_WS_URL` | Override the Massive options WS endpoint (default `wss://socket.massive.com/options`). |
 | `MASSIVE_OPTIONS_WS_CHANNELS` | Comma-separated WS channels (e.g. `T,Q,AM,A`) for option subscriptions. `AM` streams 1m aggregates; `A` streams 1s aggregates. |
+| `MASSIVE_OPTIONS_WS_STORE_AGGS` | When `true`, store live `AM` aggregates into the Mongo cache (defaults to on outside production). |
 | `AGG_WORKER_ENABLED` | When `true`, `aggregatesWorker` polls tickers in the background. |
 | `AGG_WORKER_TICKERS`, `AGG_WORKER_INTERVAL_MS`, `AGG_WORKER_REQUEST_DELAY_MS` | Fine-tune the worker's behavior. |
 
@@ -33,6 +34,8 @@ stable format (candles, chains, quotes, trades, metadata).
 3. Aggregates service normalizes responses and caches bars for future requests.
 4. When Massive returns empty or rate-limited responses, cached bars or daily
    fallbacks keep charts populated.
+5. The optional warm list (`POST /api/market/aggs/warm`) can append tickers to
+   the aggregate worker’s polling set for faster local cache hydration.
 
 ## Extending
 

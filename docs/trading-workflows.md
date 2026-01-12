@@ -19,7 +19,7 @@ This document summarizes how the desk should use the latest build. Share it with
 - Intraday charts use the underlying ticker so the candles reflect the full trading session, even when an option contract is thinly traded.  
 - Time axes and tooltips render in the user’s local timezone (standard time for their locale).  
 - 1-hour view uses a 24-bar lookback to show multiple sessions instead of just a single day.  
-- 1m option-contract charts hydrate from REST and then switch to Massive WebSocket AM aggregates when the live feed is connected; higher intervals keep the REST refresh cadence.  
+- Minute option-contract charts (1m/3m/5m/15m/30m) hydrate from REST and then switch to Massive WebSocket aggregates when the live feed is connected; higher intervals keep the REST refresh cadence.  
 - If Massive says the market is closed, we automatically fall back to the last session and show the “Frozen” badge.
 - RTH/EXT toggle (next to timeframes) switches between regular market hours (9:30–16:00 ET) and extended sessions.
 - “Run 5-min analysis” button on the chart runs an opening-range breakout read (5-minute range, volume confirmation, trend alignment, short interest/short volume context). The button is disabled when chart analysis is turned off in Settings.
@@ -57,3 +57,4 @@ This document summarizes how the desk should use the latest build. Share it with
 ## 9. Background Worker Usage
 - Leave `AGG_WORKER_ENABLED` off for local dev.  
 - Enable it only when you need continuous cache warming; it respects Massive rate limits but still counts toward your quota.
+- The client will POST `/api/market/aggs/warm` with watchlist/portfolio symbols so the worker can pre-warm those names.

@@ -1,6 +1,7 @@
 import { getOptionAggregates } from '../../../shared/data/massive';
 import { upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot } from './marketStatus';
+import { getWarmTickers } from './aggregatesWarmList';
 
 // Optional worker that periodically hydrates local aggregate caches so the UI
 // can instantly render without waiting for Massive.
@@ -19,7 +20,7 @@ const AGG_WORKER_RAW = process.env.AGG_WORKER_ENABLED;
 const AGG_WORKER_UNSET = AGG_WORKER_RAW == null || AGG_WORKER_RAW === '';
 const AGG_WORKER_DEV_DEFAULT = AGG_WORKER_UNSET && process.env.NODE_ENV !== 'production';
 const ENABLED = AGG_WORKER_DEV_DEFAULT || (AGG_WORKER_RAW ?? '').toLowerCase() === 'true';
-const TICKERS = (process.env.AGG_WORKER_TICKERS ?? 'SPY,AAPL,TSLA,NVDA,MSFT,META,QQQ')
+const BASE_TICKERS = (process.env.AGG_WORKER_TICKERS ?? 'SPY,AAPL,TSLA,NVDA,MSFT,META,QQQ')
   .split(',')
   .map(ticker => ticker.trim().toUpperCase())
   .filter(Boolean);
@@ -63,7 +64,8 @@ async function fetchAndStore(ticker: string, config: WorkerInterval) {
 // Executes a single pass over all configured tickers. Skips minute bars when
 // the regular market is closed to avoid wasting quota.
 async function runCycle() {
-  if (!TICKERS.length) return;
+  const tickers = new Set<string>([...BASE_TICKERS, ...getWarmTickers()]);
+  if (!tickers.size) return;
   try {
     const status = await getMarketStatusSnapshot();
     const intradayClosed = status.market !== 'open' && !status.afterHours && !status.preMarket;
@@ -75,7 +77,7 @@ async function runCycle() {
     console.warn('[AGG-WORKER] market status lookup failed', error);
   }
 
-  for (const ticker of TICKERS) {
+  for (const ticker of tickers) {
     for (const interval of DEFAULT_INTERVALS) {
       await fetchAndStore(ticker, interval);
       await delay(REQUEST_DELAY_MS);
@@ -93,7 +95,8 @@ export function startAggregatesWorker() {
     console.log('[AGG-WORKER] To enable, set AGG_WORKER_ENABLED=true.');
     return;
   }
-  if (!TICKERS.length) {
+  const tickers = new Set<string>([...BASE_TICKERS, ...getWarmTickers()]);
+  if (!tickers.size) {
     console.log('[AGG-WORKER] no tickers configured, skipping start');
     return;
   }
@@ -104,7 +107,7 @@ export function startAggregatesWorker() {
   if (AGG_WORKER_DEV_DEFAULT) {
     console.log('[AGG-WORKER] AGG_WORKER_ENABLED not set; auto-enabling in development mode.');
   }
-  console.log('[AGG-WORKER] starting', { tickers: TICKERS, pollIntervalMs: POLL_INTERVAL_MS });
+  console.log('[AGG-WORKER] starting', { tickers: Array.from(tickers), pollIntervalMs: POLL_INTERVAL_MS });
   runCycle().catch(error => console.warn('[AGG-WORKER] initial cycle failed', error));
   timer = setInterval(() => {
     runCycle().catch(error => console.warn('[AGG-WORKER] cycle failed', error));

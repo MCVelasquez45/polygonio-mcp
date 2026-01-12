@@ -29,7 +29,8 @@ MASSIVE_BASE_URL=https://api.massive.com
 FASTAPI_BASE_URL=http://localhost:8000 (optional)
 AGG_WORKER_ENABLED=false
 MASSIVE_OPTIONS_WS_URL=wss://socket.massive.com/options (optional)
-MASSIVE_OPTIONS_WS_CHANNELS=T,Q,AM (optional, AM streams 1m aggregates)
+MASSIVE_OPTIONS_WS_CHANNELS=T,Q,AM,A (optional, AM streams 1m aggregates, A streams 1s aggregates)
+MASSIVE_OPTIONS_WS_STORE_AGGS=true (optional, cache live AM bars to Mongo)
 ```
 Alpaca (optional):
 ```

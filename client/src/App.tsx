@@ -46,11 +46,13 @@ const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
 const LIVE_CHAIN_STRIKE_ROWS = 3;
+const LIVE_MINUTE_BUFFER = 720;
 const DESK_INSIGHT_DEBOUNCE_MS = 500;
 const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
 const DESK_INSIGHT_THROTTLE_MS = 30_000;
 const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
 const CHART_ANALYSIS_MINUTE_WINDOW = 1_200;
+const CHART_RATE_LIMIT_FLOOR_MS = 30_000;
 const AI_FEATURES_ENABLED_KEY = 'market-copilot.aiEnabled';
 const AI_DESK_INSIGHTS_ENABLED_KEY = 'market-copilot.aiDeskInsightsEnabled';
 const AI_CONTRACT_SELECTION_ENABLED_KEY = 'market-copilot.aiContractSelectionEnabled';
@@ -464,8 +466,10 @@ function App() {
   >(new Map());
   const chartStreamRef = useRef<ChartStreamConfig | null>(null);
   const liveAggStateRef = useRef<Map<string, number>>(new Map());
+  const liveMinuteBarsRef = useRef<Map<string, Map<number, AggregateBar>>>(new Map());
   const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chartRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chartRateLimitRef = useRef<Map<string, number>>(new Map());
   const chartRequestIdRef = useRef(0);
   const displayTicker = normalizedTicker;
   const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
@@ -498,6 +502,7 @@ function App() {
   const autoContractSelectionKeyRef = useRef<string | null>(null);
   const [contractAnalysisRequestId, setContractAnalysisRequestId] = useState(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
+  const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -760,25 +765,74 @@ function App() {
   const applyLiveAggregate = useCallback((liveAgg: LiveAggregate) => {
     const stream = chartStreamRef.current;
     if (!stream || !stream.symbol) return;
-    if (!stream.isIntraday || stream.timespan !== 'minute' || stream.multiplier !== 1) return;
+    if (!stream.isIntraday || stream.timespan !== 'minute') return;
     if (!stream.isOptionSymbol || liveAgg.ticker !== stream.symbol) return;
-    if (stream.useRegularHours && !isRegularSessionTimestamp(liveAgg.start)) return;
+    const eventType = liveAgg.ev?.toUpperCase();
+    const minuteStart = Math.floor(liveAgg.start / 60_000) * 60_000;
+    if (stream.useRegularHours && !isRegularSessionTimestamp(minuteStart)) return;
 
     const lastSeen = liveAggStateRef.current.get(liveAgg.ticker) ?? 0;
     if (liveAgg.start < lastSeen) return;
     liveAggStateRef.current.set(liveAgg.ticker, liveAgg.start);
+
+    let minuteBars = liveMinuteBarsRef.current.get(liveAgg.ticker);
+    if (!minuteBars) {
+      minuteBars = new Map();
+      liveMinuteBarsRef.current.set(liveAgg.ticker, minuteBars);
+    }
+    if (eventType === 'AM') {
+      minuteBars.set(minuteStart, { ...liveAgg.bar, timestamp: minuteStart });
+    } else {
+      const existing = minuteBars.get(minuteStart);
+      if (!existing) {
+        minuteBars.set(minuteStart, { ...liveAgg.bar, timestamp: minuteStart });
+      } else {
+        minuteBars.set(minuteStart, {
+          timestamp: minuteStart,
+          open: existing.open,
+          high: Math.max(existing.high, liveAgg.bar.high),
+          low: Math.min(existing.low, liveAgg.bar.low),
+          close: liveAgg.bar.close,
+          volume: existing.volume + liveAgg.bar.volume
+        });
+      }
+    }
+    if (minuteBars.size > LIVE_MINUTE_BUFFER) {
+      const keys = Array.from(minuteBars.keys()).sort((a, b) => a - b);
+      const overflow = keys.length - LIVE_MINUTE_BUFFER;
+      if (overflow > 0) {
+        keys.slice(0, overflow).forEach(key => minuteBars?.delete(key));
+      }
+    }
+
+    const bucketMs = stream.multiplier * 60_000;
+    const bucketStart = Math.floor(minuteStart / bucketMs) * bucketMs;
+    const bucketEnd = bucketStart + bucketMs;
+    const bucketBars = Array.from(minuteBars.entries())
+      .filter(([timestamp]) => timestamp >= bucketStart && timestamp < bucketEnd)
+      .sort((a, b) => a[0] - b[0])
+      .map(([, bar]) => bar);
+    if (!bucketBars.length) return;
+    const aggregatedBar: AggregateBar = {
+      timestamp: bucketStart,
+      open: bucketBars[0].open,
+      high: Math.max(...bucketBars.map(bar => bar.high)),
+      low: Math.min(...bucketBars.map(bar => bar.low)),
+      close: bucketBars[bucketBars.length - 1].close,
+      volume: bucketBars.reduce((sum, bar) => sum + bar.volume, 0)
+    };
 
     const cacheKey = stream.cacheKey;
     const cacheEntry = cacheKey ? chartCacheRef.current.get(cacheKey) : undefined;
     const baseBars = cacheEntry?.bars ?? [];
     const nextBars = baseBars.length ? baseBars.slice() : baseBars;
     const lastBar = nextBars.at(-1);
-    if (lastBar && liveAgg.start < lastBar.timestamp) return;
-    const existingIndex = nextBars.findIndex(bar => bar.timestamp === liveAgg.start);
+    if (lastBar && bucketStart < lastBar.timestamp) return;
+    const existingIndex = nextBars.findIndex(bar => bar.timestamp === bucketStart);
     if (existingIndex >= 0) {
-      nextBars[existingIndex] = { ...liveAgg.bar, timestamp: liveAgg.start };
+      nextBars[existingIndex] = aggregatedBar;
     } else {
-      nextBars.push({ ...liveAgg.bar, timestamp: liveAgg.start });
+      nextBars.push(aggregatedBar);
     }
     nextBars.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -1512,6 +1566,29 @@ function App() {
     return normalizedTicker.slice(2);
   }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
 
+  useEffect(() => {
+    const targets = new Set<string>();
+    watchlistSymbols.forEach(symbol => targets.add(symbol.toUpperCase()));
+    if (chartTicker) targets.add(chartTicker.toUpperCase());
+    if (activeContractSymbol) targets.add(activeContractSymbol.toUpperCase());
+    const tickers = Array.from(targets).filter(Boolean);
+    if (!tickers.length) return;
+    if (warmTickersTimeoutRef.current) {
+      clearTimeout(warmTickersTimeoutRef.current);
+    }
+    warmTickersTimeoutRef.current = setTimeout(() => {
+      marketApi.warmAggregates(tickers).catch(error => {
+        console.warn('Failed to warm aggregate cache', error);
+      });
+    }, 500);
+    return () => {
+      if (warmTickersTimeoutRef.current) {
+        clearTimeout(warmTickersTimeoutRef.current);
+        warmTickersTimeoutRef.current = null;
+      }
+    };
+  }, [watchlistSignature, chartTicker, activeContractSymbol, watchlistSymbols]);
+
   const handleChartAnalysisRun = useCallback(async () => {
     if (!chartAnalysisAllowed) {
       setChartAnalysisError('Chart analysis is disabled in Settings.');
@@ -1707,9 +1784,10 @@ function App() {
       const displayBars = useRegularHours && isIntraday ? selectRegularSessionBars(baseBars) : baseBars;
       const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
       const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
+      const hasData = displayBars.length > 0;
       setBars(displayBars);
       setIndicators(buildIndicatorBundle(requestSymbol, displayBars));
-      setMarketError(displayNote);
+      setMarketError(hasData ? null : displayNote);
       setMarketSessionMeta(
         cached.session
           ? {
@@ -1725,6 +1803,16 @@ function App() {
     setMarketError(null);
 
     const triggerFetch = () => {
+      const now = Date.now();
+      const rateLimitUntil = chartRateLimitRef.current.get(cacheKey) ?? 0;
+      if (now < rateLimitUntil) {
+        const retryInSeconds = Math.ceil((rateLimitUntil - now) / 1000);
+        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
+        const note = `Rate limited. Retrying in ${retryInSeconds}s.${sessionNote ? ` ${sessionNote}` : ''}`;
+        setMarketError(note);
+        setChartLoading(false);
+        return;
+      }
       chartRequestIdRef.current += 1;
       const requestId = chartRequestIdRef.current;
       const intradaySourceNote = isIntraday ? `Intraday candles are rendered from ${requestSymbol}.` : null;
@@ -1743,6 +1831,7 @@ function App() {
       const runFetch = async () => {
         const aggregates = await fetchAggregates();
         if (chartRequestIdRef.current !== requestId) return;
+        chartRateLimitRef.current.delete(cacheKey);
         const rawBars = (aggregates.results ?? [])
           .map(entry => {
             const timestamp = parseAggregateTimestamp(entry.t);
@@ -1787,8 +1876,23 @@ function App() {
           note: baseNote ?? null,
           session: sessionMeta
         });
+        const hasData = displayBars.length > 0;
         setMarketSessionMeta(sessionMeta);
+        setMarketError(hasData ? null : note);
+      };
+
+      const applyRateLimit = (error: any) => {
+        if (chartRequestIdRef.current !== requestId) return;
+        const retryAfterMs = error?.response?.data?.retryAfterMs;
+        const cooldownMs = Math.max(
+          CHART_RATE_LIMIT_FLOOR_MS,
+          typeof retryAfterMs === 'number' && retryAfterMs > 0 ? retryAfterMs : 0
+        );
+        chartRateLimitRef.current.set(cacheKey, Date.now() + cooldownMs);
+        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
+        const note = `Rate limited. Retrying in ${Math.ceil(cooldownMs / 1000)}s.${sessionNote ? ` ${sessionNote}` : ''}`;
         setMarketError(note);
+        setChartLoading(false);
       };
 
       const safeRun = async () => {
@@ -1796,8 +1900,8 @@ function App() {
           await runFetch();
         } catch (error: any) {
           if (error?.response?.status === 429) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            await runFetch();
+            applyRateLimit(error);
+            return;
           } else {
             throw error;
           }
@@ -1829,8 +1933,7 @@ function App() {
       liveAggActive &&
       requestSymbol.startsWith('O:') &&
       contractSymbol === requestSymbol &&
-      config.timespan === 'minute' &&
-      config.multiplier === 1;
+      config.timespan === 'minute';
     if (!useLiveAggregates) {
       chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
     }
@@ -1850,6 +1953,7 @@ function App() {
   useEffect(() => {
     setLiveAggActive(false);
     liveAggStateRef.current.clear();
+    liveMinuteBarsRef.current.clear();
   }, [activeContractSymbol]);
 
   useEffect(() => {
@@ -2292,6 +2396,9 @@ function App() {
   const fedEvent = deskInsight?.fedEvent ?? null;
   const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
   const deskInsightUpdatedLabel = deskInsightUpdatedAt ? new Date(deskInsightUpdatedAt).toLocaleTimeString() : null;
+  const activeContractKey = activeContractSymbol?.toUpperCase() ?? null;
+  const activeLiveQuote = activeContractKey ? liveChainQuotes[activeContractKey] : null;
+  const activeLiveTrade = activeContractKey ? liveChainTrades[activeContractKey] : null;
 
   // Subscribe to a near-the-money strip so the chain shows live prices.
   useEffect(() => {
@@ -2504,6 +2611,8 @@ function App() {
           selectionDisabled={!contractSelectionAllowed}
           analysisRequestId={contractAnalysisRequestId}
           analysisDisabled={!contractAnalysisAllowed}
+          liveQuote={activeLiveQuote}
+          liveTrade={activeLiveTrade}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">

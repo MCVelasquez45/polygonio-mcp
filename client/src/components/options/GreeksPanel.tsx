@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { OptionContractDetail, OptionLeg } from '../../types/market';
+import type { OptionContractDetail, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
 import { analysisApi } from '../../api';
 import type { ContractExplanationResult, ContractSelectionResult, DeskInsight } from '../../api/analysis';
 import { PieChart, Pie, Cell } from 'recharts';
@@ -28,6 +28,8 @@ type Props = {
   selectionDisabled?: boolean;
   analysisRequestId?: number;
   analysisDisabled?: boolean;
+  liveQuote?: QuoteSnapshot | null;
+  liveTrade?: TradePrint | null;
 };
 
 type RiskSlice = {
@@ -63,7 +65,9 @@ export function GreeksPanel({
   onRequestSelection,
   selectionDisabled,
   analysisRequestId,
-  analysisDisabled
+  analysisDisabled,
+  liveQuote,
+  liveTrade
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
@@ -92,7 +96,18 @@ export function GreeksPanel({
     },
     { ...EMPTY_GREEKS }
   );
+  const liveBid = typeof liveQuote?.bidPrice === 'number' ? liveQuote.bidPrice : null;
+  const liveAsk = typeof liveQuote?.askPrice === 'number' ? liveQuote.askPrice : null;
+  const liveMid =
+    typeof liveQuote?.midpoint === 'number'
+      ? liveQuote.midpoint
+      : liveBid != null && liveAsk != null
+      ? (liveBid + liveAsk) / 2
+      : null;
+  const liveLast = typeof liveTrade?.price === 'number' ? liveTrade.price : null;
   const resolvedPremium = pickNumber(
+    liveMid,
+    liveLast,
     leg?.mark,
     leg?.mid,
     leg?.lastPrice,
@@ -128,7 +143,7 @@ export function GreeksPanel({
     volume: resolvedVolume,
   });
   const totalRiskValue = riskProfile.slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
-  const spread = resolveSpread(leg, contract);
+  const spread = resolveSpread(leg, contract, liveQuote);
   const itmProbability = typeof resolvedGreeks.delta === 'number' ? Math.abs(resolvedGreeks.delta) * 100 : null;
   const [showTechnical, setShowTechnical] = useState(false);
   const [explanation, setExplanation] = useState<ContractExplanationResult | null>(null);
@@ -649,9 +664,15 @@ function resolveQuoteMid(quote: Record<string, unknown> | undefined | null): num
   return null;
 }
 
-function resolveSpread(leg?: OptionLeg | null, contract?: OptionContractDetail | null): number | null {
+function resolveSpread(
+  leg?: OptionLeg | null,
+  contract?: OptionContractDetail | null,
+  liveQuote?: QuoteSnapshot | null
+): number | null {
   const legBid = typeof leg?.bid === 'number' ? leg.bid : null;
   const legAsk = typeof leg?.ask === 'number' ? leg.ask : null;
+  const liveBid = typeof liveQuote?.bidPrice === 'number' ? liveQuote.bidPrice : null;
+  const liveAsk = typeof liveQuote?.askPrice === 'number' ? liveQuote.askPrice : null;
   const quote = contract?.lastQuote as Record<string, unknown> | undefined;
   const quoteBid =
     typeof (quote as any)?.bid === 'number'
@@ -669,8 +690,8 @@ function resolveSpread(leg?: OptionLeg | null, contract?: OptionContractDetail |
       : typeof (quote as any)?.ask_price === 'number'
       ? (quote as any).ask_price
       : null;
-  const bid = legBid ?? quoteBid;
-  const ask = legAsk ?? quoteAsk;
+  const bid = liveBid ?? legBid ?? quoteBid;
+  const ask = liveAsk ?? legAsk ?? quoteAsk;
   if (typeof bid === 'number' && typeof ask === 'number' && ask >= bid) {
     return ask - bid;
   }
