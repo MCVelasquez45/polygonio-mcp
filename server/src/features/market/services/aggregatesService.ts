@@ -24,6 +24,10 @@ const MARKET_INTRADAY_BLOCK_TTL_MS = (() => {
   const value = Number(process.env.MARKET_INTRADAY_BLOCK_TTL_MS ?? 15 * 60 * 1000);
   return Number.isFinite(value) ? value : 15 * 60 * 1000;
 })();
+const MARKET_INTRADAY_RATE_LIMIT_TTL_MS = (() => {
+  const value = Number(process.env.MARKET_INTRADAY_RATE_LIMIT_TTL_MS ?? 30_000);
+  return Number.isFinite(value) ? value : 30_000;
+})();
 const intradayBlockedUntilBySymbol = new Map<string, number>();
 const inflightAggregates = new Map<string, Promise<AggregatesResponse>>();
 
@@ -102,16 +106,37 @@ function isIntradayBlocked(symbol: string): boolean {
   return true;
 }
 
-function blockIntradayAggs(symbol: string, reason?: unknown) {
+function parseRetryAfter(header: any): number | null {
+  if (header == null) return null;
+  if (typeof header === 'number' && Number.isFinite(header)) {
+    return header * 1000;
+  }
+  if (typeof header === 'string') {
+    const seconds = Number(header);
+    if (!Number.isNaN(seconds)) {
+      return seconds * 1000;
+    }
+    const date = new Date(header);
+    if (!Number.isNaN(date.getTime())) {
+      const delta = date.getTime() - Date.now();
+      if (delta > 0) return delta;
+    }
+  }
+  return null;
+}
+
+function blockIntradayAggs(symbol: string, reason?: unknown, ttlOverrideMs?: number | null) {
   if (!MARKET_ALLOW_INTRADAY_AGGS) return;
-  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return;
-  const nextUntil = Date.now() + MARKET_INTRADAY_BLOCK_TTL_MS;
+  const ttlMs =
+    typeof ttlOverrideMs === 'number' && ttlOverrideMs > 0 ? ttlOverrideMs : MARKET_INTRADAY_BLOCK_TTL_MS;
+  if (ttlMs <= 0) return;
+  const nextUntil = Date.now() + ttlMs;
   const currentUntil = intradayBlockedUntilBySymbol.get(symbol) ?? 0;
   if (nextUntil <= currentUntil) return;
   intradayBlockedUntilBySymbol.set(symbol, nextUntil);
   console.warn('[AGGS] intraday aggregates blocked', {
     symbol,
-    ttlMs: MARKET_INTRADAY_BLOCK_TTL_MS,
+    ttlMs,
     reason
   });
 }
@@ -288,6 +313,9 @@ async function fetchRemoteBars(args: {
     return remote.results;
   } catch (error: any) {
     const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    const retryAfterHeader = axios.isAxiosError(error)
+      ? error.response?.headers?.['retry-after'] ?? error.response?.headers?.['Retry-After']
+      : undefined;
     console.warn('[AGGS] intraday fetch failed', {
       ticker,
       timespan,
@@ -295,8 +323,14 @@ async function fetchRemoteBars(args: {
       status,
       message: error?.message
     });
-    if ((status === 403 || status === 429) && (timespan === 'minute' || timespan === 'hour')) {
+    if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
       blockIntradayAggs(ticker, { status });
+      return [];
+    }
+    if (status === 429 && (timespan === 'minute' || timespan === 'hour')) {
+      const retryAfterMs = parseRetryAfter(retryAfterHeader);
+      const ttlMs = retryAfterMs ?? MARKET_INTRADAY_RATE_LIMIT_TTL_MS;
+      blockIntradayAggs(ticker, { status }, ttlMs);
       return [];
     }
     throw error;

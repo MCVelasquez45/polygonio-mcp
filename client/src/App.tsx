@@ -1622,7 +1622,7 @@ function App() {
       const shortInterest = shortInterestResult.status === 'fulfilled' ? shortInterestResult.value : null;
       const shortVolume = shortVolumeResult.status === 'fulfilled' ? shortVolumeResult.value : null;
 
-      if (minuteAggs?.resultGranularity && minuteAggs.resultGranularity !== 'intraday') {
+      if (minuteAggs?.resultGranularity === 'daily') {
         throw new Error('Intraday minute bars are unavailable for this symbol right now.');
       }
 
@@ -1780,8 +1780,10 @@ function App() {
     }
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 15_000) {
+      const isDailyFallback = cached.session?.resultGranularity === 'daily';
       const baseBars = cached.bars.slice().sort((a, b) => a.timestamp - b.timestamp);
-      const displayBars = useRegularHours && isIntraday ? selectRegularSessionBars(baseBars) : baseBars;
+      const displayBars =
+        useRegularHours && isIntraday && !isDailyFallback ? selectRegularSessionBars(baseBars) : baseBars;
       const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
       const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
       const hasData = displayBars.length > 0;
@@ -1847,7 +1849,9 @@ function App() {
           })
           .filter((bar): bar is AggregateBar => Boolean(bar));
         rawBars.sort((a, b) => a.timestamp - b.timestamp);
-        const displayBars = useRegularHours && isIntraday ? selectRegularSessionBars(rawBars) : rawBars;
+        const isDailyFallback = aggregates.resultGranularity === 'daily';
+        const displayBars =
+          useRegularHours && isIntraday && !isDailyFallback ? selectRegularSessionBars(rawBars) : rawBars;
         const indicatorBundle = buildIndicatorBundle(requestSymbol, displayBars);
         setBars(displayBars);
         setIndicators(indicatorBundle);
@@ -1913,8 +1917,6 @@ function App() {
           if (chartRequestIdRef.current !== requestId) return;
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load chart data';
           setMarketError(message);
-          setBars([]);
-          setIndicators(undefined);
         })
         .finally(() => {
           if (chartRequestIdRef.current === requestId) setChartLoading(false);

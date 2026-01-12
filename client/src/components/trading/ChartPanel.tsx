@@ -78,6 +78,9 @@ export function ChartPanel({
   const usingLastSession = sessionMeta?.usingLastSession ?? false;
   const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
   const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
+  const emptyStateMessage = ticker.startsWith('O:')
+    ? 'Select a contract to load chart data.'
+    : 'No chart data available for this symbol.';
 
   return (
     <section className="bg-gray-950/70 border border-gray-900/80 backdrop-blur-sm rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
@@ -162,7 +165,7 @@ export function ChartPanel({
         {isLoading ? (
           <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading bars…</div>
         ) : data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">Select a contract to load chart data.</div>
+          <div className="h-full flex items-center justify-center text-gray-500 text-sm">{emptyStateMessage}</div>
         ) : (
           <TradingViewChart bars={data} timeframe={timeframe} />
         )}
