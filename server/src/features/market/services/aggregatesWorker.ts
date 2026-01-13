@@ -16,19 +16,39 @@ const DEFAULT_INTERVALS: WorkerInterval[] = [{ multiplier: 1, timespan: 'minute'
 
 const POLL_INTERVAL_MS = Math.max(60_000, Number(process.env.AGG_WORKER_INTERVAL_MS ?? 180_000));
 const REQUEST_DELAY_MS = Math.max(300, Number(process.env.AGG_WORKER_REQUEST_DELAY_MS ?? 800));
+const WORKER_RATE_LIMIT_BACKOFF_MS = Math.max(30_000, Number(process.env.AGG_WORKER_RATE_LIMIT_BACKOFF_MS ?? 90_000));
 const AGG_WORKER_RAW = process.env.AGG_WORKER_ENABLED;
 const AGG_WORKER_UNSET = AGG_WORKER_RAW == null || AGG_WORKER_RAW === '';
-const AGG_WORKER_DEV_DEFAULT = AGG_WORKER_UNSET && process.env.NODE_ENV !== 'production';
-const ENABLED = AGG_WORKER_DEV_DEFAULT || (AGG_WORKER_RAW ?? '').toLowerCase() === 'true';
+const ENABLED = (AGG_WORKER_RAW ?? '').toLowerCase() === 'true';
 const BASE_TICKERS = (process.env.AGG_WORKER_TICKERS ?? 'SPY,AAPL,TSLA,NVDA,MSFT,META,QQQ')
   .split(',')
   .map(ticker => ticker.trim().toUpperCase())
   .filter(Boolean);
 
 let timer: NodeJS.Timeout | null = null;
+let cooldownUntil = 0;
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(header: any): number | null {
+  if (header == null) return null;
+  if (typeof header === 'number' && Number.isFinite(header)) {
+    return header * 1000;
+  }
+  if (typeof header === 'string') {
+    const seconds = Number(header);
+    if (!Number.isNaN(seconds)) {
+      return seconds * 1000;
+    }
+    const date = new Date(header);
+    if (!Number.isNaN(date.getTime())) {
+      const delta = date.getTime() - Date.now();
+      if (delta > 0) return delta;
+    }
+  }
+  return null;
 }
 
 // Fetches live bars for a given ticker + interval and writes them to Mongo.
@@ -52,6 +72,19 @@ async function fetchAndStore(ticker: string, config: WorkerInterval) {
       });
     }
   } catch (error) {
+    const status = (error as any)?.response?.status;
+    if (status === 429) {
+      const retryAfter =
+        (error as any)?.response?.headers?.['retry-after'] ??
+        (error as any)?.response?.headers?.['Retry-After'];
+      const backoffMs = parseRetryAfter(retryAfter) ?? WORKER_RATE_LIMIT_BACKOFF_MS;
+      cooldownUntil = Math.max(cooldownUntil, Date.now() + backoffMs);
+      console.warn('[AGG-WORKER] rate limited, cooling down', {
+        backoffMs,
+        until: new Date(cooldownUntil).toISOString()
+      });
+      return;
+    }
     console.warn('[AGG-WORKER] fetch failed', {
       ticker,
       multiplier: config.multiplier,
@@ -64,6 +97,9 @@ async function fetchAndStore(ticker: string, config: WorkerInterval) {
 // Executes a single pass over all configured tickers. Skips minute bars when
 // the regular market is closed to avoid wasting quota.
 async function runCycle() {
+  if (cooldownUntil > Date.now()) {
+    return;
+  }
   const tickers = new Set<string>([...BASE_TICKERS, ...getWarmTickers()]);
   if (!tickers.size) return;
   try {
@@ -103,9 +139,6 @@ export function startAggregatesWorker() {
   if (timer) {
     clearInterval(timer);
     timer = null;
-  }
-  if (AGG_WORKER_DEV_DEFAULT) {
-    console.log('[AGG-WORKER] AGG_WORKER_ENABLED not set; auto-enabling in development mode.');
   }
   console.log('[AGG-WORKER] starting', { tickers: Array.from(tickers), pollIntervalMs: POLL_INTERVAL_MS });
   runCycle().catch(error => console.warn('[AGG-WORKER] initial cycle failed', error));

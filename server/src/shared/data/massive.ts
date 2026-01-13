@@ -178,6 +178,7 @@ function shouldRetry(error: unknown, attempt: number) {
     return true;
   }
   const status = error.response?.status;
+  if (status === 429) return false;
   return typeof status === 'number' && retryableStatusCodes.has(status);
 }
 

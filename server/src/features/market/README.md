@@ -37,6 +37,12 @@ stable format (candles, chains, quotes, trades, metadata).
 5. The optional warm list (`POST /api/market/aggs/warm`) can append tickers to
    the aggregate worker’s polling set for faster local cache hydration.
 
+## Chart Health Metadata
+
+`GET /api/market/aggs` includes a `health` payload so the UI can surface
+LIVE/DEGRADED/BACKFILLING status, last update age, throttling signals, and
+gap counts.
+
 ## Extending
 
 When adding new market endpoints:

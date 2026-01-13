@@ -55,7 +55,9 @@ const SMA_PERIOD = 20;
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
 const INTRADAY_MIN_VISIBLE_BARS = 60;
+const NON_INTRADAY_MIN_VISIBLE_BARS = 80;
 const INTRADAY_RIGHT_OFFSET = 2;
+const NON_INTRADAY_RIGHT_OFFSET = 1;
 const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   year: 'numeric',
@@ -111,16 +113,40 @@ function resolveTimeframeUnit(timeframe: string) {
   return unit;
 }
 
-function applyVisibleRange(chart: IChartApi, barCount: number, timeframe: string) {
+function resolveVisibleBars(barCount: number, timeframe: string) {
+  if (barCount <= 0) return 0;
+  const unit = resolveTimeframeUnit(timeframe);
+  if (unit === 'minute' || unit === 'hour') {
+    return Math.min(barCount, INTRADAY_MIN_VISIBLE_BARS);
+  }
+  return Math.min(barCount, NON_INTRADAY_MIN_VISIBLE_BARS);
+}
+
+function resolveBarSpacing(barCount: number, timeframe: string, width: number) {
+  const visibleBars = resolveVisibleBars(barCount, timeframe);
+  if (visibleBars <= 0 || width <= 0) return 6;
+  const unit = resolveTimeframeUnit(timeframe);
+  const base = Math.floor(width / visibleBars);
+  const min = unit === 'minute' || unit === 'hour' ? 3 : 8;
+  const max = unit === 'minute' || unit === 'hour' ? 10 : 18;
+  return Math.max(min, Math.min(max, base));
+}
+
+function applyVisibleRange(chart: IChartApi, barCount: number, timeframe: string, width: number) {
   const unit = resolveTimeframeUnit(timeframe);
   const isIntraday = unit === 'minute' || unit === 'hour';
-  if (!isIntraday) {
+  const visibleBars = resolveVisibleBars(barCount, timeframe);
+  const barSpacing = resolveBarSpacing(barCount, timeframe, width);
+  chart.timeScale().applyOptions({
+    barSpacing,
+    minBarSpacing: Math.max(2, Math.floor(barSpacing / 2)),
+  });
+  if (barCount < 2 || visibleBars <= 0) {
     chart.timeScale().fitContent();
     return;
   }
-  const minBars = INTRADAY_MIN_VISIBLE_BARS;
-  const from = Math.min(barCount - minBars, 0);
-  const to = barCount - 1 + INTRADAY_RIGHT_OFFSET;
+  const from = Math.max(barCount - visibleBars, 0);
+  const to = barCount - 1 + (isIntraday ? INTRADAY_RIGHT_OFFSET : NON_INTRADAY_RIGHT_OFFSET);
   chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
@@ -249,10 +275,18 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
   const lastThemeRef = useRef<Theme>(theme);
 
   const palette = useMemo(() => (theme === 'light' ? LIGHT_THEME : DARK_THEME), [theme]);
-  const candleData = useMemo(() => mapBarsToCandles(bars), [bars]);
-  const volumeData = useMemo(() => mapBarsToVolumes(bars, palette), [bars, palette]);
-  const smaData = useMemo(() => computeSma(bars, SMA_PERIOD), [bars]);
-  const openingRange = useMemo(() => computeOpeningRange(bars, timeframe), [bars, timeframe]);
+  const normalizedBars = useMemo(() => {
+    if (!bars.length) return bars;
+    const deduped = new Map<number, AggregateBar>();
+    for (const bar of bars) {
+      deduped.set(bar.timestamp, bar);
+    }
+    return Array.from(deduped.values()).sort((a, b) => a.timestamp - b.timestamp);
+  }, [bars]);
+  const candleData = useMemo(() => mapBarsToCandles(normalizedBars), [normalizedBars]);
+  const volumeData = useMemo(() => mapBarsToVolumes(normalizedBars, palette), [normalizedBars, palette]);
+  const smaData = useMemo(() => computeSma(normalizedBars, SMA_PERIOD), [normalizedBars]);
+  const openingRange = useMemo(() => computeOpeningRange(normalizedBars, timeframe), [normalizedBars, timeframe]);
   const tooltipClassName =
     theme === 'light'
       ? 'pointer-events-none absolute left-3 top-3 z-10 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[11px] text-slate-900 shadow-sm opacity-0 transition-opacity whitespace-pre'
@@ -270,6 +304,9 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
 
       const unit = resolveTimeframeUnit(timeframe);
       const isIntraday = unit === 'minute' || unit === 'hour';
+      const priceScaleMargins = isIntraday
+        ? { top: 0.12, bottom: 0.18 }
+        : { top: 0.08, bottom: 0.08 };
       const chart = createChart(container, {
         width,
         height,
@@ -281,14 +318,19 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
           vertLines: { visible: false },
           horzLines: { visible: false },
         },
+        rightPriceScale: {
+          borderVisible: false,
+          scaleMargins: priceScaleMargins,
+        },
+        leftPriceScale: {
+          visible: false,
+        },
         crosshair: { mode: CrosshairMode.Normal },
         timeScale: {
           timeVisible: isIntraday,
           secondsVisible: false,
           tickMarkFormatter: buildTickFormatter(timeframe),
-          rightOffset: INTRADAY_RIGHT_OFFSET,
-          barSpacing: 8,
-          minBarSpacing: 2,
+          rightOffset: isIntraday ? INTRADAY_RIGHT_OFFSET : NON_INTRADAY_RIGHT_OFFSET,
           fixLeftEdge: true,
         },
       });
@@ -303,20 +345,27 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
         wickUpColor: palette.candleUp,
         wickDownColor: palette.candleDown,
         borderVisible: false,
+        priceScaleId: 'right',
       });
-      const volume = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: 'volume' },
-        priceScaleId: '',
-      });
-      volume.priceScale().applyOptions({
-        scaleMargins: {
-          top: 0.8,
-          bottom: 0,
-        },
-      });
+      const volume = isIntraday
+        ? chart.addSeries(HistogramSeries, {
+            priceFormat: { type: 'volume' },
+            priceScaleId: '',
+            lastValueVisible: false,
+          })
+        : null;
+      if (volume) {
+        volume.priceScale().applyOptions({
+          scaleMargins: {
+            top: 0.82,
+            bottom: 0,
+          },
+        });
+      }
       const sma = chart.addSeries(LineSeries, {
         color: palette.sma,
         lineWidth: 2,
+        priceScaleId: 'right',
       });
 
       candleSeriesRef.current = candles;
@@ -334,7 +383,7 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
     const tooltip = tooltipRef.current;
     const candles = candleSeriesRef.current;
     const volume = volumeSeriesRef.current;
-    if (!chart || !tooltip || !candles || !volume) return;
+    if (!chart || !tooltip || !candles) return;
 
     const timeFormatter = buildTooltipFormatter(timeframe);
 
@@ -347,9 +396,11 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
       const candle = param.seriesData.get(candles as unknown as ISeriesApi<SeriesType, Time>) as
         | CandlestickData<Time>
         | undefined;
-      const volumeBar = param.seriesData.get(volume as unknown as ISeriesApi<SeriesType, Time>) as
-        | HistogramData<Time>
-        | undefined;
+      const volumeBar = volume
+        ? (param.seriesData.get(volume as unknown as ISeriesApi<SeriesType, Time>) as
+            | HistogramData<Time>
+            | undefined)
+        : undefined;
       if (!candle) {
         tooltip.style.opacity = '0';
         return;
@@ -357,13 +408,14 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
 
       const timeValue = typeof param.time === 'number' ? param.time : undefined;
       const formattedTime = timeValue ? timeFormatter.format(new Date(timeValue * 1000)) : '';
-      const volumeValue = volumeBar?.value ?? 0;
+      const volumeValue = volumeBar?.value ?? null;
+      const volumeLine = volumeValue != null ? `\nVol ${Math.round(volumeValue).toLocaleString()}` : '';
 
       tooltip.textContent =
         `${formattedTime}\n` +
         `O ${candle.open.toFixed(2)}  H ${candle.high.toFixed(2)}\n` +
         `L ${candle.low.toFixed(2)}  C ${candle.close.toFixed(2)}\n` +
-        `Vol ${Math.round(volumeValue).toLocaleString()}`;
+        `${volumeLine}`;
       tooltip.style.opacity = '1';
     };
 
@@ -401,13 +453,13 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
 
   useEffect(() => {
     const candles = candleSeriesRef.current;
-    const volume = volumeSeriesRef.current;
     const sma = smaSeriesRef.current;
-    if (!candles || !volume || !sma) return;
+    const volume = volumeSeriesRef.current;
+    if (!candles || !sma) return;
 
-    if (bars.length === 0) {
+    if (normalizedBars.length === 0) {
       candles.setData([]);
-      volume.setData([]);
+      if (volume) volume.setData([]);
       sma.setData([]);
       prevBarsRef.current = [];
       return;
@@ -416,31 +468,36 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
     const prevBars = prevBarsRef.current;
     const prevFirst = prevBars[0]?.timestamp ?? null;
     const prevLast = prevBars.at(-1)?.timestamp ?? null;
-    const nextFirst = bars[0]?.timestamp ?? null;
-    const nextLast = bars.at(-1)?.timestamp ?? null;
-    const isSameLength = prevBars.length === bars.length && prevBars.length > 0;
+    const nextFirst = normalizedBars[0]?.timestamp ?? null;
+    const nextLast = normalizedBars.at(-1)?.timestamp ?? null;
+    const isSameLength = prevBars.length === normalizedBars.length && prevBars.length > 0;
     const isLastUpdateOnly = isSameLength && prevFirst === nextFirst && prevLast === nextLast;
 
     if (isLastUpdateOnly) {
       const lastCandle = candleData[candleData.length - 1];
-      const lastVolume = volumeData[volumeData.length - 1];
       const lastSma = smaData[smaData.length - 1];
-      if (lastCandle && lastVolume && lastSma) {
+      if (lastCandle && lastSma) {
         candles.update(lastCandle);
-        volume.update(lastVolume);
+        if (volume) {
+          const lastVolume = volumeData[volumeData.length - 1];
+          if (lastVolume) volume.update(lastVolume);
+        }
         sma.update(lastSma);
+      }
+      if (chartRef.current) {
+        applyVisibleRange(chartRef.current, normalizedBars.length, timeframe, width);
       }
     } else {
       candles.setData(candleData);
-      volume.setData(volumeData);
+      if (volume) volume.setData(volumeData);
       sma.setData(smaData);
       if (chartRef.current) {
-        applyVisibleRange(chartRef.current, bars.length, timeframe);
+        applyVisibleRange(chartRef.current, normalizedBars.length, timeframe, width);
       }
     }
 
-    prevBarsRef.current = bars;
-  }, [bars, candleData, smaData, volumeData]);
+    prevBarsRef.current = normalizedBars;
+  }, [normalizedBars, candleData, smaData, volumeData, timeframe, width]);
 
   useEffect(
     () => () => {

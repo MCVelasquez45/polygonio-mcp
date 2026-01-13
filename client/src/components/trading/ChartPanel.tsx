@@ -36,6 +36,13 @@ type Props = {
     note?: string | null;
     state?: string;
     nextOpen?: string | null;
+    health?: {
+      mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+      source: 'rest' | 'cache' | 'snapshot';
+      lastUpdateMsAgo: number | null;
+      providerThrottled: boolean;
+      gapsDetected: number;
+    } | null;
   } | null;
 };
 
@@ -48,6 +55,22 @@ const TIMEFRAMES: TimeframeOption[] = [
   { label: '1H', value: '1/hour' },
   { label: '1D', value: '1/day' },
 ];
+
+function formatAge(msAgo: number | null) {
+  if (msAgo == null || Number.isNaN(msAgo)) return null;
+  if (msAgo < 1_000) return 'just now';
+  const seconds = Math.floor(msAgo / 1_000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function joinDetails(parts: Array<string | null | undefined>) {
+  const filtered = parts.filter((part): part is string => Boolean(part));
+  return filtered.length ? filtered.join(' · ') : null;
+}
 
 export function ChartPanel({
   ticker,
@@ -79,10 +102,42 @@ export function ChartPanel({
   const isMarketClosed = sessionMeta?.marketClosed ?? false;
   const usingLastSession = sessionMeta?.usingLastSession ?? false;
   const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
+  const health = sessionMeta?.health ?? null;
+  const healthAge = formatAge(health?.lastUpdateMsAgo ?? null);
+  const isStale = (health?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
+  const healthLabel =
+    isMarketClosed
+      ? 'Frozen'
+      : health?.mode === 'BACKFILLING'
+      ? 'Backfilling'
+      : health?.mode === 'LIVE' && isStale
+      ? 'Stale'
+      : health?.mode === 'LIVE'
+      ? 'Live'
+      : health?.source === 'snapshot'
+      ? 'Snapshot'
+      : health?.source === 'cache'
+      ? 'Cached'
+      : 'Degraded';
+  const healthDetail = joinDetails([
+    healthAge ? `Last update ${healthAge}` : null,
+    health?.providerThrottled ? 'Rate limited' : null,
+    health?.gapsDetected ? `${health.gapsDetected} gap${health.gapsDetected === 1 ? '' : 's'}` : null,
+  ]);
+  const healthTone =
+    healthLabel === 'Live'
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+      : healthLabel === 'Backfilling' || healthLabel === 'Stale'
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+      : 'border-gray-800 bg-gray-900/60 text-gray-300';
   const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
   const emptyStateMessage = ticker.startsWith('O:')
     ? 'Select a contract to load chart data.'
     : 'No chart data available for this symbol.';
+  const displayEmptyMessage = sessionMeta?.note ?? emptyStateMessage;
+  const timeframeUnit = timeframe.split('/')[1] ?? 'day';
+  const isIntraday = timeframeUnit === 'minute' || timeframeUnit === 'hour';
+  const hasRenderableData = data.length > 0 && (!isIntraday || data.length >= 2);
 
   const chartInstanceKey = chartKey ? `${chartKey}-${timeframe}` : timeframe;
 
@@ -109,8 +164,14 @@ export function ChartPanel({
                 <Lock className="h-3 w-3" /> Frozen
               </span>
             )}
+            {health && !isMarketClosed && (
+              <span className={`inline-flex items-center gap-2 text-xs rounded-full border px-3 py-1 ${healthTone}`}>
+                {healthLabel}
+              </span>
+            )}
           </div>
           <p className="text-xs text-gray-500">Option aggregates pulled directly from Massive</p>
+          {healthDetail && <p className="text-[11px] text-gray-500">{healthDetail}</p>}
           {usingLastSession && (
             <p className="text-[11px] text-amber-200/80 flex items-center gap-1">
               Last session {resultGranularity === 'daily' ? 'daily' : 'intraday'} candles
@@ -166,9 +227,9 @@ export function ChartPanel({
       </header>
 
       <div className="relative flex-1 min-h-[300px]">
-        {data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-            {isLoading ? 'Loading bars…' : emptyStateMessage}
+        {!hasRenderableData ? (
+          <div className="h-full flex items-center justify-center text-gray-500 text-sm text-center px-4">
+            {isLoading ? 'Loading bars…' : displayEmptyMessage}
           </div>
         ) : (
           <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} />

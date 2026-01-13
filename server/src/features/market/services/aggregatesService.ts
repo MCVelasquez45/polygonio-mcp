@@ -73,10 +73,19 @@ export type AggregatesResponse = {
   usingLastSession: boolean;
   resultGranularity: 'intraday' | 'daily' | 'cache';
   results: NormalizedAggregateBar[];
+  health: AggregateHealth;
   fetchedAt: Date;
   cache: 'fresh' | 'hit';
   note?: string;
   marketStatus: MarketStatusSummary;
+};
+
+type AggregateHealth = {
+  mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+  source: 'rest' | 'cache' | 'snapshot';
+  lastUpdateMsAgo: number | null;
+  providerThrottled: boolean;
+  gapsDetected: number;
 };
 
 function assertTimespan(value: string): asserts value is SupportedTimespan {
@@ -232,6 +241,75 @@ function buildMarketState(status: MarketStatusSnapshot): MarketStatusSummary {
   };
 }
 
+function countAggregateGaps(
+  bars: StoredAggregateBar[],
+  expectedMs: number,
+  timespan: SupportedTimespan
+): number {
+  if (timespan === 'day' || bars.length < 2) return 0;
+  const sorted = bars.slice().sort((a, b) => a.timestamp - b.timestamp);
+  let gaps = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const diff = sorted[i].timestamp - sorted[i - 1].timestamp;
+    if (diff > expectedMs * 1.5) {
+      gaps += Math.max(0, Math.floor(diff / expectedMs) - 1);
+    }
+  }
+  return gaps;
+}
+
+function buildAggregateHealth(args: {
+  bars: StoredAggregateBar[];
+  timespan: SupportedTimespan;
+  multiplier: number;
+  marketClosed: boolean;
+  usingLastSession: boolean;
+  resultGranularity: AggregatesResponse['resultGranularity'];
+  cache: AggregatesResponse['cache'];
+  providerThrottled: boolean;
+  note?: string;
+  usedSnapshotFallback?: boolean;
+}): AggregateHealth {
+  const {
+    bars,
+    timespan,
+    multiplier,
+    marketClosed,
+    usingLastSession,
+    resultGranularity,
+    cache,
+    providerThrottled,
+    note,
+    usedSnapshotFallback
+  } = args;
+  let mode: AggregateHealth['mode'] = 'DEGRADED';
+  if (!marketClosed && !usingLastSession && resultGranularity === 'intraday' && cache === 'fresh') {
+    mode = 'LIVE';
+  } else if (!marketClosed && usingLastSession) {
+    mode = 'BACKFILLING';
+  }
+  let source: AggregateHealth['source'] = 'rest';
+  if (cache === 'hit' || resultGranularity === 'cache') {
+    source = 'cache';
+  }
+  if (usedSnapshotFallback) {
+    source = 'snapshot';
+  }
+  const expectedMs = TIMESPAN_MS[timespan] * multiplier;
+  const lastTimestamp = bars.at(-1)?.timestamp ?? null;
+  const lastUpdateMsAgo =
+    lastTimestamp != null ? Math.max(0, Date.now() - lastTimestamp) : null;
+  const gapsDetected = countAggregateGaps(bars, expectedMs, timespan);
+  const noteLower = note?.toLowerCase() ?? '';
+  return {
+    mode,
+    source,
+    lastUpdateMsAgo,
+    providerThrottled: providerThrottled || noteLower.includes('limit') || noteLower.includes('throttle'),
+    gapsDetected
+  };
+}
+
 // Determines which session windows to attempt (regular, after-hours, previous)
 // based on current market state. Helps the fetcher gracefully degrade.
 function buildSessionPlan(args: {
@@ -354,10 +432,10 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
   const inflightKey = `${ticker}:${multiplier}:${timespan}:${window}:${params.from ?? ''}:${params.to ?? ''}`;
   const inflight = inflightAggregates.get(inflightKey);
   if (inflight) {
-    return inflight;
+    return await inflight;
   }
 
-  const run = (async () => {
+  const run: Promise<AggregatesResponse> = (async () => {
     const status = await getMarketStatusSnapshot();
 
     const needsMinuteAggregation = timespan === 'minute' && multiplier > 1;
@@ -385,6 +463,16 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
       if (!normalized.length) {
         throw Object.assign(new Error('Aggregates unavailable for requested range'), { status: 404 });
       }
+      const health = buildAggregateHealth({
+        bars: trimmed,
+        timespan,
+        multiplier,
+        marketClosed: status.market !== 'open',
+        usingLastSession: false,
+        resultGranularity: 'intraday',
+        cache: 'fresh',
+        providerThrottled: false
+      });
       return {
         ticker,
         interval: formatInterval(multiplier, timespan),
@@ -393,6 +481,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
         usingLastSession: false,
         resultGranularity: 'intraday',
         results: normalized,
+        health,
         fetchedAt: new Date(),
         cache: 'fresh',
         marketStatus: buildMarketState(status)
@@ -410,6 +499,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
     let usingLastSession = sessionPlan.marketClosed;
     let note: string | undefined;
     let cacheState: AggregatesResponse['cache'] = 'fresh';
+    let usedSnapshotFallback = false;
     if (timespan !== 'day' && isIntradayBlocked(ticker)) {
       note = note ?? 'Intraday aggregates unavailable; using fallback data.';
     }
@@ -465,6 +555,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
           usingLastSession = true;
           cacheState = 'fresh';
           note = note ?? 'Massive aggregates unavailable; displaying latest underlying snapshot.';
+          usedSnapshotFallback = true;
         }
       }
     }
@@ -478,6 +569,18 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
       finalBars = finalBars.slice(finalBars.length - window);
     }
     const normalized = normalizeBars(finalBars);
+    const health = buildAggregateHealth({
+      bars: finalBars,
+      timespan,
+      multiplier,
+      marketClosed: sessionPlan.marketClosed,
+      usingLastSession,
+      resultGranularity: granularity,
+      cache: cacheState,
+      providerThrottled: isIntradayBlocked(ticker),
+      note,
+      usedSnapshotFallback
+    });
 
     return {
       ticker,
@@ -487,6 +590,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
       usingLastSession,
       resultGranularity: granularity,
       results: normalized,
+      health,
       fetchedAt: new Date(),
       cache: cacheState,
       note,

@@ -359,6 +359,13 @@ type MarketSessionMeta = {
   nextOpen?: string | null;
   nextClose?: string | null;
   fetchedAt?: string;
+  health?: {
+    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+    source: 'rest' | 'cache' | 'snapshot';
+    lastUpdateMsAgo: number | null;
+    providerThrottled: boolean;
+    gapsDetected: number;
+  } | null;
 };
 
 type ChartStreamConfig = {
@@ -1656,9 +1663,13 @@ function App() {
 
   useEffect(() => {
     const targets = new Set<string>();
-    watchlistSymbols.forEach(symbol => targets.add(symbol.toUpperCase()));
-    if (chartTicker) targets.add(chartTicker.toUpperCase());
-    if (chartDataSymbol) targets.add(chartDataSymbol.toUpperCase());
+    watchlistSymbols.forEach(symbol => {
+      const normalized = symbol.toUpperCase();
+      if (!normalized.startsWith('O:')) {
+        targets.add(normalized);
+      }
+    });
+    if (chartTicker && !chartTicker.startsWith('O:')) targets.add(chartTicker.toUpperCase());
     const tickers = Array.from(targets).filter(Boolean);
     if (!tickers.length) return;
     if (warmTickersTimeoutRef.current) {
@@ -1993,7 +2004,8 @@ function App() {
           state: aggregates.marketStatus?.state,
           nextOpen: aggregates.marketStatus?.nextOpen ?? null,
           nextClose: aggregates.marketStatus?.nextClose ?? null,
-          fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined
+          fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined,
+          health: aggregates.health ?? null
         };
         if (shouldApply) {
           chartCacheRef.current.set(cacheKey, {

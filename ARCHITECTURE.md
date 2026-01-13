@@ -298,3 +298,112 @@ A chart is "enterprise-grade" when:
 - It backfills gaps and guarantees candle integrity
 - It exposes health metadata (source + last update)
 - It can scale to multiple clients with consistent results
+
+---
+
+## 13) One-Page Mental Model (Textual)
+
+```text
+           +---------------------------+
+           |        Massive.com        |
+           |  WS: Q / T / A / AM       |
+           |  REST: chains / aggs      |
+           +-------------+-------------+
+                         |
+                         v
+        +-----------------------------------+
+        |        Backend Data Hub           |
+        |  - Subscriptions manager          |
+        |  - Ring buffer (short-term)       |
+        |  - MongoDB (long-term)            |
+        |  - Backfill + validation          |
+        |  - Health + rate-limit handling   |
+        +-------------+---------------------+
+                      |
+                      v
+        +-----------------------------------+
+        |           Frontend UI             |
+        |  - Charts (read-only renderer)    |
+        |  - Options chain + quotes         |
+        |  - Health badges + stale state    |
+        +-----------------------------------+
+```
+
+Rule: the frontend never owns market data. The backend is the single source of truth.
+
+---
+
+## 14) Why Charts Break (Troubleshooting Guide)
+
+### Symptom: candles jump or reset
+- Cause: multiple in-flight requests overwrite newer data.
+- Fix: single-flight requests + chart key remount per symbol/timeframe.
+
+### Symptom: live + REST collide
+- Cause: REST returns finalized bars while WS updates partial bars.
+- Fix: explicit candle lifecycle (A updates current, AM finalizes).
+
+### Symptom: blank charts during throttling
+- Cause: 429 responses are treated as hard failures.
+- Fix: rate-limit cooldown, serve cached bars, set health to DEGRADED.
+
+### Symptom: stale but not indicated
+- Cause: no health metadata in responses.
+- Fix: return `health` with source + last update and render a badge.
+
+### Symptom: too many requests on symbol switch
+- Cause: client fetch loops + no debounce/cancel.
+- Fix: cancel old requests and keep last chart visible while updating.
+
+---
+
+## 15) Server-Side DataStore Interface (Core Contract)
+
+```ts
+type Candle = {
+  symbol: string;
+  timeframe: string;
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  source: 'live' | 'backfill' | 'cache' | 'snapshot';
+  isFinal: boolean;
+  lastUpdatedAt: number;
+};
+
+type Health = {
+  mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+  source: 'rest' | 'cache' | 'snapshot';
+  lastUpdateMsAgo: number | null;
+  providerThrottled: boolean;
+  gapsDetected: number;
+};
+
+interface DataStore {
+  getBars(symbol: string, timeframe: string): Candle[];
+  upsertLiveAggregate(symbol: string, candle: Candle): void;
+  finalizeCandle(symbol: string, candle: Candle): void;
+  getChainSnapshot(underlying: string): unknown;
+  updateLiveQuote(optionSymbol: string, quote: unknown): void;
+  getLastQuote(optionSymbol: string): unknown;
+  getMarketState(): { isOpen: boolean; isAfterHours: boolean; lastUpdate: number };
+  getHealth(symbol: string, timeframe: string): Health;
+}
+```
+
+---
+
+## 16) TradingView Model Mapping
+
+| TradingView Concept | This System |
+| --- | --- |
+| Datafeed adapter | Backend data hub |
+| Realtime bars | WS `A` / `AM` aggregates |
+| Historical bars | REST + MongoDB cache |
+| Bar finalization | `AM` events + minute boundary |
+| Market status | `marketClosed` + `afterHours` |
+| Frozen charts | After-hours mode + cached bars |
+| Health indicators | `health` payload + badge |

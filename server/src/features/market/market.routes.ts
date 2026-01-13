@@ -86,6 +86,7 @@ router.get('/aggs', async (req, res, next) => {
       resultGranularity: aggregates.resultGranularity,
       marketStatus: aggregates.marketStatus,
       results: aggregates.results,
+      health: aggregates.health,
       fetchedAt: aggregates.fetchedAt,
       cache: aggregates.cache,
       note: aggregates.note

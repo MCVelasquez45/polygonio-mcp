@@ -13,6 +13,13 @@ type AggregatesResponse = MarketMeta & {
   afterHours: boolean;
   usingLastSession: boolean;
   resultGranularity: 'intraday' | 'daily' | 'cache';
+  health?: {
+    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+    source: 'rest' | 'cache' | 'snapshot';
+    lastUpdateMsAgo: number | null;
+    providerThrottled: boolean;
+    gapsDetected: number;
+  };
   marketStatus?: {
     state: 'open' | 'closed' | 'after-hours' | 'pre-market' | 'unknown';
     asOf: string;
