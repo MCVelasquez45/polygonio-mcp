@@ -37,8 +37,8 @@ type Props = {
     state?: string;
     nextOpen?: string | null;
     health?: {
-      mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
-      source: 'rest' | 'cache' | 'snapshot';
+      mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING' | 'FROZEN';
+      source: 'rest' | 'cache' | 'snapshot' | 'ws';
       lastUpdateMsAgo: number | null;
       providerThrottled: boolean;
       gapsDetected: number;
@@ -105,8 +105,9 @@ export function ChartPanel({
   const health = sessionMeta?.health ?? null;
   const healthAge = formatAge(health?.lastUpdateMsAgo ?? null);
   const isStale = (health?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
+  const isFrozen = health?.mode === 'FROZEN' || isMarketClosed;
   const healthLabel =
-    isMarketClosed
+    isFrozen
       ? 'Frozen'
       : health?.mode === 'BACKFILLING'
       ? 'Backfilling'
@@ -159,12 +160,12 @@ export function ChartPanel({
                 {displayChange.toFixed(2)} ({displayChangePercent.toFixed(2)}%)
               </span>
             )}
-            {isMarketClosed && (
+            {isFrozen && (
               <span className="inline-flex items-center gap-1 text-xs text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-full px-3 py-1">
                 <Lock className="h-3 w-3" /> Frozen
               </span>
             )}
-            {health && !isMarketClosed && (
+            {health && !isFrozen && (
               <span className={`inline-flex items-center gap-2 text-xs rounded-full border px-3 py-1 ${healthTone}`}>
                 {healthLabel}
               </span>

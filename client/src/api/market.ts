@@ -14,8 +14,8 @@ type AggregatesResponse = MarketMeta & {
   usingLastSession: boolean;
   resultGranularity: 'intraday' | 'daily' | 'cache';
   health?: {
-    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
-    source: 'rest' | 'cache' | 'snapshot';
+    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING' | 'FROZEN';
+    source: 'rest' | 'cache' | 'snapshot' | 'ws';
     lastUpdateMsAgo: number | null;
     providerThrottled: boolean;
     gapsDetected: number;

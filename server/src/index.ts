@@ -12,7 +12,13 @@ import { analysisRouter } from './features/analysis';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
-import { initLiveFeed, registerLiveFeedHandlers } from './features/market/services/liveFeed';
+import {
+  initLiveFeed,
+  registerLiveFeedHandlers,
+  subscribeAggregateSymbol,
+  unsubscribeAggregateSymbol
+} from './features/market/services/liveFeed';
+import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
 
 const app = express();
 app.use(cors());
@@ -49,11 +55,13 @@ const io = new SocketIOServer(httpServer, {
   cors: { origin: '*' }
 });
 initLiveFeed(io);
+initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
   socket.emit('connected', { msg: 'WebSocket connected' });
   registerLiveFeedHandlers(socket);
+  registerChartHubHandlers(socket);
 
   socket.on('disconnect', reason => {
     console.log('[SERVER] WebSocket client disconnected:', socket.id, reason);

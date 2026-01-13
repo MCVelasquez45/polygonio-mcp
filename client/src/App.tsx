@@ -46,13 +46,11 @@ const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
 const LIVE_CHAIN_STRIKE_ROWS = 3;
-const LIVE_MINUTE_BUFFER = 720;
 const DESK_INSIGHT_DEBOUNCE_MS = 500;
 const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
 const DESK_INSIGHT_THROTTLE_MS = 30_000;
 const CONTRACT_SELECTION_THROTTLE_MS = 30_000;
 const CHART_ANALYSIS_MINUTE_WINDOW = 1_200;
-const CHART_RATE_LIMIT_FLOOR_MS = 30_000;
 const AI_FEATURES_ENABLED_KEY = 'market-copilot.aiEnabled';
 const AI_DESK_INSIGHTS_ENABLED_KEY = 'market-copilot.aiDeskInsightsEnabled';
 const AI_CONTRACT_SELECTION_ENABLED_KEY = 'market-copilot.aiContractSelectionEnabled';
@@ -67,15 +65,6 @@ const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
 const NY_TIMEZONE = 'America/New_York';
-const MIN_INTRADAY_BARS: Record<keyof typeof TIMEFRAME_MAP, number> = {
-  '1/minute': 60,
-  '3/minute': 40,
-  '5/minute': 30,
-  '15/minute': 20,
-  '30/minute': 20,
-  '1/hour': 24,
-  '1/day': 0
-};
 
 type ChartAnalysis = {
   headline: string;
@@ -92,20 +81,7 @@ const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour12: false
 });
 
-function shouldApplyChartUpdate(nextBars: AggregateBar[], currentBars: AggregateBar[]) {
-  if (!nextBars.length) return false;
-  if (!currentBars.length) return true;
-  const nextLast = nextBars.at(-1)?.timestamp ?? 0;
-  const currentLast = currentBars.at(-1)?.timestamp ?? 0;
-  if (nextLast < currentLast) return false;
-  if (nextLast === currentLast && nextBars.length < currentBars.length) return false;
-  return true;
-}
-
-function getMinIntradayBars(timeframe: keyof typeof TIMEFRAME_MAP, isIntraday: boolean): number {
-  if (!isIntraday) return 0;
-  return MIN_INTRADAY_BARS[timeframe] ?? 0;
-}
+ 
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -167,6 +143,40 @@ function normalizeAggregateBars(results: Array<{ t: string | number; o: number; 
       };
     })
     .filter((bar): bar is AggregateBar => Boolean(bar));
+}
+
+function normalizeChartBars(bars: ChartCandle[]): AggregateBar[] {
+  return (bars ?? [])
+    .map(bar => toAggregateBar(bar))
+    .filter((bar): bar is AggregateBar => Boolean(bar))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function toAggregateBar(candle: ChartCandle | null | undefined): AggregateBar | null {
+  if (!candle) return null;
+  if (![candle.o, candle.h, candle.l, candle.c, candle.v].every(value => Number.isFinite(value))) return null;
+  if (!Number.isFinite(candle.t)) return null;
+  return {
+    timestamp: candle.t,
+    open: candle.o,
+    high: candle.h,
+    low: candle.l,
+    close: candle.c,
+    volume: candle.v
+  };
+}
+
+function upsertChartBar(current: AggregateBar[], nextBar: AggregateBar): AggregateBar[] {
+  if (!current.length) return [nextBar];
+  const next = current.slice();
+  const index = next.findIndex(bar => bar.timestamp === nextBar.timestamp);
+  if (index >= 0) {
+    next[index] = nextBar;
+  } else {
+    next.push(nextBar);
+  }
+  next.sort((a, b) => a.timestamp - b.timestamp);
+  return next;
 }
 
 function getNyParts(timestamp: number) {
@@ -268,15 +278,6 @@ function formatPrice(value: number | null | undefined) {
   return `$${value.toFixed(2)}`;
 }
 
-function resolveChartWindow(config: { multiplier: number; timespan: 'minute' | 'hour' | 'day'; window?: number }, useRegularHours: boolean) {
-  const baseWindow = config.window ?? 180;
-  if (!useRegularHours || config.timespan === 'day') return baseWindow;
-  const minutesPerBar = config.multiplier * (config.timespan === 'hour' ? 60 : 1);
-  const extendedMinutes = 16 * 60;
-  const requiredBars = Math.ceil(extendedMinutes / minutesPerBar);
-  return Math.max(baseWindow, requiredBars);
-}
-
 function selectRegularSessionBars(bars: AggregateBar[]) {
   const sessions = new Map<string, AggregateBar[]>();
   for (const bar of bars) {
@@ -295,13 +296,6 @@ function selectRegularSessionBars(bars: AggregateBar[]) {
   const latestSessionKey = Array.from(sessions.keys()).sort().at(-1);
   if (!latestSessionKey) return [];
   return sessions.get(latestSessionKey) ?? [];
-}
-
-function isRegularSessionTimestamp(timestamp: number) {
-  const parts = getNyParts(timestamp);
-  if (!parts) return false;
-  const minuteOfDay = parts.hour * 60 + parts.minute;
-  return minuteOfDay >= OPENING_RANGE_START_MINUTES && minuteOfDay < 16 * 60;
 }
 
 // Bundle any indicators we currently support so the chart can render overlays.
@@ -338,12 +332,6 @@ type View = 'trading' | 'scanner' | 'portfolio';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
-type LiveAggregate = {
-  ticker: string;
-  start: number;
-  bar: AggregateBar;
-  ev: string;
-};
 type ChartSessionMode = 'regular' | 'extended';
 // Local storage key for persisting conversations between refreshes.
 const STORAGE_KEY = 'market-copilot.conversations';
@@ -360,22 +348,37 @@ type MarketSessionMeta = {
   nextClose?: string | null;
   fetchedAt?: string;
   health?: {
-    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
-    source: 'rest' | 'cache' | 'snapshot';
+    mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING' | 'FROZEN';
+    source: 'rest' | 'cache' | 'snapshot' | 'ws';
     lastUpdateMsAgo: number | null;
     providerThrottled: boolean;
     gapsDetected: number;
   } | null;
 };
 
-type ChartStreamConfig = {
-  symbol: string | null;
-  timespan: 'minute' | 'hour' | 'day';
-  multiplier: number;
-  useRegularHours: boolean;
-  isIntraday: boolean;
-  isOptionSymbol: boolean;
-  cacheKey: string | null;
+type ChartCandle = {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  isFinal?: boolean;
+};
+
+type ChartSnapshotPayload = {
+  symbol: string;
+  timeframe: string;
+  bars: ChartCandle[];
+  health: MarketSessionMeta['health'] | null;
+  session: MarketSessionMeta | null;
+};
+
+type ChartUpdatePayload = {
+  symbol: string;
+  timeframe: string;
+  bar: ChartCandle;
+  health: MarketSessionMeta['health'] | null;
 };
 
 // Convert ISO timestamps (next open/close) into small relative labels.
@@ -489,27 +492,9 @@ function App() {
   const selectionHydratedRef = useRef(false);
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
-  // Cache chart payloads per ticker/timeframe so we can reuse fresh fetches.
-  const chartCacheRef = useRef<
-    Map<
-      string,
-      {
-        timestamp: number;
-        bars: AggregateBar[];
-        note?: string | null;
-        session?: MarketSessionMeta | null;
-      }
-    >
-  >(new Map());
-  const chartStreamRef = useRef<ChartStreamConfig | null>(null);
-  const liveAggStateRef = useRef<Map<string, number>>(new Map());
-  const liveMinuteBarsRef = useRef<Map<string, Map<number, AggregateBar>>>(new Map());
-  const chartBarsRef = useRef<AggregateBar[]>([]);
-  const chartKeyRef = useRef<string | null>(null);
-  const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chartRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chartRateLimitRef = useRef<Map<string, number>>(new Map());
-  const chartRequestIdRef = useRef(0);
+  const chartFocusRef = useRef<{ symbol: string | null; timeframe: string; sessionMode: ChartSessionMode } | null>(
+    null
+  );
   const displayTicker = normalizedTicker;
   const [marketSessionMeta, setMarketSessionMeta] = useState<MarketSessionMeta | null>(null);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
@@ -528,7 +513,6 @@ function App() {
   const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
   const lastLiveQuoteAtRef = useRef<number | null>(null);
   const lastLiveTradeAtRef = useRef<number | null>(null);
-  const [liveAggActive, setLiveAggActive] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
   const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
@@ -730,10 +714,6 @@ function App() {
   }, [contractSelectionAllowed]);
 
   useEffect(() => {
-    chartBarsRef.current = bars;
-  }, [bars]);
-
-  useEffect(() => {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
   }, [autoContractSelection]);
@@ -750,7 +730,7 @@ function App() {
   // Fetch the option chain whenever the ticker or selected expiration changes.
   // Reset derived state when the user changes tickers (fresh bars, selection, etc.).
   // Persist the currently selected leg so it can be restored on next load.
-  // Fetch aggregate bars/indicators for the active ticker/timeframe with caching + polling.
+  // Request chart focus updates over the socket (server-owned candles).
   // Establish Socket.IO connection for live Massive feed.
   useEffect(() => {
     const baseUrl = getApiBaseUrl();
@@ -802,7 +782,6 @@ function App() {
     socket.on('disconnect', () => {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
-      setLiveAggActive(false);
     });
     socket.on('live:error', payload => {
       console.warn('[CLIENT] live feed error', payload);
@@ -812,99 +791,7 @@ function App() {
       socketRef.current = null;
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
-      setLiveAggActive(false);
     };
-  }, []);
-
-  const applyLiveAggregate = useCallback((liveAgg: LiveAggregate) => {
-    const stream = chartStreamRef.current;
-    if (!stream || !stream.symbol) return;
-    if (!stream.isIntraday || stream.timespan !== 'minute') return;
-    if (!stream.isOptionSymbol || liveAgg.ticker !== stream.symbol) return;
-    const eventType = liveAgg.ev?.toUpperCase();
-    const minuteStart = Math.floor(liveAgg.start / 60_000) * 60_000;
-    if (stream.useRegularHours && !isRegularSessionTimestamp(minuteStart)) return;
-
-    const lastSeen = liveAggStateRef.current.get(liveAgg.ticker) ?? 0;
-    if (liveAgg.start < lastSeen) return;
-    liveAggStateRef.current.set(liveAgg.ticker, liveAgg.start);
-
-    let minuteBars = liveMinuteBarsRef.current.get(liveAgg.ticker);
-    if (!minuteBars) {
-      minuteBars = new Map();
-      liveMinuteBarsRef.current.set(liveAgg.ticker, minuteBars);
-    }
-    if (eventType === 'AM') {
-      minuteBars.set(minuteStart, { ...liveAgg.bar, timestamp: minuteStart });
-    } else {
-      const existing = minuteBars.get(minuteStart);
-      if (!existing) {
-        minuteBars.set(minuteStart, { ...liveAgg.bar, timestamp: minuteStart });
-      } else {
-        minuteBars.set(minuteStart, {
-          timestamp: minuteStart,
-          open: existing.open,
-          high: Math.max(existing.high, liveAgg.bar.high),
-          low: Math.min(existing.low, liveAgg.bar.low),
-          close: liveAgg.bar.close,
-          volume: existing.volume + liveAgg.bar.volume
-        });
-      }
-    }
-    if (minuteBars.size > LIVE_MINUTE_BUFFER) {
-      const keys = Array.from(minuteBars.keys()).sort((a, b) => a - b);
-      const overflow = keys.length - LIVE_MINUTE_BUFFER;
-      if (overflow > 0) {
-        keys.slice(0, overflow).forEach(key => minuteBars?.delete(key));
-      }
-    }
-
-    const bucketMs = stream.multiplier * 60_000;
-    const bucketStart = Math.floor(minuteStart / bucketMs) * bucketMs;
-    const bucketEnd = bucketStart + bucketMs;
-    const bucketBars = Array.from(minuteBars.entries())
-      .filter(([timestamp]) => timestamp >= bucketStart && timestamp < bucketEnd)
-      .sort((a, b) => a[0] - b[0])
-      .map(([, bar]) => bar);
-    if (!bucketBars.length) return;
-    const aggregatedBar: AggregateBar = {
-      timestamp: bucketStart,
-      open: bucketBars[0].open,
-      high: Math.max(...bucketBars.map(bar => bar.high)),
-      low: Math.min(...bucketBars.map(bar => bar.low)),
-      close: bucketBars[bucketBars.length - 1].close,
-      volume: bucketBars.reduce((sum, bar) => sum + bar.volume, 0)
-    };
-
-    const cacheKey = stream.cacheKey;
-    const cacheEntry = cacheKey ? chartCacheRef.current.get(cacheKey) : undefined;
-    const baseBars = cacheEntry?.bars ?? [];
-    const nextBars = baseBars.length ? baseBars.slice() : baseBars;
-    const lastBar = nextBars.at(-1);
-    if (lastBar && bucketStart < lastBar.timestamp) return;
-    const existingIndex = nextBars.findIndex(bar => bar.timestamp === bucketStart);
-    if (existingIndex >= 0) {
-      nextBars[existingIndex] = aggregatedBar;
-    } else {
-      nextBars.push(aggregatedBar);
-    }
-    nextBars.sort((a, b) => a.timestamp - b.timestamp);
-
-    if (cacheKey) {
-      chartCacheRef.current.set(cacheKey, {
-        timestamp: Date.now(),
-        bars: nextBars,
-        note: cacheEntry?.note ?? null,
-        session: cacheEntry?.session ?? null
-      });
-    }
-
-    const displayBars = stream.useRegularHours ? selectRegularSessionBars(nextBars) : nextBars;
-    if (cacheKey) {
-      chartKeyRef.current = cacheKey;
-    }
-    setBars(displayBars);
-    setIndicators(buildIndicatorBundle(stream.symbol, displayBars));
   }, []);
 
   // Manage live feed events for the active contract + near-the-money strip.
@@ -959,30 +846,86 @@ function App() {
       }
     };
 
-    const handleAggregate = (payload: any) => {
-      const normalized = normalizeLiveAggregate(payload);
-      if (!normalized) return;
-      if (activeSymbol && normalized.ticker === activeSymbol) {
-        setLiveSubscriptionActive(true);
-        setLiveAggActive(true);
-      }
-      applyLiveAggregate(normalized);
-    };
-
     socket.on('live:subscribed', handleSubscribed);
     socket.on('live:unsubscribed', handleUnsubscribed);
     socket.on('live:quote', handleQuote);
     socket.on('live:trades', handleTrade);
-    socket.on('live:agg', handleAggregate);
 
     return () => {
       socket.off('live:subscribed', handleSubscribed);
       socket.off('live:unsubscribed', handleUnsubscribed);
       socket.off('live:quote', handleQuote);
       socket.off('live:trades', handleTrade);
-      socket.off('live:agg', handleAggregate);
     };
-  }, [activeContractSymbol, liveSocketConnected, applyLiveAggregate]);
+  }, [activeContractSymbol, liveSocketConnected]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    const matchesFocus = (payload?: { symbol?: string; timeframe?: string }) => {
+      const focus = chartFocusRef.current;
+      if (!focus?.symbol) return false;
+      const symbol = payload?.symbol?.toUpperCase() ?? '';
+      return symbol === focus.symbol && payload?.timeframe === focus.timeframe;
+    };
+
+    const handleSnapshot = (payload: ChartSnapshotPayload) => {
+      if (!matchesFocus(payload)) return;
+      const focus = chartFocusRef.current;
+      if (!focus?.symbol) return;
+      const symbol = focus.symbol;
+      const nextBars = normalizeChartBars(payload.bars ?? []);
+      setBars(nextBars);
+      setIndicators(buildIndicatorBundle(symbol, nextBars));
+      setMarketSessionMeta(payload.session ?? null);
+      setMarketError(null);
+      setChartLoading(false);
+    };
+
+    const handleUpdate = (payload: ChartUpdatePayload) => {
+      if (!matchesFocus(payload)) return;
+      const focus = chartFocusRef.current;
+      if (!focus?.symbol) return;
+      const symbol = focus.symbol;
+      const nextBar = toAggregateBar(payload.bar);
+      if (!nextBar) return;
+      setBars(prev => {
+        const next = upsertChartBar(prev, nextBar);
+        setIndicators(buildIndicatorBundle(symbol, next));
+        return next;
+      });
+      if (payload.health) {
+        setMarketSessionMeta(prev => (prev ? { ...prev, health: payload.health } : prev));
+      }
+      setChartLoading(false);
+    };
+
+    const handleError = (payload: { message?: string }) => {
+      if (!chartFocusRef.current?.symbol) return;
+      setMarketError(payload?.message ?? 'Chart data is unavailable.');
+      setChartLoading(false);
+    };
+
+    const handleCleared = () => {
+      setBars([]);
+      setIndicators(undefined);
+      setMarketSessionMeta(null);
+      setChartLoading(false);
+    };
+
+    socket.on('chart:snapshot', handleSnapshot);
+    socket.on('chart:update', handleUpdate);
+    socket.on('chart:error', handleError);
+    socket.on('chart:cleared', handleCleared);
+
+    return () => {
+      socket.off('chart:snapshot', handleSnapshot);
+      socket.off('chart:update', handleUpdate);
+      socket.off('chart:error', handleError);
+      socket.off('chart:cleared', handleCleared);
+    };
+  }, []);
 
   // Reset scanner data when the watchlist changes; run scans on demand.
   useEffect(() => {
@@ -1848,253 +1791,28 @@ function App() {
   }, [chartTicker, chartAnalysisAllowed, useRegularHours]);
 
   useEffect(() => {
+    const socket = socketRef.current;
     const symbol = chartDataSymbol?.trim().toUpperCase() ?? null;
-    const config = TIMEFRAME_MAP[timeframe] ?? TIMEFRAME_MAP['5/minute'];
-    const isIntraday = config.timespan === 'minute' || config.timespan === 'hour';
-    const requestSymbol = symbol;
-    if (!requestSymbol) {
-      chartStreamRef.current = null;
-      chartKeyRef.current = null;
+    const previousFocus = chartFocusRef.current;
+    const focusChanged = previousFocus?.symbol !== symbol || previousFocus?.timeframe !== timeframe;
+    chartFocusRef.current = { symbol, timeframe, sessionMode: chartSessionMode };
+    if (focusChanged) {
       setBars([]);
       setIndicators(undefined);
-      return;
+      setMarketSessionMeta(null);
     }
-    const minBars = getMinIntradayBars(timeframe, isIntraday);
-    chartRequestIdRef.current += 1;
-    const cacheKey = `${requestSymbol}-${timeframe}`;
-    chartStreamRef.current = {
-      symbol: requestSymbol,
-      timespan: config.timespan,
-      multiplier: config.multiplier,
-      useRegularHours,
-      isIntraday,
-      isOptionSymbol: requestSymbol.startsWith('O:'),
-      cacheKey
-    };
-    if (chartFetchTimeoutRef.current) {
-      clearTimeout(chartFetchTimeoutRef.current);
-      chartFetchTimeoutRef.current = null;
-    }
-    if (chartRefreshIntervalRef.current) {
-      clearInterval(chartRefreshIntervalRef.current);
-      chartRefreshIntervalRef.current = null;
-    }
-    const cached = chartCacheRef.current.get(cacheKey);
-    if (!cached || Date.now() - cached.timestamp >= 15_000) {
-      if (chartKeyRef.current !== cacheKey) {
-        chartKeyRef.current = null;
-        setBars([]);
-        setIndicators(undefined);
-        setMarketError(null);
-      }
-    }
-    if (cached && Date.now() - cached.timestamp < 15_000) {
-      const isDailyFallback = cached.session?.resultGranularity === 'daily';
-      const isSparseCacheFallback =
-        cached.session?.resultGranularity === 'cache' && cached.bars.length <= 1;
-      const baseBars = cached.bars.slice().sort((a, b) => a.timestamp - b.timestamp);
-      const displayBars =
-        useRegularHours && isIntraday && !isDailyFallback && !isSparseCacheFallback
-          ? selectRegularSessionBars(baseBars)
-          : baseBars;
-      const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
-      const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
-      const isSparse = minBars > 0 && displayBars.length > 0 && displayBars.length < minBars;
-      const shouldApply =
-        displayBars.length > 0 &&
-        (chartKeyRef.current !== cacheKey ||
-          chartBarsRef.current.length === 0 ||
-          (!isSparse && shouldApplyChartUpdate(displayBars, chartBarsRef.current)));
-      const hasData = displayBars.length > 0;
-      if (shouldApply) {
-        chartKeyRef.current = cacheKey;
-        setBars(displayBars);
-        setIndicators(buildIndicatorBundle(requestSymbol, displayBars));
-        setMarketError(hasData ? null : displayNote);
-      } else if (isSparse) {
-        setMarketError(displayNote);
-      }
-      setMarketSessionMeta(
-        cached.session
-          ? {
-              ...cached.session,
-              note: displayNote ?? undefined
-            }
-          : null
-      );
+    if (!socket || !liveSocketConnected) return;
+
+    if (!symbol) {
+      setChartLoading(false);
+      socket.emit('chart:focus', { symbol: null });
       return;
     }
 
     setChartLoading(true);
     setMarketError(null);
-
-    const triggerFetch = () => {
-      const now = Date.now();
-      const rateLimitUntil = chartRateLimitRef.current.get(cacheKey) ?? 0;
-      if (now < rateLimitUntil) {
-        const retryInSeconds = Math.ceil((rateLimitUntil - now) / 1000);
-        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
-        const note = `Rate limited. Retrying in ${retryInSeconds}s.${sessionNote ? ` ${sessionNote}` : ''}`;
-        setMarketError(note);
-        setChartLoading(false);
-        return;
-      }
-      chartRequestIdRef.current += 1;
-      const requestId = chartRequestIdRef.current;
-      const intradaySourceNote = isIntraday ? `Intraday candles are rendered from ${requestSymbol}.` : null;
-
-      const fetchAggregates = async () => {
-        const requestWindow = resolveChartWindow(config, useRegularHours);
-        const response = await marketApi.getAggregates({
-          ticker: requestSymbol,
-          multiplier: config.multiplier,
-          timespan: config.timespan,
-          window: requestWindow,
-        });
-        return response;
-      };
-
-      const runFetch = async () => {
-        const aggregates = await fetchAggregates();
-        if (chartRequestIdRef.current !== requestId) return;
-        chartRateLimitRef.current.delete(cacheKey);
-        const rawBars = (aggregates.results ?? [])
-          .map(entry => {
-            const timestamp = parseAggregateTimestamp(entry.t);
-            if (timestamp == null) return null;
-            return {
-              timestamp,
-              open: entry.o,
-              high: entry.h,
-              low: entry.l,
-              close: entry.c,
-              volume: entry.v
-            };
-          })
-          .filter((bar): bar is AggregateBar => Boolean(bar));
-        rawBars.sort((a, b) => a.timestamp - b.timestamp);
-        const isDailyFallback = aggregates.resultGranularity === 'daily';
-        const isSparseCacheFallback =
-          aggregates.resultGranularity === 'cache' && rawBars.length <= 1;
-        const displayBars =
-          useRegularHours && isIntraday && !isDailyFallback && !isSparseCacheFallback
-            ? selectRegularSessionBars(rawBars)
-            : rawBars;
-        const indicatorBundle = buildIndicatorBundle(requestSymbol, displayBars);
-        const isSparse = minBars > 0 && displayBars.length > 0 && displayBars.length < minBars;
-        const shouldApply =
-          displayBars.length > 0 &&
-          (chartKeyRef.current !== cacheKey ||
-            chartBarsRef.current.length === 0 ||
-            (!isSparse && shouldApplyChartUpdate(displayBars, chartBarsRef.current)));
-        const nextError =
-          aggregates.note ??
-          (displayBars.length === 0
-            ? `No aggregate data available for ${requestSymbol} (${timeframe}).`
-            : null);
-        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
-        const baseNote = nextError ?? intradaySourceNote;
-        const note = [baseNote, sessionNote].filter(Boolean).join(' ') || null;
-        const sessionMeta: MarketSessionMeta = {
-          marketClosed: Boolean(aggregates.marketClosed),
-          afterHours: Boolean(aggregates.afterHours),
-          usingLastSession: Boolean(aggregates.usingLastSession),
-          resultGranularity: aggregates.resultGranularity ?? 'intraday',
-          note,
-          state: aggregates.marketStatus?.state,
-          nextOpen: aggregates.marketStatus?.nextOpen ?? null,
-          nextClose: aggregates.marketStatus?.nextClose ?? null,
-          fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined,
-          health: aggregates.health ?? null
-        };
-        if (shouldApply) {
-          chartCacheRef.current.set(cacheKey, {
-            bars: rawBars,
-            timestamp: Date.now(),
-            note: baseNote ?? null,
-            session: sessionMeta
-          });
-          chartKeyRef.current = cacheKey;
-          setBars(displayBars);
-          setIndicators(indicatorBundle);
-        }
-        const hasData = displayBars.length > 0;
-        setMarketSessionMeta(sessionMeta);
-        if (shouldApply) {
-          setMarketError(hasData ? null : note);
-        } else if (isSparse) {
-          setMarketError(note);
-        }
-      };
-
-      const applyRateLimit = (error: any) => {
-        if (chartRequestIdRef.current !== requestId) return;
-        const retryAfterMs = error?.response?.data?.retryAfterMs;
-        const cooldownMs = Math.max(
-          CHART_RATE_LIMIT_FLOOR_MS,
-          typeof retryAfterMs === 'number' && retryAfterMs > 0 ? retryAfterMs : 0
-        );
-        chartRateLimitRef.current.set(cacheKey, Date.now() + cooldownMs);
-        const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
-        const note = `Rate limited. Retrying in ${Math.ceil(cooldownMs / 1000)}s.${sessionNote ? ` ${sessionNote}` : ''}`;
-        setMarketError(note);
-        setChartLoading(false);
-      };
-
-      const safeRun = async () => {
-        try {
-          await runFetch();
-        } catch (error: any) {
-          if (error?.response?.status === 429) {
-            applyRateLimit(error);
-            return;
-          } else {
-            throw error;
-          }
-        }
-      };
-
-      safeRun()
-        .catch(error => {
-          if (chartRequestIdRef.current !== requestId) return;
-          const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load chart data';
-          setMarketError(message);
-        })
-        .finally(() => {
-          if (chartRequestIdRef.current === requestId) setChartLoading(false);
-        });
-    };
-
-    chartFetchTimeoutRef.current = setTimeout(triggerFetch, 200);
-    const refreshMs =
-      config.timespan === 'minute'
-        ? Math.max(30_000, config.multiplier * 60_000)
-        : config.timespan === 'hour'
-        ? config.multiplier * 3_600_000
-        : 300_000;
-    const useLiveAggregates =
-      liveSocketConnected && liveAggActive && requestSymbol.startsWith('O:') && config.timespan === 'minute';
-    if (!useLiveAggregates) {
-      chartRefreshIntervalRef.current = setInterval(triggerFetch, refreshMs);
-    }
-
-    return () => {
-      if (chartFetchTimeoutRef.current) {
-        clearTimeout(chartFetchTimeoutRef.current);
-        chartFetchTimeoutRef.current = null;
-      }
-      if (chartRefreshIntervalRef.current) {
-        clearInterval(chartRefreshIntervalRef.current);
-        chartRefreshIntervalRef.current = null;
-      }
-    };
-  }, [chartDataSymbol, timeframe, useRegularHours, liveSocketConnected, liveAggActive]);
-
-  useEffect(() => {
-    setLiveAggActive(false);
-    liveAggStateRef.current.clear();
-    liveMinuteBarsRef.current.clear();
-  }, [activeContractSymbol]);
+    socket.emit('chart:focus', { symbol, timeframe, sessionMode: chartSessionMode });
+  }, [chartDataSymbol, timeframe, chartSessionMode, liveSocketConnected]);
 
   useEffect(() => {
     if (!activeContractSymbol) {
@@ -3623,32 +3341,6 @@ function normalizeLiveTrade(event: any): LiveTradePrint | null {
     timestamp,
     exchange: exchange != null ? String(exchange) : undefined,
     conditions: conditionsSource ? conditionsSource.map((value: any) => String(value)) : undefined,
-  };
-}
-
-function normalizeLiveAggregate(event: any): LiveAggregate | null {
-  if (!event) return null;
-  const ticker = normalizeLiveSymbol(event);
-  if (!ticker) return null;
-  const open = coerceNumber(event.o ?? event.open);
-  const high = coerceNumber(event.h ?? event.high);
-  const low = coerceNumber(event.l ?? event.low);
-  const close = coerceNumber(event.c ?? event.close);
-  if (open == null || high == null || low == null || close == null) return null;
-  const volume = coerceNumber(event.v ?? event.volume) ?? 0;
-  const start = coerceTimestamp(event.s ?? event.start ?? event.t ?? event.timestamp ?? event.receivedAt);
-  return {
-    ticker,
-    start,
-    bar: {
-      timestamp: start,
-      open,
-      high,
-      low,
-      close,
-      volume
-    },
-    ev: String(event.ev ?? event.event ?? '')
   };
 }
 

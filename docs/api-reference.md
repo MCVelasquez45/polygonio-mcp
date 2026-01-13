@@ -44,15 +44,24 @@ Same contract as above but used by the watchlist scanner to hydrate multiple nam
 Base URL: `ws://localhost:4000` via socket.io (client uses `io()` against the server).
 
 ### `live:subscribe`
-Payload: `{ symbol: "O:SPY251219C00650000" }`. Subscribes the socket to Massive option streams for that contract.
+Payload: `{ symbol: "O:SPY251219C00650000" }`. Subscribes the socket to Massive option quote/trade streams for that contract.
 
 ### `live:unsubscribe`
 Payload: `{ symbol: "O:SPY251219C00650000" }`. Stops live events for the contract.
 
 ### Server Events
-- `live:quote` – NBBO updates for the subscribed contract (`bp`, `ap`, `bs`, `as`, timestamps).
-- `live:trades` – trade prints (`p`, `s`, `t`, `x`, `c`).
-- `live:agg` – aggregate bars for the subscribed contract (`ev` is `AM` for per-minute, `A` for per-second).
+- `live:quote` - NBBO updates for the subscribed contract (`bp`, `ap`, `bs`, `as`, timestamps).
+- `live:trades` - trade prints (`p`, `s`, `t`, `x`, `c`).
+
+## WebSocket (Chart Hub)
+
+### `chart:focus`
+Payload: `{ symbol: "O:SPY251219C00650000", timeframe: "5/minute", sessionMode: "regular" }`. Sets the active chart focus for this socket.
+
+### Server Events
+- `chart:snapshot` - initial chart payload (bars + session metadata + health).
+- `chart:update` - incremental bar updates with health.
+- `chart:error` - backfill or stream errors for the current focus.
 
 ## Analysis & AI
 

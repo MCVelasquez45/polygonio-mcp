@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import { MassiveWsClient } from '../../../shared/data/massiveWs';
+import { ingestLiveAggregate } from './chartHub';
 import { upsertAggregateBars } from './aggregatesStore';
 
 type SocketSymbolMap = Map<string, Set<string>>;
@@ -7,13 +8,16 @@ type SymbolSocketMap = Map<string, Set<string>>;
 
 const socketSubscriptions: SocketSymbolMap = new Map();
 const symbolSubscriptions: SymbolSocketMap = new Map();
+const aggregateSubscriptions = new Map<string, number>();
 let ioServer: Server | null = null;
 let wsClient: MassiveWsClient | null = null;
 
 const MASSIVE_WS_URL = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
 const MASSIVE_WS_KEY = process.env.MASSIVE_API_KEY ?? '';
-const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q,AM,A';
-const OPTIONS_WS_ALLOWED_CHANNELS = new Set(['T', 'Q', 'AM', 'A']);
+const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q';
+const MASSIVE_OPTIONS_WS_AGG_CHANNELS = process.env.MASSIVE_OPTIONS_WS_AGG_CHANNELS ?? 'AM,A';
+const OPTIONS_WS_ALLOWED_CHANNELS = new Set(['T', 'Q']);
+const OPTIONS_WS_AGG_ALLOWED_CHANNELS = new Set(['AM', 'A']);
 const STORE_LIVE_AGGS_RAW = process.env.MASSIVE_OPTIONS_WS_STORE_AGGS;
 const STORE_LIVE_AGGS =
   STORE_LIVE_AGGS_RAW == null || STORE_LIVE_AGGS_RAW === ''
@@ -31,7 +35,15 @@ function buildOptionsSubscriptionParams(symbol: string) {
   const channels = MASSIVE_OPTIONS_WS_CHANNELS.split(',')
     .map(entry => entry.trim().toUpperCase())
     .filter(entry => entry.length > 0 && OPTIONS_WS_ALLOWED_CHANNELS.has(entry));
-  const resolved = channels.length ? channels : ['T', 'Q', 'AM'];
+  const resolved = channels.length ? channels : ['T', 'Q'];
+  return resolved.map(channel => `${channel}.${symbol}`).join(',');
+}
+
+function buildAggregateSubscriptionParams(symbol: string) {
+  const channels = MASSIVE_OPTIONS_WS_AGG_CHANNELS.split(',')
+    .map(entry => entry.trim().toUpperCase())
+    .filter(entry => entry.length > 0 && OPTIONS_WS_AGG_ALLOWED_CHANNELS.has(entry));
+  const resolved = channels.length ? channels : ['AM', 'A'];
   return resolved.map(channel => `${channel}.${symbol}`).join(',');
 }
 
@@ -88,7 +100,7 @@ function handleWsMessage(event: any) {
     return;
   }
   if (type === 'AM' || type === 'A') {
-    broadcast(symbol, 'live:agg', payload);
+    ingestLiveAggregate(payload);
     if (type === 'AM') {
       void persistLiveAggregate(symbol, event);
     }
@@ -131,6 +143,26 @@ function unsubscribeSymbol(symbol: string) {
   if (sockets && sockets.size > 0) return;
   symbolSubscriptions.delete(symbol);
   wsClient?.unsubscribe(buildOptionsSubscriptionParams(symbol));
+}
+
+export function subscribeAggregateSymbol(symbol: string) {
+  if (!symbol.startsWith('O:')) return;
+  ensureWsClient();
+  const count = aggregateSubscriptions.get(symbol) ?? 0;
+  aggregateSubscriptions.set(symbol, count + 1);
+  if (count === 0) {
+    wsClient?.subscribe(buildAggregateSubscriptionParams(symbol));
+  }
+}
+
+export function unsubscribeAggregateSymbol(symbol: string) {
+  const count = aggregateSubscriptions.get(symbol) ?? 0;
+  if (count <= 1) {
+    aggregateSubscriptions.delete(symbol);
+    wsClient?.unsubscribe(buildAggregateSubscriptionParams(symbol));
+  } else {
+    aggregateSubscriptions.set(symbol, count - 1);
+  }
 }
 
 export function initLiveFeed(io: Server) {

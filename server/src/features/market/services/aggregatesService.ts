@@ -81,7 +81,7 @@ export type AggregatesResponse = {
 };
 
 type AggregateHealth = {
-  mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING';
+  mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING' | 'FROZEN';
   source: 'rest' | 'cache' | 'snapshot';
   lastUpdateMsAgo: number | null;
   providerThrottled: boolean;
@@ -282,7 +282,7 @@ function buildAggregateHealth(args: {
     note,
     usedSnapshotFallback
   } = args;
-  let mode: AggregateHealth['mode'] = 'DEGRADED';
+  let mode: AggregateHealth['mode'] = marketClosed ? 'FROZEN' : 'DEGRADED';
   if (!marketClosed && !usingLastSession && resultGranularity === 'intraday' && cache === 'fresh') {
     mode = 'LIVE';
   } else if (!marketClosed && usingLastSession) {
