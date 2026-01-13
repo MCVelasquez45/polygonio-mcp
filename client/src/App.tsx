@@ -67,6 +67,15 @@ const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
 const NY_TIMEZONE = 'America/New_York';
+const MIN_INTRADAY_BARS: Record<keyof typeof TIMEFRAME_MAP, number> = {
+  '1/minute': 60,
+  '3/minute': 40,
+  '5/minute': 30,
+  '15/minute': 20,
+  '30/minute': 20,
+  '1/hour': 24,
+  '1/day': 0
+};
 
 type ChartAnalysis = {
   headline: string;
@@ -82,6 +91,21 @@ const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
   hour12: false
 });
+
+function shouldApplyChartUpdate(nextBars: AggregateBar[], currentBars: AggregateBar[]) {
+  if (!nextBars.length) return false;
+  if (!currentBars.length) return true;
+  const nextLast = nextBars.at(-1)?.timestamp ?? 0;
+  const currentLast = currentBars.at(-1)?.timestamp ?? 0;
+  if (nextLast < currentLast) return false;
+  if (nextLast === currentLast && nextBars.length < currentBars.length) return false;
+  return true;
+}
+
+function getMinIntradayBars(timeframe: keyof typeof TIMEFRAME_MAP, isIntraday: boolean): number {
+  if (!isIntraday) return 0;
+  return MIN_INTRADAY_BARS[timeframe] ?? 0;
+}
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -384,6 +408,12 @@ function App() {
   const [chainUnderlyingPrice, setChainUnderlyingPrice] = useState<number | null>(null);
   const [chainLoading, setChainLoading] = useState(false);
   const [chainError, setChainError] = useState<string | null>(null);
+  const lastChainRef = useRef<{
+    ticker: string;
+    groups: OptionChainExpirationGroup[];
+    underlyingPrice: number | null;
+  } | null>(null);
+  const skipChainFetchRef = useRef(false);
   const [availableExpirations, setAvailableExpirations] = useState<string[]>([]);
   const [customExpirations, setCustomExpirations] = useState<string[]>([]);
   const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null);
@@ -467,6 +497,8 @@ function App() {
   const chartStreamRef = useRef<ChartStreamConfig | null>(null);
   const liveAggStateRef = useRef<Map<string, number>>(new Map());
   const liveMinuteBarsRef = useRef<Map<string, Map<number, AggregateBar>>>(new Map());
+  const chartBarsRef = useRef<AggregateBar[]>([]);
+  const chartKeyRef = useRef<string | null>(null);
   const chartFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chartRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartRateLimitRef = useRef<Map<string, number>>(new Map());
@@ -487,6 +519,8 @@ function App() {
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
   const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
   const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
+  const lastLiveQuoteAtRef = useRef<number | null>(null);
+  const lastLiveTradeAtRef = useRef<number | null>(null);
   const [liveAggActive, setLiveAggActive] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
@@ -503,6 +537,7 @@ function App() {
   const [contractAnalysisRequestId, setContractAnalysisRequestId] = useState(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
   const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSnapshotSymbolRef = useRef<string | null>(null);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -688,9 +723,21 @@ function App() {
   }, [contractSelectionAllowed]);
 
   useEffect(() => {
+    chartBarsRef.current = bars;
+  }, [bars]);
+
+  useEffect(() => {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
   }, [autoContractSelection]);
+
+  useEffect(() => {
+    lastLiveQuoteAtRef.current = lastLiveQuoteAt;
+  }, [lastLiveQuoteAt]);
+
+  useEffect(() => {
+    lastLiveTradeAtRef.current = lastLiveTradeAt;
+  }, [lastLiveTradeAt]);
 
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
@@ -846,6 +893,9 @@ function App() {
     }
 
     const displayBars = stream.useRegularHours ? selectRegularSessionBars(nextBars) : nextBars;
+    if (cacheKey) {
+      chartKeyRef.current = cacheKey;
+    }
     setBars(displayBars);
     setIndicators(buildIndicatorBundle(stream.symbol, displayBars));
   }, []);
@@ -1253,7 +1303,18 @@ function App() {
       setChainLoading(false);
       return;
     }
+    const shouldSkipFetch =
+      skipChainFetchRef.current &&
+      selectedExpiration &&
+      chainExpirations.some(group => group.expiration === selectedExpiration);
+    if (shouldSkipFetch) {
+      skipChainFetchRef.current = false;
+      return;
+    }
+    skipChainFetchRef.current = false;
     let cancelled = false;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let hasRetried = false;
     async function loadChain() {
       setChainLoading(true);
       setChainError(null);
@@ -1279,6 +1340,11 @@ function App() {
             setChainUnderlyingPrice(response?.underlyingPrice ?? null);
           } else {
             setChainExpirations(groups);
+            lastChainRef.current = {
+              ticker: normalizedTicker,
+              groups,
+              underlyingPrice: response?.underlyingPrice ?? null
+            };
             const snapshotTicker =
               underlyingSnapshotRef.current && underlyingSnapshotRef.current.entryType === 'underlying'
                 ? underlyingSnapshotRef.current.ticker?.toUpperCase()
@@ -1292,6 +1358,7 @@ function App() {
       } catch (error: any) {
         if (!cancelled) {
           const status = error?.response?.status;
+          const isNetworkError = !error?.response;
           if (status === 404 && selectedExpiration) {
             console.warn('[CLIENT] expiration missing, reverting to full chain', selectedExpiration);
             pendingSelectionRef.current.expiration = null;
@@ -1300,9 +1367,24 @@ function App() {
             setSelectedExpiration(null);
           } else {
             const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load options chain';
-            setChainError(message);
-            setChainExpirations([]);
-            setChainUnderlyingPrice(null);
+            if (!isNetworkError || !chainExpirations.length) {
+              setChainError(message);
+            }
+            if (!isNetworkError) {
+              setChainExpirations([]);
+              setChainUnderlyingPrice(null);
+            } else if (lastChainRef.current?.ticker === normalizedTicker) {
+              setChainExpirations(lastChainRef.current.groups);
+              setChainUnderlyingPrice(lastChainRef.current.underlyingPrice);
+            }
+            if (isNetworkError && !hasRetried) {
+              hasRetried = true;
+              retryTimeout = setTimeout(() => {
+                if (!cancelled) {
+                  loadChain();
+                }
+              }, 2000);
+            }
           }
         }
       } finally {
@@ -1312,14 +1394,15 @@ function App() {
     loadChain();
     return () => {
       cancelled = true;
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
     };
   }, [normalizedTicker, selectedExpiration]);
 
   useEffect(() => {
     setSelectedLeg(null);
     setContractDetail(null);
-    setBars([]);
-    setIndicators(undefined);
     setQuote(null);
     setTrades([]);
     setMarketError(null);
@@ -1760,10 +1843,13 @@ function App() {
     const requestSymbol = symbol;
     if (!requestSymbol) {
       chartStreamRef.current = null;
+      chartKeyRef.current = null;
       setBars([]);
       setIndicators(undefined);
       return;
     }
+    const minBars = getMinIntradayBars(timeframe, isIntraday);
+    chartRequestIdRef.current += 1;
     const cacheKey = `${requestSymbol}-${timeframe}`;
     chartStreamRef.current = {
       symbol: requestSymbol,
@@ -1783,6 +1869,14 @@ function App() {
       chartRefreshIntervalRef.current = null;
     }
     const cached = chartCacheRef.current.get(cacheKey);
+    if (!cached || Date.now() - cached.timestamp >= 15_000) {
+      if (chartKeyRef.current !== cacheKey) {
+        chartKeyRef.current = null;
+        setBars([]);
+        setIndicators(undefined);
+        setMarketError(null);
+      }
+    }
     if (cached && Date.now() - cached.timestamp < 15_000) {
       const isDailyFallback = cached.session?.resultGranularity === 'daily';
       const isSparseCacheFallback =
@@ -1794,10 +1888,21 @@ function App() {
           : baseBars;
       const sessionNote = useRegularHours && isIntraday ? 'Regular trading hours only (9:30–16:00 ET).' : null;
       const displayNote = [cached.note, sessionNote].filter(Boolean).join(' ') || null;
+      const isSparse = minBars > 0 && displayBars.length > 0 && displayBars.length < minBars;
+      const shouldApply =
+        displayBars.length > 0 &&
+        (chartKeyRef.current !== cacheKey ||
+          chartBarsRef.current.length === 0 ||
+          (!isSparse && shouldApplyChartUpdate(displayBars, chartBarsRef.current)));
       const hasData = displayBars.length > 0;
-      setBars(displayBars);
-      setIndicators(buildIndicatorBundle(requestSymbol, displayBars));
-      setMarketError(hasData ? null : displayNote);
+      if (shouldApply) {
+        chartKeyRef.current = cacheKey;
+        setBars(displayBars);
+        setIndicators(buildIndicatorBundle(requestSymbol, displayBars));
+        setMarketError(hasData ? null : displayNote);
+      } else if (isSparse) {
+        setMarketError(displayNote);
+      }
       setMarketSessionMeta(
         cached.session
           ? {
@@ -1865,8 +1970,12 @@ function App() {
             ? selectRegularSessionBars(rawBars)
             : rawBars;
         const indicatorBundle = buildIndicatorBundle(requestSymbol, displayBars);
-        setBars(displayBars);
-        setIndicators(indicatorBundle);
+        const isSparse = minBars > 0 && displayBars.length > 0 && displayBars.length < minBars;
+        const shouldApply =
+          displayBars.length > 0 &&
+          (chartKeyRef.current !== cacheKey ||
+            chartBarsRef.current.length === 0 ||
+            (!isSparse && shouldApplyChartUpdate(displayBars, chartBarsRef.current)));
         const nextError =
           aggregates.note ??
           (displayBars.length === 0
@@ -1886,15 +1995,24 @@ function App() {
           nextClose: aggregates.marketStatus?.nextClose ?? null,
           fetchedAt: aggregates.marketStatus?.asOf ?? aggregates.fetchedAt ?? undefined
         };
-        chartCacheRef.current.set(cacheKey, {
-          bars: rawBars,
-          timestamp: Date.now(),
-          note: baseNote ?? null,
-          session: sessionMeta
-        });
+        if (shouldApply) {
+          chartCacheRef.current.set(cacheKey, {
+            bars: rawBars,
+            timestamp: Date.now(),
+            note: baseNote ?? null,
+            session: sessionMeta
+          });
+          chartKeyRef.current = cacheKey;
+          setBars(displayBars);
+          setIndicators(indicatorBundle);
+        }
         const hasData = displayBars.length > 0;
         setMarketSessionMeta(sessionMeta);
-        setMarketError(hasData ? null : note);
+        if (shouldApply) {
+          setMarketError(hasData ? null : note);
+        } else if (isSparse) {
+          setMarketError(note);
+        }
       };
 
       const applyRateLimit = (error: any) => {
@@ -1970,6 +2088,9 @@ function App() {
     if (!activeContractSymbol) {
       setQuote(null);
       setTrades([]);
+      setLastLiveQuoteAt(null);
+      setLastLiveTradeAt(null);
+      lastSnapshotSymbolRef.current = null;
       return;
     }
     const symbol = activeContractSymbol.toUpperCase();
@@ -2007,7 +2128,7 @@ function App() {
       if (!allowFallbackWhileClosed) return false;
       if (!liveSocketConnected || !liveSubscriptionActive) return true;
       const now = Date.now();
-      const lastUpdate = Math.max(lastLiveQuoteAt ?? 0, lastLiveTradeAt ?? 0);
+      const lastUpdate = Math.max(lastLiveQuoteAtRef.current ?? 0, lastLiveTradeAtRef.current ?? 0);
       if (!lastUpdate) return true;
       return now - lastUpdate > LIVE_STALE_TTL_MS;
     };
@@ -2019,7 +2140,10 @@ function App() {
       }
     }, LIVE_HEALTH_CHECK_INTERVAL_MS);
 
-    void loadSnapshots('initial');
+    if (lastSnapshotSymbolRef.current !== symbol) {
+      lastSnapshotSymbolRef.current = symbol;
+      void loadSnapshots('initial');
+    }
 
     return () => {
       cancelled = true;
@@ -2029,8 +2153,6 @@ function App() {
     activeContractSymbol,
     liveSocketConnected,
     liveSubscriptionActive,
-    lastLiveQuoteAt,
-    lastLiveTradeAt,
     marketSessionMeta?.marketClosed
   ]);
 
@@ -2119,6 +2241,8 @@ function App() {
       onSelectTicker={(next, snapshot) => {
         const normalized = next.toUpperCase();
         setTicker(normalized);
+        setSelectedLeg(null);
+        setContractDetail(null);
         setUnderlyingSnapshot(snapshot ?? null);
         underlyingSnapshotRef.current = snapshot ?? null;
         if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
@@ -2160,6 +2284,9 @@ function App() {
       if (leg?.ticker) {
         setDesiredContract(leg.ticker.toUpperCase());
         if (leg.expiration) {
+          if (chainExpirations.some(group => group.expiration === leg.expiration)) {
+            skipChainFetchRef.current = true;
+          }
           setCustomExpirations(prev =>
             prev.includes(leg.expiration) ? prev : [...prev, leg.expiration]
           );
@@ -2172,12 +2299,13 @@ function App() {
         setDesiredContract(null);
       }
     },
-    [normalizedTicker]
+    [normalizedTicker, chainExpirations]
   );
 
   // Update the selected expiration and reset leg selection when dropdown changes.
   const handleExpirationChange = useCallback((value: string | null) => {
     pendingSelectionRef.current.expiration = null;
+    skipChainFetchRef.current = false;
     if (value) {
       invalidExpirationsRef.current.delete(value);
     }
@@ -2517,6 +2645,7 @@ function App() {
         )}
         <ChartPanel
           ticker={displayTicker}
+          chartKey={chartDataSymbol ?? displayTicker}
           timeframe={timeframe}
           data={bars}
           indicators={indicators}
@@ -2670,15 +2799,17 @@ function App() {
     <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
       <TradingHeader
         selectedTicker={normalizedTicker}
-        onTickerSubmit={value => {
-          const normalized = value.trim().toUpperCase();
-          if (!normalized) return;
-          setTicker(normalized);
-          if (normalized.startsWith('O:')) {
-            pendingSelectionRef.current.contract = normalized;
-            pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-            setDesiredContract(normalized);
-          } else {
+      onTickerSubmit={value => {
+        const normalized = value.trim().toUpperCase();
+        if (!normalized) return;
+        setTicker(normalized);
+        setSelectedLeg(null);
+        setContractDetail(null);
+        if (normalized.startsWith('O:')) {
+          pendingSelectionRef.current.contract = normalized;
+          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+          setDesiredContract(normalized);
+        } else {
             pendingSelectionRef.current.contract = null;
             pendingSelectionRef.current.expiration = null;
             setDesiredContract(null);

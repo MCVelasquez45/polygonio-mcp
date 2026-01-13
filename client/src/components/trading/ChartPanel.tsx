@@ -14,6 +14,7 @@ type Props = {
   indicators?: IndicatorBundle;
   isLoading: boolean;
   onTimeframeChange: (value: string) => void;
+  chartKey?: string;
   sessionMode?: 'regular' | 'extended';
   onSessionModeChange?: (value: 'regular' | 'extended') => void;
   onRunAnalysis?: () => void;
@@ -55,6 +56,7 @@ export function ChartPanel({
   indicators,
   isLoading,
   onTimeframeChange,
+  chartKey,
   sessionMode,
   onSessionModeChange,
   onRunAnalysis,
@@ -81,6 +83,8 @@ export function ChartPanel({
   const emptyStateMessage = ticker.startsWith('O:')
     ? 'Select a contract to load chart data.'
     : 'No chart data available for this symbol.';
+
+  const chartInstanceKey = chartKey ? `${chartKey}-${timeframe}` : timeframe;
 
   return (
     <section className="bg-gray-950/70 border border-gray-900/80 backdrop-blur-sm rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
@@ -161,13 +165,20 @@ export function ChartPanel({
         </div>
       </header>
 
-      <div className="flex-1 min-h-[300px]">
-        {isLoading ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading bars…</div>
-        ) : data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">{emptyStateMessage}</div>
+      <div className="relative flex-1 min-h-[300px]">
+        {data.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+            {isLoading ? 'Loading bars…' : emptyStateMessage}
+          </div>
         ) : (
-          <TradingViewChart bars={data} timeframe={timeframe} />
+          <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} />
+        )}
+        {isLoading && data.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none flex items-start justify-end p-3">
+            <span className="rounded-full border border-gray-800 bg-gray-950/80 px-3 py-1 text-[11px] text-gray-300">
+              Updating…
+            </span>
+          </div>
         )}
       </div>
       {(analysis || analysisError || analysisLoading) && (

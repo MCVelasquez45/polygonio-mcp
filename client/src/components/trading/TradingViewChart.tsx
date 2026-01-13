@@ -54,6 +54,8 @@ const DEFAULT_HEIGHT = 320;
 const SMA_PERIOD = 20;
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
+const INTRADAY_MIN_VISIBLE_BARS = 60;
+const INTRADAY_RIGHT_OFFSET = 2;
 const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   year: 'numeric',
@@ -107,6 +109,19 @@ const mapBarsToVolumes = (bars: AggregateBar[], palette: ThemePalette): Histogra
 function resolveTimeframeUnit(timeframe: string) {
   const unit = timeframe.split('/')[1] ?? 'day';
   return unit;
+}
+
+function applyVisibleRange(chart: IChartApi, barCount: number, timeframe: string) {
+  const unit = resolveTimeframeUnit(timeframe);
+  const isIntraday = unit === 'minute' || unit === 'hour';
+  if (!isIntraday) {
+    chart.timeScale().fitContent();
+    return;
+  }
+  const minBars = INTRADAY_MIN_VISIBLE_BARS;
+  const from = Math.min(barCount - minBars, 0);
+  const to = barCount - 1 + INTRADAY_RIGHT_OFFSET;
+  chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
 function resolveDateFromTime(time: Time): Date | null {
@@ -271,6 +286,10 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
           timeVisible: isIntraday,
           secondsVisible: false,
           tickMarkFormatter: buildTickFormatter(timeframe),
+          rightOffset: INTRADAY_RIGHT_OFFSET,
+          barSpacing: 8,
+          minBarSpacing: 2,
+          fixLeftEdge: true,
         },
       });
 
@@ -415,7 +434,9 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
       candles.setData(candleData);
       volume.setData(volumeData);
       sma.setData(smaData);
-      chartRef.current?.timeScale().fitContent();
+      if (chartRef.current) {
+        applyVisibleRange(chartRef.current, bars.length, timeframe);
+      }
     }
 
     prevBarsRef.current = bars;

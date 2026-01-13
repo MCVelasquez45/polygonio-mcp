@@ -394,12 +394,17 @@ export function OptionsChainPanel({
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col h-[32rem] overflow-hidden">
       {renderHeader()}
-      <div className="mt-4 flex-1 rounded-2xl border border-gray-900 overflow-hidden">
-        {loading ? (
+      <div className="relative mt-4 flex-1 rounded-2xl border border-gray-900 overflow-hidden">
+        {error && rows.length > 0 && (
+          <div className="border-b border-gray-900 bg-amber-500/10 px-4 py-2 text-xs text-amber-100">
+            {error}
+          </div>
+        )}
+        {loading && !rows.length ? (
           <div className="h-full flex items-center justify-center text-sm text-gray-500">
             Loading options chain…
           </div>
-        ) : error ? (
+        ) : error && !rows.length ? (
           <div className="h-full flex items-center justify-center text-sm text-red-400">{error}</div>
         ) : !rows.length ? (
           <div className="h-full flex items-center justify-center text-sm text-gray-500">
@@ -425,6 +430,13 @@ export function OptionsChainPanel({
                 <tbody ref={tableBodyRef}>{rows.map((row, index) => renderRow(row, index))}</tbody>
               </table>
             </div>
+          </div>
+        )}
+        {loading && rows.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none flex items-start justify-end p-3">
+            <span className="rounded-full border border-gray-800 bg-gray-950/80 px-3 py-1 text-[11px] text-gray-300">
+              Updating…
+            </span>
           </div>
         )}
       </div>

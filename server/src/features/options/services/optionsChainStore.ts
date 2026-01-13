@@ -16,6 +16,25 @@ const COLLECTION_NAME = 'option_chain_snapshots';
 const TTL_SECONDS = 60 * 60 * 24; // 24 hours
 let collection: Collection<OptionChainSnapshotDocument> | null = null;
 let indexesEnsured = false;
+const memorySnapshots = new Map<string, OptionChainSnapshotDocument>();
+
+function getSnapshotKey(underlying: string, expiration: string) {
+  return `${underlying.toUpperCase()}::${expiration}`;
+}
+
+function readMemorySnapshot(
+  key: string,
+  maxAgeMs: number,
+  minLimit: number
+): OptionChainSnapshotDocument | null {
+  const doc = memorySnapshots.get(key);
+  if (!doc) return null;
+  const age = Date.now() - doc.updatedAt.getTime();
+  if (age > maxAgeMs) return null;
+  const cachedLimit = typeof doc.limit === 'number' ? doc.limit : 0;
+  if (minLimit > 0 && cachedLimit < minLimit) return null;
+  return doc;
+}
 
 function getSnapshotsCollection() {
   if (!collection) {
@@ -39,21 +58,27 @@ export async function getCachedChainSnapshot(
   maxAgeMs: number,
   options: { minLimit?: number } = {}
 ): Promise<OptionChainSnapshotDocument | null> {
-  await ensureSnapshotIndexes();
   const normalizedUnderlying = underlying.toUpperCase();
-  const col = getSnapshotsCollection();
-  const doc = await col.findOne({ underlying: normalizedUnderlying, expiration });
-  if (!doc) return null;
-  const age = Date.now() - doc.updatedAt.getTime();
-  if (age > maxAgeMs) {
-    return null;
-  }
+  const key = getSnapshotKey(normalizedUnderlying, expiration);
   const minLimit = options.minLimit ?? 0;
-  const cachedLimit = typeof doc.limit === 'number' ? doc.limit : 0;
-  if (minLimit > 0 && cachedLimit < minLimit) {
-    return null;
+  try {
+    await ensureSnapshotIndexes();
+    const col = getSnapshotsCollection();
+    const doc = await col.findOne({ underlying: normalizedUnderlying, expiration });
+    if (!doc) return null;
+    const age = Date.now() - doc.updatedAt.getTime();
+    if (age > maxAgeMs) {
+      return null;
+    }
+    const cachedLimit = typeof doc.limit === 'number' ? doc.limit : 0;
+    if (minLimit > 0 && cachedLimit < minLimit) {
+      return null;
+    }
+    return doc;
+  } catch (error) {
+    console.warn('[MARKET] option chain cache unavailable, using memory fallback', error);
+    return readMemorySnapshot(key, maxAgeMs, minLimit);
   }
-  return doc;
 }
 
 export async function saveChainSnapshot(
@@ -62,23 +87,35 @@ export async function saveChainSnapshot(
   data: any,
   options: { limit?: number } = {}
 ): Promise<void> {
-  await ensureSnapshotIndexes();
   const normalizedUnderlying = underlying.toUpperCase();
   const now = new Date();
-  const col = getSnapshotsCollection();
   const limit = typeof options.limit === 'number' ? options.limit : undefined;
-  await col.updateOne(
-    { underlying: normalizedUnderlying, expiration },
-    {
-      $set: {
-        data,
-        ...(limit != null ? { limit } : {}),
-        updatedAt: now,
-        underlying: normalizedUnderlying,
-        expiration
+  try {
+    await ensureSnapshotIndexes();
+    const col = getSnapshotsCollection();
+    await col.updateOne(
+      { underlying: normalizedUnderlying, expiration },
+      {
+        $set: {
+          data,
+          ...(limit != null ? { limit } : {}),
+          updatedAt: now,
+          underlying: normalizedUnderlying,
+          expiration
+        },
+        $setOnInsert: { createdAt: now }
       },
-      $setOnInsert: { createdAt: now }
-    },
-    { upsert: true }
-  );
+      { upsert: true }
+    );
+  } catch (error) {
+    console.warn('[MARKET] option chain cache unavailable, saving in memory', error);
+    memorySnapshots.set(getSnapshotKey(normalizedUnderlying, expiration), {
+      underlying: normalizedUnderlying,
+      expiration,
+      data,
+      ...(limit != null ? { limit } : {}),
+      updatedAt: now,
+      createdAt: now
+    });
+  }
 }

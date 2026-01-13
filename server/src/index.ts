@@ -62,6 +62,7 @@ io.on('connection', socket => {
 
 async function start() {
   const mongoConfig = resolveMongoConfig();
+  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? '').toLowerCase() === 'true';
   try {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
@@ -69,7 +70,10 @@ async function start() {
     startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);
-    process.exit(1);
+    if (!allowMongoSkip) {
+      process.exit(1);
+    }
+    console.warn('[SERVER] Continuing without MongoDB. Some features will be disabled.');
   }
 
   httpServer.listen(PORT, () => {
