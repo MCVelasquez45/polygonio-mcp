@@ -13,6 +13,7 @@ import {
   getOrCreateBuffer,
   getSnapshot,
   replaceBars,
+  mergeBars,
   setHealthMeta,
   upsertCandle,
   type Candle
@@ -33,8 +34,8 @@ const MAX_BUFFER_BARS = 500;
 const MAX_MINUTE_BARS = 720;
 
 let ioServer: Server | null = null;
-let subscribeAggregates: (symbol: string) => void = () => {};
-let unsubscribeAggregates: (symbol: string) => void = () => {};
+let subscribeAggregates: (symbol: string) => void = () => { };
+let unsubscribeAggregates: (symbol: string) => void = () => { };
 
 const sessionMetaByKey = new Map<string, SessionMetaBase>();
 const timeframeByKey = new Map<string, TimeframeConfig>();
@@ -53,7 +54,7 @@ export function registerChartHubHandlers(socket: Socket) {
   socket.on('chart:focus', async payload => {
     const symbol = normalizeSymbol(payload?.symbol);
     const timeframeKey = typeof payload?.timeframe === 'string' ? payload.timeframe : '5/minute';
-    const sessionMode = payload?.sessionMode === 'extended' ? 'extended' : 'regular';
+    const sessionMode: 'regular' | 'extended' = payload?.sessionMode === 'extended' ? 'extended' : 'regular';
 
     if (!symbol) {
       const previous = clearFocus(socket.id);
@@ -159,7 +160,7 @@ async function runBackfill(
   });
 
   getOrCreateBuffer(key, focus.symbol, focus.timeframe);
-  replaceBars(key, result.candles, MAX_BUFFER_BARS);
+  mergeBars(key, result.candles, MAX_BUFFER_BARS);
   setHealthMeta(key, result.healthMeta);
   sessionMetaByKey.set(key, result.sessionMeta);
 
@@ -186,10 +187,10 @@ function emitSnapshotToSocket(
   const noteParts = [baseSession?.note, sessionNote].filter(Boolean);
   const session = baseSession
     ? {
-        ...baseSession,
-        note: noteParts.length ? noteParts.join(' ') : baseSession.note,
-        health
-      }
+      ...baseSession,
+      note: noteParts.length ? noteParts.join(' ') : baseSession.note,
+      health
+    }
     : null;
 
   ioServer?.to(socketId).emit('chart:snapshot', {

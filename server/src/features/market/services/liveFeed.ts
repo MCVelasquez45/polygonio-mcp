@@ -146,7 +146,6 @@ function unsubscribeSymbol(symbol: string) {
 }
 
 export function subscribeAggregateSymbol(symbol: string) {
-  if (!symbol.startsWith('O:')) return;
   ensureWsClient();
   const count = aggregateSubscriptions.get(symbol) ?? 0;
   aggregateSubscriptions.set(symbol, count + 1);

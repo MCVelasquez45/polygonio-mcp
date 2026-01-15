@@ -81,7 +81,7 @@ const NY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour12: false
 });
 
- 
+
 
 function parseAggregateTimestamp(value: string | number): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -1600,9 +1600,10 @@ function App() {
   }, [normalizedTicker, selectedLeg?.underlying, contractDetail?.underlying, underlyingSnapshot]);
 
   const chartDataSymbol = useMemo(() => {
-    if (activeContractSymbol) return activeContractSymbol.toUpperCase();
+    // Always chart the underlying equity, not the option contract
+    // Option contracts have sparse trading data and create unusable charts
     return chartTicker?.toUpperCase() ?? null;
-  }, [activeContractSymbol, chartTicker]);
+  }, [chartTicker]);
 
   useEffect(() => {
     const targets = new Set<string>();
@@ -1687,8 +1688,8 @@ function App() {
         latestClose != null && latestClose > rangeHigh
           ? 'above'
           : latestClose != null && latestClose < rangeLow
-          ? 'below'
-          : 'inside';
+            ? 'below'
+            : 'inside';
 
       let breakoutVolumeRatio: number | null = null;
       let breakoutStrength = 'neutral';
@@ -1715,8 +1716,8 @@ function App() {
       const shortInterestPrev = shortInterest?.results?.[1] ?? null;
       const shortInterestChangePct =
         typeof shortInterestLatest?.shortInterest === 'number' &&
-        typeof shortInterestPrev?.shortInterest === 'number' &&
-        shortInterestPrev.shortInterest !== 0
+          typeof shortInterestPrev?.shortInterest === 'number' &&
+          shortInterestPrev.shortInterest !== 0
           ? ((shortInterestLatest.shortInterest - shortInterestPrev.shortInterest) / shortInterestPrev.shortInterest) * 100
           : null;
       const daysToCover = typeof shortInterestLatest?.daysToCover === 'number' ? shortInterestLatest.daysToCover : null;
@@ -1734,8 +1735,8 @@ function App() {
         shortVolumeRecent.length > 0 ? shortVolumeRecent.reduce((sum, value) => sum + value, 0) / shortVolumeRecent.length : null;
       const shortVolumeSpike =
         typeof shortVolumeLatest?.shortVolume === 'number' &&
-        typeof shortVolumeAverage === 'number' &&
-        shortVolumeAverage > 0
+          typeof shortVolumeAverage === 'number' &&
+          shortVolumeAverage > 0
           ? shortVolumeLatest.shortVolume >= shortVolumeAverage * 2
           : false;
       const shortVolumeRatio =
@@ -1762,8 +1763,8 @@ function App() {
           ? shortInterestElevated
             ? `Short interest is elevated (days to cover ${daysToCover?.toFixed(1) ?? '—'}, change ${shortInterestChangePct?.toFixed(1) ?? '—'}%).`
             : shortInterestFalling
-            ? `Short interest is easing (change ${shortInterestChangePct?.toFixed(1) ?? '—'}%).`
-            : 'Short interest looks neutral versus recent history.'
+              ? `Short interest is easing (change ${shortInterestChangePct?.toFixed(1) ?? '—'}%).`
+              : 'Short interest looks neutral versus recent history.'
           : 'Short interest data unavailable for this symbol.',
         shortVolumeLatest
           ? shortVolumeSpike || (shortVolumeRatio != null && shortVolumeRatio >= 50)
@@ -1777,8 +1778,8 @@ function App() {
         breakoutStatus === 'above'
           ? 'Opening-range breakout bias is bullish.'
           : breakoutStatus === 'below'
-          ? 'Opening-range breakout bias is bearish.'
-          : 'Opening range is intact — no confirmed breakout yet.';
+            ? 'Opening-range breakout bias is bearish.'
+            : 'Opening range is intact — no confirmed breakout yet.';
 
       setChartAnalysis({ headline, bullets });
       setChartAnalysisUpdatedAt(Date.now());
@@ -1971,6 +1972,9 @@ function App() {
       onSelectTicker={(next, snapshot) => {
         const normalized = next.toUpperCase();
         setTicker(normalized);
+        setBars([]);
+        setIndicators(undefined);
+        setMarketSessionMeta(null);
         setSelectedLeg(null);
         setContractDetail(null);
         setUnderlyingSnapshot(snapshot ?? null);
@@ -2008,6 +2012,11 @@ function App() {
     (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
       selectionSourceRef.current = source;
       setSelectedLeg(leg);
+      if (leg) {
+        setBars([]);
+        setIndicators(undefined);
+        setMarketSessionMeta(null);
+      }
       if (source === 'user') {
         setContractSelection(null);
       }
@@ -2253,8 +2262,8 @@ function App() {
     sentimentTone === 'bullish'
       ? 'border-emerald-500/30 text-emerald-200 bg-emerald-500/10'
       : sentimentTone === 'bearish'
-      ? 'border-rose-500/30 text-rose-200 bg-rose-500/10'
-      : 'border-gray-800 text-gray-300 bg-gray-900/60';
+        ? 'border-rose-500/30 text-rose-200 bg-rose-500/10'
+        : 'border-gray-800 text-gray-300 bg-gray-900/60';
   const sentimentDot =
     sentimentTone === 'bullish' ? 'bg-emerald-400' : sentimentTone === 'bearish' ? 'bg-rose-400' : 'bg-gray-500';
   const sentimentText =
@@ -2352,11 +2361,10 @@ function App() {
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
         {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
           <div
-            className={`rounded-2xl border px-4 py-3 ${
-              marketSessionMeta.marketClosed
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-                : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
-            }`}
+            className={`rounded-2xl border px-4 py-3 ${marketSessionMeta.marketClosed
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+              }`}
           >
             <p className="text-sm font-semibold flex items-center gap-2">
               {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
@@ -2529,17 +2537,17 @@ function App() {
     <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
       <TradingHeader
         selectedTicker={normalizedTicker}
-      onTickerSubmit={value => {
-        const normalized = value.trim().toUpperCase();
-        if (!normalized) return;
-        setTicker(normalized);
-        setSelectedLeg(null);
-        setContractDetail(null);
-        if (normalized.startsWith('O:')) {
-          pendingSelectionRef.current.contract = normalized;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-          setDesiredContract(normalized);
-        } else {
+        onTickerSubmit={value => {
+          const normalized = value.trim().toUpperCase();
+          if (!normalized) return;
+          setTicker(normalized);
+          setSelectedLeg(null);
+          setContractDetail(null);
+          if (normalized.startsWith('O:')) {
+            pendingSelectionRef.current.contract = normalized;
+            pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+            setDesiredContract(normalized);
+          } else {
             pendingSelectionRef.current.contract = null;
             pendingSelectionRef.current.expiration = null;
             setDesiredContract(null);
@@ -2591,9 +2599,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">AI chat</span>
@@ -2608,9 +2615,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">Desk insights</span>
@@ -2625,9 +2631,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !deskInsightsAllowed ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">Auto desk insights</span>
@@ -2642,9 +2647,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">AI contract selection</span>
@@ -2659,9 +2663,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !contractSelectionAllowed ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">Auto contract selection</span>
@@ -2676,9 +2679,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">AI contract analysis</span>
@@ -2693,9 +2695,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">5-minute chart analysis</span>
@@ -2710,9 +2711,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">AI watchlist scanner</span>
@@ -2727,9 +2727,8 @@ function App() {
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${
-                  !aiEnabled ? 'opacity-50' : ''
-                }`}
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
               >
                 <span>
                   <span className="block text-sm font-semibold text-white">Portfolio sentiment</span>
@@ -2754,9 +2753,8 @@ function App() {
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:w-72 lg:translate-x-0 ${
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-          }`}
+          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:w-72 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+            }`}
         >
           <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
@@ -2921,9 +2919,9 @@ function findPreferredLeg(
   if (!groups.length) return null;
   const ordered = preferredExpiration
     ? [
-        ...groups.filter(group => group.expiration === preferredExpiration),
-        ...groups.filter(group => group.expiration !== preferredExpiration),
-      ]
+      ...groups.filter(group => group.expiration === preferredExpiration),
+      ...groups.filter(group => group.expiration !== preferredExpiration),
+    ]
     : groups;
   for (const group of ordered) {
     let bestLeg: OptionLeg | null = null;
@@ -3121,10 +3119,10 @@ function buildAiContext({
   const optionContext = buildOptionContext(selectedLeg, contractDetail);
   const marketContext = marketSessionMeta
     ? {
-        state: marketSessionMeta.state,
-        marketClosed: marketSessionMeta.marketClosed,
-        afterHours: marketSessionMeta.afterHours,
-      }
+      state: marketSessionMeta.state,
+      marketClosed: marketSessionMeta.marketClosed,
+      afterHours: marketSessionMeta.afterHours,
+    }
     : undefined;
 
   return {
@@ -3227,10 +3225,10 @@ function optionLegToContractDetail(leg: OptionLeg): OptionContractDetail {
     },
     lastTrade: leg.lastTrade
       ? {
-          price: leg.lastTrade.price ?? undefined,
-          size: leg.lastTrade.size ?? undefined,
-          sip_timestamp: leg.lastTrade.sip_timestamp ?? undefined,
-        }
+        price: leg.lastTrade.price ?? undefined,
+        size: leg.lastTrade.size ?? undefined,
+        sip_timestamp: leg.lastTrade.sip_timestamp ?? undefined,
+      }
       : undefined,
   };
 }

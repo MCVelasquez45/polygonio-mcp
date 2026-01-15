@@ -57,6 +57,27 @@ export function replaceBars(key: string, candles: Candle[], maxBars: number) {
   buffer.bars = enforceBarLimit(normalized, maxBars);
 }
 
+export function mergeBars(key: string, backfilled: Candle[], maxBars: number) {
+  const buffer = buffers.get(key);
+  if (!buffer) return;
+  const backfilledFinal = normalizeCandles(backfilled).map(bar => ({ ...bar, isFinal: true }));
+  const lastBackfill = backfilledFinal.at(-1);
+  if (!lastBackfill) {
+    // If backfill is empty, don't wipe potentially live bars unless we are sure.
+    // But usually backfill shouldn't be empty if history exists.
+    // If it's truly empty, we might just keep what we have or do nothing.
+    // For safety, let's just append nothing and keep existing live bars.
+    return;
+  }
+
+  // Retain any newer bars from the existing buffer that are ahead of the backfill
+  const newerLiveBars = buffer.bars.filter(bar => bar.t > lastBackfill.t);
+
+  // Combine backfill + newer live bars
+  const combined = [...backfilledFinal, ...newerLiveBars];
+  buffer.bars = enforceBarLimit(combined, maxBars);
+}
+
 export function upsertCandle(key: string, candle: Candle, maxBars: number) {
   const buffer = buffers.get(key);
   if (!buffer) return;

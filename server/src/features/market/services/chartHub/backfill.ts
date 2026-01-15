@@ -3,13 +3,13 @@ import type { Candle, CandleSource } from './buffer';
 import type { HealthMeta, HealthMode, HealthSource } from './health';
 
 const TIMEFRAME_MAP = {
-  '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 390 },
-  '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 130 },
-  '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 78 },
-  '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 26 },
-  '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 13 },
-  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 24 },
-  '1/day': { multiplier: 1, timespan: 'day' as const, window: 180 }
+  '1/minute': { multiplier: 1, timespan: 'minute' as const, window: 3900 }, // ~10 days
+  '3/minute': { multiplier: 3, timespan: 'minute' as const, window: 1300 },
+  '5/minute': { multiplier: 5, timespan: 'minute' as const, window: 780 },  // ~10 days
+  '15/minute': { multiplier: 15, timespan: 'minute' as const, window: 260 },
+  '30/minute': { multiplier: 30, timespan: 'minute' as const, window: 130 },
+  '1/hour': { multiplier: 1, timespan: 'hour' as const, window: 200 },    // ~1 month
+  '1/day': { multiplier: 1, timespan: 'day' as const, window: 252 }        // ~1 year
 };
 
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
