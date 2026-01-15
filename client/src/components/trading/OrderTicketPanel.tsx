@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { QuoteSnapshot, TradePrint, OptionContractDetail } from '../../types/market';
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { getBrokerAccount, submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
@@ -13,6 +13,8 @@ type Props = {
   marketClosed?: boolean;
   afterHours?: boolean;
   nextOpen?: string | null;
+  autoSubmit?: boolean;
+  onOrderSubmitted?: (ticker: string, side: string, qty: number, price: number) => void;
 };
 
 type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
@@ -88,7 +90,9 @@ export function OrderTicketPanel({
   spotPrice,
   marketClosed,
   afterHours,
-  nextOpen
+  nextOpen,
+  autoSubmit = false,
+  onOrderSubmitted
 }: Props) {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
@@ -106,6 +110,7 @@ export function OrderTicketPanel({
   const [tipsOpen, setTipsOpen] = useState(true);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
+  const autoSubmitAttemptedRef = useRef<string | null>(null);
 
   useEffect(() => {
     setQuantity(1);
@@ -168,8 +173,8 @@ export function OrderTicketPanel({
   const estimatePrice = requiresLimit
     ? limitValue
     : requiresStop
-    ? stopValue
-    : markPrice;
+      ? stopValue
+      : markPrice;
   const estimatedCost =
     estimatePrice != null && quantity > 0 ? estimatePrice * quantity * multiplier : null;
   const estimatedLabel = side === 'sell' ? 'Estimated Credit' : 'Estimated Cost';
@@ -189,13 +194,14 @@ export function OrderTicketPanel({
   const costBasis = estimatedCost;
   const maxLoss =
     side === 'buy' && estimatedCost != null ? estimatedCost : null;
-  const orderTypeLabel = {
+  const orderTypeLabels: Record<OrderType, string> = {
     market: 'Market',
     limit: 'Limit',
     stop: 'Stop',
     stop_limit: 'Stop Limit',
     trailing_stop: 'Trailing Stop'
-  }[orderType];
+  };
+  const orderTypeLabel = orderTypeLabels[orderType];
   const quantityLabel =
     qtyMode === 'dollars' ? 'Dollars' : assetType === 'option' ? 'Contracts' : 'Shares';
   const symbolDisplay = contract?.ticker ?? label ?? '—';
@@ -275,8 +281,12 @@ export function OrderTicketPanel({
     try {
       const payload = mapOrderDraftToPayload(draft);
       console.log('[CLIENT] submitting Alpaca options order', payload);
-      await submitOptionOrder(payload);
+      const result = await submitOptionOrder(payload);
       setSubmissionResult({ status: 'success', message: 'Order submitted to Alpaca paper trading.' });
+      if (onOrderSubmitted && draft.instrument) {
+        onOrderSubmitted(draft.instrument, draft.side, draft.qty, draft.prices.limit || markPrice || 0);
+      }
+      return result;
     } catch (error: any) {
       const message = error?.response?.data?.message ?? error?.message ?? 'Failed to submit order';
       setSubmissionResult({ status: 'error', message });
@@ -284,6 +294,25 @@ export function OrderTicketPanel({
       setSubmitting(false);
     }
   }
+
+  // Auto-submit logic
+  useEffect(() => {
+    if (!autoSubmit || !contract?.ticker || submitting || submissionResult) return;
+    if (autoSubmitAttemptedRef.current === contract.ticker) return;
+
+    // Check if we have everything we need to submit
+    if (canSubmit) {
+      console.log('[CLIENT] Auto-submitting order for', contract.ticker);
+      autoSubmitAttemptedRef.current = contract.ticker;
+      handleSubmit();
+    }
+  }, [autoSubmit, contract?.ticker, canSubmit, submitting, submissionResult]);
+
+  useEffect(() => {
+    if (contract?.ticker !== autoSubmitAttemptedRef.current) {
+      autoSubmitAttemptedRef.current = null;
+    }
+  }, [contract?.ticker]);
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl h-full flex flex-col">
@@ -299,11 +328,10 @@ export function OrderTicketPanel({
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {(marketClosed || afterHours) && (
           <div
-            className={`rounded-xl border px-3 py-2 text-xs ${
-              marketClosed
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-                : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
-            }`}
+            className={`rounded-xl border px-3 py-2 text-xs ${marketClosed
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+              }`}
           >
             <p className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="h-3.5 w-3.5" />
@@ -320,7 +348,7 @@ export function OrderTicketPanel({
         <div className="rounded-xl border border-gray-900 bg-gray-950/60 px-3 py-2">
           <button
             type="button"
-            onClick={() => setTipsOpen(open => !open)}
+            onClick={() => setTipsOpen((open: boolean) => !open)}
             className="w-full flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500"
           >
             <span>Beginner Tips</span>
@@ -342,18 +370,16 @@ export function OrderTicketPanel({
         <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
           <button
             type="button"
-            className={`rounded-xl px-3 py-2 border ${
-              side === 'buy' ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-gray-800 text-gray-400'
-            }`}
+            className={`rounded-xl px-3 py-2 border ${side === 'buy' ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-gray-800 text-gray-400'
+              }`}
             onClick={() => setSide('buy')}
           >
             Buy
           </button>
           <button
             type="button"
-            className={`rounded-xl px-3 py-2 border ${
-              side === 'sell' ? 'border-red-500/60 bg-red-500/10 text-white' : 'border-gray-800 text-gray-400'
-            }`}
+            className={`rounded-xl px-3 py-2 border ${side === 'sell' ? 'border-red-500/60 bg-red-500/10 text-white' : 'border-gray-800 text-gray-400'
+              }`}
             onClick={() => setSide('sell')}
           >
             Sell
@@ -377,11 +403,10 @@ export function OrderTicketPanel({
           <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
             <button
               type="button"
-              className={`rounded-xl px-3 py-2 border ${
-                qtyMode === primaryQtyMode
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-              }`}
+              className={`rounded-xl px-3 py-2 border ${qtyMode === primaryQtyMode
+                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                : 'border-gray-800 text-gray-400'
+                }`}
               onClick={() => setQtyMode(primaryQtyMode)}
             >
               {primaryQtyMode === 'contracts' ? 'Contracts' : 'Shares'}
@@ -389,11 +414,10 @@ export function OrderTicketPanel({
             <button
               type="button"
               disabled={notionalDisabled}
-              className={`rounded-xl px-3 py-2 border ${
-                qtyMode === 'dollars'
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-              } ${notionalDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`rounded-xl px-3 py-2 border ${qtyMode === 'dollars'
+                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                : 'border-gray-800 text-gray-400'
+                } ${notionalDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
               onClick={() => setQtyMode('dollars')}
             >
               Dollars
@@ -412,7 +436,7 @@ export function OrderTicketPanel({
             type="number"
             min={1}
             value={quantity}
-            onChange={event => setQuantity(Number(event.target.value) || 1)}
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) => setQuantity(Number(event.target.value) || 1)}
             className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
           />
         </label>
@@ -423,7 +447,7 @@ export function OrderTicketPanel({
         <label className="flex flex-col gap-1 text-sm">
           <select
             value={orderType}
-            onChange={event => setOrderType(event.target.value as OrderType)}
+            onChange={(event: ChangeEvent<HTMLSelectElement>) => setOrderType(event.target.value as OrderType)}
             className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
           >
             <option value="market" disabled={marketClosed}>Market</option>
@@ -444,7 +468,7 @@ export function OrderTicketPanel({
               step="0.01"
               min={0}
               value={stopPrice}
-              onChange={event => setStopPrice(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setStopPrice(event.target.value)}
               className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
             />
             {marketPriceDisplay !== '—' && (
@@ -463,7 +487,7 @@ export function OrderTicketPanel({
               step="0.01"
               min={0}
               value={limitPrice}
-              onChange={event => setLimitPrice(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setLimitPrice(event.target.value)}
               className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
             />
             {marketPriceDisplay !== '—' && (
@@ -487,22 +511,20 @@ export function OrderTicketPanel({
             <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
               <button
                 type="button"
-                className={`rounded-xl px-3 py-2 border ${
-                  trailType === 'percent'
-                    ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                    : 'border-gray-800 text-gray-400'
-                }`}
+                className={`rounded-xl px-3 py-2 border ${trailType === 'percent'
+                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                  : 'border-gray-800 text-gray-400'
+                  }`}
                 onClick={() => setTrailType('percent')}
               >
                 Trail %
               </button>
               <button
                 type="button"
-                className={`rounded-xl px-3 py-2 border ${
-                  trailType === 'amount'
-                    ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                    : 'border-gray-800 text-gray-400'
-                }`}
+                className={`rounded-xl px-3 py-2 border ${trailType === 'amount'
+                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                  : 'border-gray-800 text-gray-400'
+                  }`}
                 onClick={() => setTrailType('amount')}
               >
                 Trail $
@@ -515,7 +537,7 @@ export function OrderTicketPanel({
                 step="0.01"
                 min={0}
                 value={trailValue}
-                onChange={event => setTrailValue(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setTrailValue(event.target.value)}
                 className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
               />
             </label>
@@ -529,22 +551,20 @@ export function OrderTicketPanel({
           <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
             <button
               type="button"
-              className={`rounded-xl px-3 py-2 border ${
-                timeInForce === 'day'
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-              }`}
+              className={`rounded-xl px-3 py-2 border ${timeInForce === 'day'
+                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                : 'border-gray-800 text-gray-400'
+                }`}
               onClick={() => setTimeInForce('day')}
             >
               DAY
             </button>
             <button
               type="button"
-              className={`rounded-xl px-3 py-2 border ${
-                timeInForce === 'gtc'
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-              }`}
+              className={`rounded-xl px-3 py-2 border ${timeInForce === 'gtc'
+                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                : 'border-gray-800 text-gray-400'
+                }`}
               onClick={() => setTimeInForce('gtc')}
             >
               GTC
@@ -573,7 +593,7 @@ export function OrderTicketPanel({
         <div className="border border-gray-900 rounded-2xl">
           <button
             type="button"
-            onClick={() => setRiskOpen(open => !open)}
+            onClick={() => setRiskOpen((open: boolean) => !open)}
             className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-300"
           >
             <span>Risk Preview</span>
@@ -603,22 +623,20 @@ export function OrderTicketPanel({
         <button
           type="button"
           disabled={!canSubmit}
-          className={`w-full inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
-            side === 'buy'
-              ? 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800'
-              : 'bg-red-600 hover:bg-red-500 disabled:bg-gray-800'
-          }`}
+          className={`w-full inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${side === 'buy'
+            ? 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800'
+            : 'bg-red-600 hover:bg-red-500 disabled:bg-gray-800'
+            }`}
           onClick={() => setReviewOpen(true)}
         >
           {submitting || isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Review Order'}
         </button>
         {submissionResult && (
           <div
-            className={`text-sm rounded-xl px-3 py-2 ${
-              submissionResult.status === 'success'
-                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/40'
-                : 'bg-red-500/10 text-red-300 border border-red-500/40'
-            }`}
+            className={`text-sm rounded-xl px-3 py-2 ${submissionResult.status === 'success'
+              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/40'
+              : 'bg-red-500/10 text-red-300 border border-red-500/40'
+              }`}
           >
             {submissionResult.message}
           </div>
@@ -679,9 +697,8 @@ export function OrderTicketPanel({
               </button>
               <button
                 type="button"
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${
-                  side === 'buy' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'
-                }`}
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${side === 'buy' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'
+                  }`}
                 onClick={() => {
                   setReviewOpen(false);
                   void handleSubmit();

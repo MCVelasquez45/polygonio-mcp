@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
 import { ChartPanel } from './components/trading/ChartPanel';
@@ -9,7 +10,7 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
-import { analysisApi, chatApi, marketApi } from './api';
+import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
@@ -62,6 +63,8 @@ const AI_CHART_ANALYSIS_ENABLED_KEY = 'market-copilot.aiChartAnalysisEnabled';
 const CHART_SESSION_MODE_KEY = 'market-copilot.chartSessionMode';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
+const AUTO_SUBMIT_ORDERS_KEY = 'market-copilot.autoSubmitOrders';
+const AUTO_SCANNER_ENABLED_KEY = 'market-copilot.autoScannerEnabled';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
 const NY_TIMEZONE = 'America/New_York';
@@ -480,6 +483,8 @@ function App() {
   );
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
+  const [autoSubmitOrders, setAutoSubmitOrders] = useState(() => readStoredBoolean(AUTO_SUBMIT_ORDERS_KEY, false));
+  const [autoScannerEnabled, setAutoScannerEnabled] = useState(() => readStoredBoolean(AUTO_SCANNER_ENABLED_KEY, false));
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
   const contractSelectionAllowed = aiEnabled && aiContractSelectionEnabled;
   const contractAnalysisAllowed = aiEnabled && aiContractAnalysisEnabled;
@@ -529,6 +534,7 @@ function App() {
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
   const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSnapshotSymbolRef = useRef<string | null>(null);
+  const [tradeMarkers, setTradeMarkers] = useState<SeriesMarker<UTCTimestamp>[]>([]);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -547,7 +553,7 @@ function App() {
       setAiRequestWarning('AI desk insights are disabled in Settings.');
       return;
     }
-    setDeskInsightRefreshId(prev => prev + 1);
+    setDeskInsightRefreshId((prev: number) => prev + 1);
   }, [deskInsightsAllowed]);
 
   const handleScannerRefresh = useCallback(() => {
@@ -555,15 +561,31 @@ function App() {
       setAiRequestWarning('AI scanner is disabled in Settings.');
       return;
     }
-    setScannerRefreshId(prev => prev + 1);
+    setScannerRefreshId((prev: number) => prev + 1);
   }, [scannerAllowed]);
+
+  // Automated scanner loop
+  useEffect(() => {
+    if (!autoScannerEnabled || !scannerAllowed) return;
+
+    // Run once immediately if it's been a while or just enabled
+    handleScannerRefresh();
+
+    const intervalId = setInterval(() => {
+      console.log('[CLIENT] Auto-triggering scanner refresh...');
+      handleScannerRefresh();
+    }, 300000); // 5 minutes
+
+    return () => clearInterval(intervalId);
+  }, [autoScannerEnabled, scannerAllowed, handleScannerRefresh]);
+
 
   const handleContractSelectionRequest = useCallback(() => {
     if (!contractSelectionAllowed) {
       setAiRequestWarning('AI contract selection is disabled in Settings.');
       return;
     }
-    setContractSelectionRequestId(prev => prev + 1);
+    setContractSelectionRequestId((prev: number) => prev + 1);
   }, [contractSelectionAllowed]);
 
   const handleContractAnalysisRequest = useCallback(() => {
@@ -571,7 +593,7 @@ function App() {
       setAiRequestWarning('AI contract analysis is disabled in Settings.');
       return;
     }
-    setContractAnalysisRequestId(prev => prev + 1);
+    setContractAnalysisRequestId((prev: number) => prev + 1);
   }, [contractAnalysisAllowed]);
 
   const handleToggleChat = useCallback(() => {
@@ -579,7 +601,7 @@ function App() {
       setAiRequestWarning('AI chat is disabled in Settings.');
       return;
     }
-    setIsChatOpen(prev => !prev);
+    setIsChatOpen((prev: boolean) => !prev);
   }, [chatAllowed]);
 
   const handleAiLimit = useCallback((error: any) => {
@@ -696,6 +718,8 @@ function App() {
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(AUTO_CONTRACT_SELECTION_KEY, String(autoContractSelection));
+      window.localStorage.setItem(AUTO_SUBMIT_ORDERS_KEY, String(autoSubmitOrders));
+      window.localStorage.setItem(AUTO_SCANNER_ENABLED_KEY, String(autoScannerEnabled));
     } catch {
       // ignore persistence failures
     }
@@ -716,7 +740,7 @@ function App() {
   useEffect(() => {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
-  }, [autoContractSelection]);
+  }, [autoContractSelection, autoSubmitOrders, autoScannerEnabled]);
 
   useEffect(() => {
     lastLiveQuoteAtRef.current = lastLiveQuoteAt;
@@ -765,7 +789,7 @@ function App() {
     socket.on('connect', () => {
       setLiveSocketConnected(true);
     });
-    socket.on('connect_error', error => {
+    socket.on('connect_error', (error: any) => {
       const description =
         typeof (error as { description?: unknown })?.description === 'string'
           ? (error as { description?: string }).description
@@ -783,7 +807,7 @@ function App() {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
     });
-    socket.on('live:error', payload => {
+    socket.on('live:error', (payload: any) => {
       console.warn('[CLIENT] live feed error', payload);
     });
     return () => {
@@ -823,7 +847,7 @@ function App() {
     const handleQuote = (payload: any) => {
       const normalized = normalizeLiveQuote(payload);
       if (!normalized) return;
-      setLiveChainQuotes(prev => ({ ...prev, [normalized.ticker]: normalized }));
+      setLiveChainQuotes((prev: Record<string, QuoteSnapshot>) => ({ ...prev, [normalized.ticker]: normalized }));
       if (activeSymbol && normalized.ticker === activeSymbol) {
         setQuote(normalized);
         setLastLiveQuoteAt(Date.now());
@@ -835,9 +859,9 @@ function App() {
       const normalized = normalizeLiveTrade(payload);
       if (!normalized) return;
       if (!normalized.ticker) return;
-      setLiveChainTrades(prev => ({ ...prev, [normalized.ticker]: normalized }));
+      setLiveChainTrades((prev: Record<string, TradePrint>) => ({ ...prev, [normalized.ticker]: normalized }));
       if (activeSymbol && normalized.ticker === activeSymbol) {
-        setTrades(prev => {
+        setTrades((prev: TradePrint[]) => {
           if (prev.length > 0 && prev[0]?.id === normalized.id) return prev;
           return [normalized, ...prev].slice(0, MAX_TRADE_HISTORY);
         });
@@ -890,13 +914,13 @@ function App() {
       const symbol = focus.symbol;
       const nextBar = toAggregateBar(payload.bar);
       if (!nextBar) return;
-      setBars(prev => {
+      setBars((prev: AggregateBar[]) => {
         const next = upsertChartBar(prev, nextBar);
         setIndicators(buildIndicatorBundle(symbol, next));
         return next;
       });
       if (payload.health) {
-        setMarketSessionMeta(prev => (prev ? { ...prev, health: payload.health } : prev));
+        setMarketSessionMeta((prev: MarketSessionMeta | null) => (prev ? { ...prev, health: payload.health } : prev));
       }
       setChartLoading(false);
     };
@@ -1109,7 +1133,7 @@ function App() {
     try {
       const payload = await chatApi.fetchConversationTranscript(sessionId);
       const mapped = mapMessages(payload);
-      setTranscripts(prev => {
+      setTranscripts((prev: Record<string, ChatMessage[]>) => {
         const next = {
           ...prev,
           [sessionId]: mapped.length ? mapped : [DEFAULT_ASSISTANT_MESSAGE],
@@ -1125,8 +1149,8 @@ function App() {
   // Merge expirations returned from the API with anything the user entered manually.
   const mergedExpirations = useMemo(() => {
     const merged = new Set<string>();
-    availableExpirations.forEach(value => merged.add(value));
-    customExpirations.forEach(value => merged.add(value));
+    availableExpirations.forEach((value: string) => merged.add(value));
+    customExpirations.forEach((value: string) => merged.add(value));
     return Array.from(merged).sort((a, b) => {
       const tsA = getExpirationTimestamp(a);
       const tsB = getExpirationTimestamp(b);
@@ -1256,7 +1280,7 @@ function App() {
     const shouldSkipFetch =
       skipChainFetchRef.current &&
       selectedExpiration &&
-      chainExpirations.some(group => group.expiration === selectedExpiration);
+      chainExpirations.some((group: OptionChainExpirationGroup) => group.expiration === selectedExpiration);
     if (shouldSkipFetch) {
       skipChainFetchRef.current = false;
       return;
@@ -1313,7 +1337,7 @@ function App() {
             console.warn('[CLIENT] expiration missing, reverting to full chain', selectedExpiration);
             pendingSelectionRef.current.expiration = null;
             invalidExpirationsRef.current.add(selectedExpiration);
-            setCustomExpirations(prev => prev.filter(value => value !== selectedExpiration));
+            setCustomExpirations((prev: string[]) => prev.filter(value => value !== selectedExpiration));
             setSelectedExpiration(null);
           } else {
             const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load options chain';
@@ -1402,7 +1426,7 @@ function App() {
         const pendingExpiration = pendingSelectionRef.current.expiration;
         if (pendingExpiration) {
           if (!expirations.includes(pendingExpiration)) {
-            setCustomExpirations(prev =>
+            setCustomExpirations((prev: string[]) =>
               prev.includes(pendingExpiration) ? prev : [...prev, pendingExpiration]
             );
           }
@@ -1474,7 +1498,7 @@ function App() {
     if (selectedExpiration === parsedExpiration) return;
     pendingSelectionRef.current.expiration = parsedExpiration;
     if (!mergedExpirations.includes(parsedExpiration)) {
-      setCustomExpirations(prev =>
+      setCustomExpirations((prev: string[]) =>
         prev.includes(parsedExpiration) ? prev : [...prev, parsedExpiration]
       );
     }
@@ -1605,9 +1629,58 @@ function App() {
     return chartTicker?.toUpperCase() ?? null;
   }, [chartTicker]);
 
+  // Fetch and map filled orders for visual journaling
+  useEffect(() => {
+    if (!chartDataSymbol || !displayTicker) {
+      setTradeMarkers([]);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchOrders = async () => {
+      try {
+        const { orders } = await alpacaApi.getOptionOrders({ status: 'filled', limit: 50 });
+        if (!isMounted) return;
+
+        // Filter and map orders for the current display ticker
+        const relevantOrders = orders.filter(
+          (o) => o.symbol === displayTicker || (o.symbol && o.symbol.startsWith(`O:${displayTicker}`))
+        );
+
+        const markers: SeriesMarker<UTCTimestamp>[] = relevantOrders
+          .map((order) => {
+            const timeStr = order.filled_at || order.created_at;
+            const time = timeStr ? (Math.floor(new Date(timeStr).getTime() / 1000) as UTCTimestamp) : null;
+            if (!time) return null;
+
+            const isBuy = order.side === 'buy';
+            return {
+              time,
+              position: isBuy ? 'belowBar' : 'aboveBar',
+              color: isBuy ? '#10b981' : '#f43f5e',
+              shape: isBuy ? 'arrowUp' : 'arrowDown',
+              text: isBuy ? `BUY @ ${order.filled_avg_price}` : `SELL @ ${order.filled_avg_price}`,
+            } as SeriesMarker<UTCTimestamp>;
+          })
+          .filter((m): m is SeriesMarker<UTCTimestamp> => m !== null);
+
+        setTradeMarkers(markers);
+      } catch (err) {
+        console.error('Failed to fetch trade markers:', err);
+      }
+    };
+
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 30000); // Poll every 30s
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [displayTicker, chartDataSymbol]);
+
   useEffect(() => {
     const targets = new Set<string>();
-    watchlistSymbols.forEach(symbol => {
+    watchlistSymbols.forEach((symbol: string) => {
       const normalized = symbol.toUpperCase();
       if (!normalized.startsWith('O:')) {
         targets.add(normalized);
@@ -1890,8 +1963,8 @@ function App() {
   // Spawn a brand new chat session in the dock and make it active.
   function startNewConversation() {
     const convo = createConversation();
-    setConversations(prev => [convo, ...prev]);
-    setTranscripts(prev => {
+    setConversations((prev: ConversationMeta[]) => [convo, ...prev]);
+    setTranscripts((prev: Record<string, ChatMessage[]>) => {
       const next = {
         ...prev,
         [convo.sessionId]: [DEFAULT_ASSISTANT_MESSAGE],
@@ -1906,7 +1979,7 @@ function App() {
   // Switch active chat sessions and lazily hydrate transcripts as required.
   async function handleConversationSelect(id: string) {
     setActiveConversationId(id);
-    const convo = conversations.find(c => c.id === id);
+    const convo = conversations.find((c: ConversationMeta) => c.id === id);
     if (convo) {
       setLatestInsight(convo.preview);
       await ensureTranscriptLoaded(convo.sessionId);
@@ -1915,7 +1988,7 @@ function App() {
 
   // Allow dock components to push latest messages into the transcript cache.
   function handleMessagesChange(sessionId: string, nextMessages: ChatMessage[]) {
-    setTranscripts(prev => {
+    setTranscripts((prev: Record<string, ChatMessage[]>) => {
       const next = {
         ...prev,
         [sessionId]: nextMessages,
@@ -1928,15 +2001,15 @@ function App() {
   // When the assistant replies, refresh metadata + previews so the list stays sorted.
   function handleConversationUpdate(payload: ConversationPayload) {
     const normalized = normalizeConversation(payload);
-    setConversations(prev => {
-      const filtered = prev.filter(convo => convo.sessionId !== normalized.sessionId);
+    setConversations((prev: ConversationMeta[]) => {
+      const filtered = prev.filter((convo: ConversationMeta) => convo.sessionId !== normalized.sessionId);
       return [normalized, ...filtered];
     });
     setLatestInsight(normalized.preview);
   }
 
   async function handleConversationDelete(id: string) {
-    const convo = conversations.find(item => item.id === id);
+    const convo = conversations.find((item: ConversationMeta) => item.id === id);
     if (!convo) return;
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm('Delete this chat? This cannot be undone.');
@@ -1947,9 +2020,9 @@ function App() {
     } catch (error) {
       console.warn('Failed to delete conversation', error);
     }
-    const remaining = conversations.filter(item => item.id !== id);
+    const remaining = conversations.filter((item: ConversationMeta) => item.id !== id);
     setConversations(remaining);
-    setTranscripts(prev => {
+    setTranscripts((prev: Record<string, ChatMessage[]>) => {
       const next = { ...prev };
       delete next[convo.sessionId];
       transcriptsRef.current = next;
@@ -2023,10 +2096,10 @@ function App() {
       if (leg?.ticker) {
         setDesiredContract(leg.ticker.toUpperCase());
         if (leg.expiration) {
-          if (chainExpirations.some(group => group.expiration === leg.expiration)) {
+          if (chainExpirations.some((group: OptionChainExpirationGroup) => group.expiration === leg.expiration)) {
             skipChainFetchRef.current = true;
           }
-          setCustomExpirations(prev =>
+          setCustomExpirations((prev: string[]) =>
             prev.includes(leg.expiration) ? prev : [...prev, leg.expiration]
           );
           setSelectedExpiration(leg.expiration);
@@ -2132,7 +2205,7 @@ function App() {
     const selectionKey = `${deskInsightSymbol}-${preferredOptionSide}-${selectedExpiration ?? 'auto'}`;
     if (autoContractSelectionKeyRef.current === selectionKey) return;
     autoContractSelectionKeyRef.current = selectionKey;
-    setContractSelectionRequestId(prev => prev + 1);
+    setContractSelectionRequestId((prev: number) => prev + 1);
   }, [
     autoContractSelection,
     contractSelectionAllowed,
@@ -2298,19 +2371,19 @@ function App() {
         socket.emit('live:subscribe', { symbol });
       }
     });
-    prevSymbols.forEach(symbol => {
+    prevSymbols.forEach((symbol: string) => {
       if (!nextSymbols.has(symbol)) {
         socket.emit('live:unsubscribe', { symbol });
         removed.push(symbol);
       }
     });
     if (removed.length) {
-      setLiveChainQuotes(prev => {
+      setLiveChainQuotes((prev: Record<string, any>) => {
         const next = { ...prev };
         removed.forEach(symbol => delete next[symbol]);
         return next;
       });
-      setLiveChainTrades(prev => {
+      setLiveChainTrades((prev: Record<string, any>) => {
         const next = { ...prev };
         removed.forEach(symbol => delete next[symbol]);
         return next;
@@ -2408,6 +2481,7 @@ function App() {
               : undefined
           }
           sessionMeta={marketSessionMeta}
+          markers={tradeMarkers}
         />
         <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -2465,7 +2539,7 @@ function App() {
               )}
               {deskHighlights.length ? (
                 <ul className="space-y-1 text-xs text-gray-300">
-                  {deskHighlights.map(item => (
+                  {deskHighlights.map((item: string) => (
                     <li key={item} className="flex items-start gap-2">
                       <span className="text-emerald-300">•</span>
                       <span>{item}</span>
@@ -2503,6 +2577,11 @@ function App() {
           marketClosed={marketSessionMeta?.marketClosed}
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
+          autoSubmit={autoSubmitOrders}
+          onOrderSubmitted={(ticker, side, qty, price) => {
+            console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
+            // Future: add to visual journaling history
+          }}
         />
       </div>
       <div className="lg:col-span-3 min-w-0">
@@ -2594,7 +2673,7 @@ function App() {
                 <input
                   type="checkbox"
                   checked={aiEnabled}
-                  onChange={event => setAiEnabled(event.target.checked)}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiEnabled(event.target.checked)}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />
               </label>
@@ -2609,7 +2688,7 @@ function App() {
                 <input
                   type="checkbox"
                   checked={aiChatEnabled}
-                  onChange={event => setAiChatEnabled(event.target.checked)}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiChatEnabled(event.target.checked)}
                   disabled={!aiEnabled}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />
@@ -2625,7 +2704,7 @@ function App() {
                 <input
                   type="checkbox"
                   checked={aiDeskInsightsEnabled}
-                  onChange={event => setAiDeskInsightsEnabled(event.target.checked)}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiDeskInsightsEnabled(event.target.checked)}
                   disabled={!aiEnabled}
                   className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
                 />
@@ -2744,6 +2823,46 @@ function App() {
               </label>
             </div>
           </div>
+          <div className="space-y-4">
+            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-gray-400 font-semibold flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              Autonomous Operations
+            </h3>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-amber-100">Auto submit orders</span>
+                  <span className="block text-xs text-amber-500/80">Automatically execute AI-selected contracts.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoSubmitOrders}
+                  onChange={event => setAutoSubmitOrders(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                  }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-amber-100">Auto scanner loop</span>
+                  <span className="block text-xs text-amber-500/80">Periodically refresh watchlist highlights.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoScannerEnabled}
+                  onChange={event => setAutoScannerEnabled(event.target.checked)}
+                  disabled={!aiEnabled}
+                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
+                />
+              </label>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2824,7 +2943,7 @@ function App() {
         selectedTicker={displayTicker}
         context={aiContext}
       />
-    </div>
+    </div >
   );
 }
 

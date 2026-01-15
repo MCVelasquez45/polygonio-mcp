@@ -1,4 +1,5 @@
 import { AggregateBar, IndicatorBundle } from '../../types/market';
+import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { Lock, TrendingDown, TrendingUp } from 'lucide-react';
 import { TradingViewChart } from './TradingViewChart';
 
@@ -44,6 +45,7 @@ type Props = {
       gapsDetected: number;
     } | null;
   } | null;
+  markers?: SeriesMarker<UTCTimestamp>[];
 };
 
 const TIMEFRAMES: TimeframeOption[] = [
@@ -91,6 +93,7 @@ export function ChartPanel({
   fallbackPrice,
   fallbackChange,
   sessionMeta,
+  markers,
 }: Props) {
   const currentPrice = data.at(-1)?.close ?? null;
   const openPrice = data.at(0)?.close ?? null;
@@ -110,16 +113,16 @@ export function ChartPanel({
     isFrozen
       ? 'Frozen'
       : health?.mode === 'BACKFILLING'
-      ? 'Backfilling'
-      : health?.mode === 'LIVE' && isStale
-      ? 'Stale'
-      : health?.mode === 'LIVE'
-      ? 'Live'
-      : health?.source === 'snapshot'
-      ? 'Snapshot'
-      : health?.source === 'cache'
-      ? 'Cached'
-      : 'Degraded';
+        ? 'Backfilling'
+        : health?.mode === 'LIVE' && isStale
+          ? 'Stale'
+          : health?.mode === 'LIVE'
+            ? 'Live'
+            : health?.source === 'snapshot'
+              ? 'Snapshot'
+              : health?.source === 'cache'
+                ? 'Cached'
+                : 'Degraded';
   const healthDetail = joinDetails([
     healthAge ? `Last update ${healthAge}` : null,
     health?.providerThrottled ? 'Rate limited' : null,
@@ -129,8 +132,8 @@ export function ChartPanel({
     healthLabel === 'Live'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
       : healthLabel === 'Backfilling' || healthLabel === 'Stale'
-      ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-      : 'border-gray-800 bg-gray-900/60 text-gray-300';
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+        : 'border-gray-800 bg-gray-900/60 text-gray-300';
   const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
   const emptyStateMessage = ticker.startsWith('O:')
     ? 'Select a contract to load chart data.'
@@ -151,9 +154,8 @@ export function ChartPanel({
             <span>{displayPrice != null ? `$${displayPrice.toFixed(2)}` : '--'}</span>
             {displayChange != null && displayChangePercent != null && (
               <span
-                className={`flex items-center gap-2 text-lg ${
-                  displayChange >= 0 ? 'text-emerald-400' : 'text-red-400'
-                }`}
+                className={`flex items-center gap-2 text-lg ${displayChange >= 0 ? 'text-emerald-400' : 'text-red-400'
+                  }`}
               >
                 {displayChange >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
                 {displayChange >= 0 ? '+' : ''}
@@ -185,18 +187,16 @@ export function ChartPanel({
               <button
                 type="button"
                 onClick={() => onSessionModeChange('regular')}
-                className={`px-3 py-1 rounded-full ${
-                  sessionMode === 'regular' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
-                }`}
+                className={`px-3 py-1 rounded-full ${sessionMode === 'regular' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
+                  }`}
               >
                 RTH
               </button>
               <button
                 type="button"
                 onClick={() => onSessionModeChange('extended')}
-                className={`px-3 py-1 rounded-full ${
-                  sessionMode === 'extended' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
-                }`}
+                className={`px-3 py-1 rounded-full ${sessionMode === 'extended' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
+                  }`}
               >
                 EXT
               </button>
@@ -217,9 +217,8 @@ export function ChartPanel({
               key={option.value}
               type="button"
               onClick={() => onTimeframeChange(option.value)}
-              className={`px-3 py-1.5 text-xs rounded-full border ${
-                timeframe === option.value ? 'bg-emerald-500/20 border-emerald-400 text-white' : 'border-gray-800 text-gray-400'
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-full border ${timeframe === option.value ? 'bg-emerald-500/20 border-emerald-400 text-white' : 'border-gray-800 text-gray-400'
+                }`}
             >
               {option.label}
             </button>
@@ -233,7 +232,7 @@ export function ChartPanel({
             {isLoading ? 'Loading bars…' : displayEmptyMessage}
           </div>
         ) : (
-          <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} />
+          <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} markers={markers} />
         )}
         {isLoading && data.length > 0 && (
           <div className="absolute inset-0 pointer-events-none flex items-start justify-end p-3">

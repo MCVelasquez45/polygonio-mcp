@@ -18,6 +18,7 @@ import {
   type Time,
   type UTCTimestamp,
   type WhitespaceData,
+  type SeriesMarker,
 } from 'lightweight-charts';
 import { AggregateBar } from '../../types/market';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
@@ -29,6 +30,7 @@ export type TradingViewChartProps = {
   timeframe: string;
   height?: number;
   theme?: Theme;
+  markers?: SeriesMarker<UTCTimestamp>[];
 };
 
 type ThemePalette = {
@@ -48,6 +50,7 @@ type ChartCanvasProps = {
   bars: AggregateBar[];
   timeframe: string;
   theme: Theme;
+  markers?: SeriesMarker<UTCTimestamp>[];
 };
 
 const DEFAULT_HEIGHT = 320;
@@ -262,7 +265,14 @@ function computeOpeningRange(bars: AggregateBar[], timeframe: string) {
   return { high: range.high, low: range.low };
 }
 
-function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps) {
+function ChartCanvas({
+  width,
+  height,
+  bars,
+  timeframe,
+  theme,
+  markers,
+}: ChartCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -349,10 +359,10 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
       });
       const volume = isIntraday
         ? chart.addSeries(HistogramSeries, {
-            priceFormat: { type: 'volume' },
-            priceScaleId: '',
-            lastValueVisible: false,
-          })
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+          lastValueVisible: false,
+        })
         : null;
       if (volume) {
         volume.priceScale().applyOptions({
@@ -398,8 +408,8 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
         | undefined;
       const volumeBar = volume
         ? (param.seriesData.get(volume as unknown as ISeriesApi<SeriesType, Time>) as
-            | HistogramData<Time>
-            | undefined)
+          | HistogramData<Time>
+          | undefined)
         : undefined;
       if (!candle) {
         tooltip.style.opacity = '0';
@@ -512,6 +522,12 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
     [],
   );
 
+  useEffect(() => {
+    const candles = candleSeriesRef.current;
+    if (!candles) return;
+    candles.setMarkers(markers || []);
+  }, [markers]);
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
@@ -520,13 +536,26 @@ function ChartCanvas({ width, height, bars, timeframe, theme }: ChartCanvasProps
   );
 }
 
-export function TradingViewChart({ bars, timeframe, height, theme = 'dark' }: TradingViewChartProps) {
+export function TradingViewChart({
+  bars,
+  timeframe,
+  height,
+  theme = 'dark',
+  markers,
+}: TradingViewChartProps) {
   const resolvedHeight = height ?? DEFAULT_HEIGHT;
 
   return (
     <MeasuredContainer className="w-full flex-1 min-h-[320px] min-w-0" minWidth={280} minHeight={240} height={resolvedHeight}>
       {({ width, height }) => (
-        <ChartCanvas width={width} height={height} bars={bars} timeframe={timeframe} theme={theme} />
+        <ChartCanvas
+          width={width}
+          height={height}
+          bars={bars}
+          timeframe={timeframe}
+          theme={theme}
+          markers={markers}
+        />
       )}
     </MeasuredContainer>
   );
