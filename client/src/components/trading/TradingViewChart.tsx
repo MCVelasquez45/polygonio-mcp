@@ -524,7 +524,7 @@ function ChartCanvas({
 
   useEffect(() => {
     const candles = candleSeriesRef.current;
-    if (!candles) return;
+    if (!candles || typeof candles.setMarkers !== 'function') return;
     candles.setMarkers(markers || []);
   }, [markers]);
 
