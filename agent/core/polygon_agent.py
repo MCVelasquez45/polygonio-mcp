@@ -31,6 +31,7 @@ from agents import (
 from agents.exceptions import InputGuardrailTripwireTriggered
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.mcp import MCPServerStdio
+from core.algo import MarketLeaderboard
 
 load_dotenv()
 
@@ -967,7 +968,276 @@ async def get_capitol_trades(n: int = 10, ticker: str | None = None) -> Dict[str
             return {"trades": trades[:limit], "source_url": url, "ticker": ticker}
     if last_error:
         raise RuntimeError(f"Failed to download Capitol Trades page: {last_error}") from last_error
+    if last_error:
+        raise RuntimeError(f"Failed to download Capitol Trades page: {last_error}") from last_error
     return {"trades": [], "source_url": None, "ticker": ticker}
+
+
+@function_tool
+async def get_ranked_options(
+    ticker: str,
+    metric: str,
+    k: int = 10,
+    contract_type: str | None = None
+) -> Dict[str, Any]:
+    """
+    Rank option contracts by a custom metric using a client-side heap algorithm.
+    Useful for finding opportunities not directly sortable by the API.
+    
+    Args:
+        ticker: Underlying symbol (e.g. 'SPY')
+        metric: One of 'volume_oi_ratio', 'turnover', 'volatility_skew'
+        k: Number of top results to return
+        contract_type: Filter by 'call' or 'put' (optional)
+    """
+    fetcher = _get_polygon_fetcher()
+    # Fetch a larger batch to scan (limit=250 is the hardcap in fetcher, 
+    # but we scan what we can get to find the "relative" best in that set).
+    # In a real expanded implementations, we would paginate here.
+    snapshot = await fetcher.get_options_snapshot(
+        ticker, 
+        limit=250, 
+        contract_type=contract_type
+    )
+    
+    options = snapshot.get("options", [])
+    if not options:
+        return {"status": "no data", "results": []}
+
+    leaderboard = MarketLeaderboard(k=k, is_increase=True)
+    
+    for opt in options:
+        val = 0.0
+        details = {
+            "contract": opt.get("contract"),
+            "strike": opt.get("strike"),
+            "type": opt.get("contract_type"),
+            "iv": opt.get("implied_volatility"),
+            "price": opt.get("mid"),
+        }
+        
+        try:
+            vol = float(opt.get("volume") or 0)
+            oi = float(opt.get("open_interest") or 0)
+            mid = float(opt.get("mid") or 0)
+            iv = float(opt.get("implied_volatility") or 0)
+            
+            if metric == "volume_oi_ratio":
+                # Avoid division by zero, prioritize purely by ratio
+                val = vol / (oi if oi > 0 else 1.0)
+                details["metric_value"] = val
+                details["formula"] = f"{vol} / {oi}"
+                
+            elif metric == "turnover":
+                val = vol * mid * 100 # Approx dollar nominal
+                details["metric_value"] = val
+                details["formula"] = f"{vol} * {mid} * 100"
+                
+            elif metric == "volatility_skew":
+                # Placeholder: Simply ranking by IV for now 
+                # (Real skew requires comparing to ATM IV, but high IV is a proxy)
+                val = iv
+                details["metric_value"] = val
+            
+            else:
+                continue
+
+            leaderboard.add(opt.get("contract"), val, details)
+            
+        except (ValueError, TypeError):
+            continue
+
+    return {
+        "ticker": ticker,
+        "metric": metric,
+        "ranked_results": leaderboard.get_results(),
+        "scanned_count": len(options)
+    }
+
+
+# --- Lab/Engine Integration Tools ---
+
+LAB_API_URL = os.getenv("LAB_API_URL", "http://localhost:4000/api/lab")
+SCREENER_API_URL = os.getenv("SCREENER_API_URL", "http://localhost:8001/api/lab/screener")
+
+
+@function_tool
+async def create_lab_strategy(
+    name: str,
+    screener_type: str,
+    params_json: str,
+    description: str = "",
+) -> str:
+    """
+    Register a screener strategy in the Lab for backtesting and validation.
+    
+    Args:
+        name: Strategy name (e.g., "0-DTE SPY Covered Call")
+        screener_type: Either '0dte_covered_call' or 'advanced_covered_call'
+        params_json: JSON string of screener parameters, e.g. '{"delta_lo": 0.15, "delta_hi": 0.35, "min_bid": 0.05}'
+        description: Optional description of the strategy
+    
+    Returns:
+        JSON string with strategy object including _id, status, and config
+    """
+    import json
+    params = json.loads(params_json)
+    
+    payload = {
+        "name": name,
+        "description": description,
+        "strategyType": "screener",
+        "ownerId": "ai_agent",
+        "screenerConfig": {
+            "screener_type": screener_type,
+            "endpoint": f"http://localhost:8001/api/screen/{screener_type.replace('_', '-')}",
+            "params": params,
+            "schedule": "manual"
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(f"{LAB_API_URL}/strategy/create", json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
+@function_tool
+async def backtest_screener_strategy(
+    screener_type: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    params_json: str,
+) -> str:
+    """
+    Run a historical backtest of a screener strategy to validate its edge.
+    
+    Args:
+        screener_type: Either '0dte_covered_call' or 'advanced_covered_call'
+        symbol: Underlying ticker (e.g., 'SPY')
+        start_date: Start date for backtest (YYYY-MM-DD)
+        end_date: End date for backtest (YYYY-MM-DD)
+        params_json: JSON string of screener parameters, e.g. '{"delta_lo": 0.15}'
+    
+    Returns:
+        JSON string with backtest results including Sharpe Ratio, Expected Value, Win Rate, etc.
+    """
+    import json
+    params = json.loads(params_json)
+    
+    payload = {
+        "screener_type": screener_type,
+        "symbol": symbol,
+        "start_date": start_date,
+        "end_date": end_date,
+        "params": params
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(f"{SCREENER_API_URL}/backtest", json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
+@function_tool
+async def request_strategy_handoff(
+    strategy_id: str,
+    max_capital: float,
+    max_drawdown: float,
+    max_daily_loss: float,
+    symbols_json: str,
+) -> str:
+    """
+    Promote a validated Lab strategy to the Engine for live execution.
+    
+    Args:
+        strategy_id: The MongoDB _id of the Lab strategy
+        max_capital: Maximum capital to allocate
+        max_drawdown: Maximum acceptable drawdown (e.g., 0.15 for 15%)
+        max_daily_loss: Maximum daily loss limit in dollars
+        symbols_json: JSON array of symbols, e.g. '["SPY"]'
+    
+    Returns:
+        JSON string with handoff request object
+    """
+    import json
+    symbols = json.loads(symbols_json)
+    
+    # First, get the strategy to extract validation proof
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        strategy_response = await client.get(f"{LAB_API_URL}/strategy/{strategy_id}")
+        strategy_response.raise_for_status()
+        strategy = strategy_response.json()
+    
+    backtest_results = strategy.get("backtestResults")
+    if not backtest_results:
+        raise ValueError("Strategy has no backtest results. Run backtest first.")
+    
+    metrics = backtest_results.get("metrics", {})
+    
+    handoff_payload = {
+        "strategyId": strategy_id,
+        "requesterId": "ai_agent",
+        "engineConfig": {
+            "maxCapital": max_capital,
+            "riskLimits": {
+                "maxDrawdown": max_drawdown,
+                "maxDailyLoss": max_daily_loss
+            },
+            "symbols": symbols
+        },
+        "validationProof": {
+            "sharpeRatio": metrics.get("sharpeRatio", 0),
+            "expectedValue": metrics.get("expectedValue", 0),
+            "backtestId": strategy_id
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post("http://localhost:4000/api/handoff/request", json=handoff_payload)
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
+@function_tool
+async def scan_best_0dte_candidates(
+    top_n: int = 5,
+    delta_lo: float = 0.15,
+    delta_hi: float = 0.35,
+    min_bid: float = 0.05,
+    tickers_json: str = "",
+) -> str:
+    """
+    Scan multiple tickers to find the best 0-DTE covered call opportunities.
+    Use this to discover which underlyings have the best premium yield today.
+    
+    Args:
+        top_n: Number of top opportunities to return (1-20)
+        delta_lo: Minimum delta for screening (default 0.15)
+        delta_hi: Maximum delta for screening (default 0.35)
+        min_bid: Minimum bid price (default $0.05)
+        tickers_json: Optional JSON array of tickers, e.g. '["SPY","QQQ"]'. If empty, uses default watchlist.
+    
+    Returns:
+        JSON string with top N tickers ranked by premium yield
+    """
+    import json
+    
+    payload = {
+        "top_n": top_n,
+        "delta_lo": delta_lo,
+        "delta_hi": delta_hi,
+        "min_bid": min_bid,
+    }
+    
+    if tickers_json:
+        payload["tickers"] = json.loads(tickers_json)
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(f"{SCREENER_API_URL.replace('/lab/screener', '/scan')}/0dte-universe", json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json())
 
 
 guardrail_agent = Agent(
@@ -1026,18 +1296,31 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "2. Call Polygon tools precisely; pull the minimal required data.\n"
             "3. Include disclaimers.\n"
             "4. Offer to save reports if not asked by the user to save a report.\n\n"
+            "STRATEGY LIFECYCLE:\n"
+            "You can now manage trading strategies end-to-end:\n"
+            "- DISCOVER: Use `scan_best_0dte_candidates` to find opportunities.\n"
+            "- DESIGN: Use `create_lab_strategy` to save a strategy concept to the Lab.\n"
+            "- VALIDATE: Use `backtest_screener_strategy` to check historical performance.\n"
+            "- DEPLOY: Use `request_strategy_handoff` to promote validated strategies to the Engine.\n\n"
+            "RESPONSE FORMAT:\n"
+            "You MUST structure your response in two distinct sections:\n"
+            "1. **Executive Summary**: High-level, professional, dense with data and metrics (Delta, IV, Yield, Greeks). This is for experienced traders.\n"
+            "2. **Beginner Breakdown**: A 'Explain Like I'm 5' (ELI5) section. Imagine you are explaining this to a 5th grader. Focus on the platform YOU are using (this application). Tell them: 'Look at the **Scanner Results** panel on the dashboard', 'Find the ticker SPY', 'Click the card to see the details'. explain exactly WHAT happens and HOW to do it simply on THIS application.\n\n"
             "RULES:\n"
             "Double-check math; limit news to ≤3 articles/ticker in date range.\n"
             "If the user asks to save a report, save it to the reports folder using the save_analysis_report tool.\n"
             "When using any polygon.io data tools, be mindful of how much data you pull based on the users input to minimize context being exceeded.\n"
             "If data unavailable or tool fails, explain gracefully — never fabricate.\n"
+            "Note: `params_json` and `symbols_json` arguments MUST be valid JSON strings.\n\n"
             "TOOLS:\n"
             "Polygon.io data, save_analysis_report, get_polygon_options_snapshot,\n"
             "get_polygon_option_contract_snapshot, get_polygon_option_quotes,\n"
             "get_polygon_option_trades, get_polygon_intraday_aggregates,\n"
             "get_polygon_exchanges, get_polygon_ticker_sentiment,\n"
             "get_polygon_earnings, get_polygon_dividends, get_polygon_financials,\n"
-            "get_capitol_trades, get_fred_series, get_fred_release_calendar\n"
+            "get_capitol_trades, get_fred_series, get_fred_release_calendar,\n"
+            "create_lab_strategy, backtest_screener_strategy, request_strategy_handoff,\n"
+            "scan_best_0dte_candidates\n"
             "Disclaimer: Not financial advice. For informational purposes only."
         ),
         mcp_servers=[server],
@@ -1056,6 +1339,11 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             get_capitol_trades,
             get_fred_series,
             get_fred_release_calendar,
+            get_ranked_options,
+            create_lab_strategy,
+            backtest_screener_strategy,
+            request_strategy_handoff,
+            scan_best_0dte_candidates,
         ],
         input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)] if enforce_guardrail else [],
         model=OpenAIResponsesModel(model="gpt-5", openai_client=AsyncOpenAI()),
@@ -1120,6 +1408,7 @@ __all__ = [
     "get_polygon_options_snapshot",
     "get_polygon_option_contract_snapshot",
     "get_polygon_ticker_sentiment",
+    "get_ranked_options",
     "get_fred_series",
     "get_fred_release_calendar",
     "get_polygon_option_quotes",
@@ -1130,6 +1419,11 @@ __all__ = [
     "get_polygon_dividends",
     "get_polygon_financials",
     "get_capitol_trades",
+    # Lab integration
+    "create_lab_strategy",
+    "backtest_screener_strategy",
+    "request_strategy_handoff",
+    "scan_best_0dte_candidates",
     # helper
     "InputGuardrailTripwireTriggered",
 ]

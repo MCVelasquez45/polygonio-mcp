@@ -1,4 +1,5 @@
 import { MongoClient, Db, Collection, Document } from 'mongodb';
+import mongoose from 'mongoose';
 
 // Thin wrapper around MongoDB client lifecycle reused by every feature module.
 // Keeps a single connection per process so modules can call `getCollection`
@@ -23,6 +24,10 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
   client = new MongoClient(uri);
   await client.connect();
   database = client.db(dbName);
+
+  // Initialize Mongoose
+  await mongoose.connect(uri, { dbName });
+
   console.log(`[SERVER] Connected to MongoDB database: ${database.databaseName}`);
 }
 
@@ -43,6 +48,7 @@ export function getCollection<TSchema extends Document = Document>(name: string)
 export async function closeMongo(): Promise<void> {
   if (client) {
     await client.close();
+    await mongoose.disconnect();
     client = null;
     database = null;
   }

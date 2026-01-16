@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Briefcase, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
+import { Briefcase, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
 
-type View = 'trading' | 'scanner' | 'portfolio';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
 
 type Props = {
   selectedTicker: string;
@@ -21,6 +21,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'trading', label: 'Trading', icon: <TrendingUp className="h-4 w-4" /> },
   { id: 'scanner', label: 'Scanner', icon: <ScanSearch className="h-4 w-4" /> },
   { id: 'portfolio', label: 'Portfolio', icon: <Briefcase className="h-4 w-4" /> },
+  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
 ];
 
 export function TradingHeader({
@@ -80,11 +81,10 @@ export function TradingHeader({
             <button
               key={view.id}
               type="button"
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                currentView === view.id
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${currentView === view.id
                   ? 'bg-emerald-600 text-white'
                   : 'text-gray-400 hover:text-gray-100'
-              }`}
+                }`}
               onClick={() => onViewChange(view.id)}
             >
               {view.icon}
@@ -124,13 +124,12 @@ export function TradingHeader({
             type="button"
             onClick={onToggleChat}
             disabled={chatDisabled}
-            className={`inline-flex items-center justify-center h-10 w-10 rounded-xl border ${
-              isChatOpen
+            className={`inline-flex items-center justify-center h-10 w-10 rounded-xl border ${isChatOpen
                 ? 'border-emerald-500 text-emerald-300'
                 : chatDisabled
-                ? 'border-gray-900 text-gray-600'
-                : 'border-gray-800 text-gray-400 hover:text-white'
-            }`}
+                  ? 'border-gray-900 text-gray-600'
+                  : 'border-gray-800 text-gray-400 hover:text-white'
+              }`}
             aria-label="Toggle chat"
           >
             <MessageSquare className="h-5 w-5" />
@@ -138,9 +137,8 @@ export function TradingHeader({
           <button
             type="button"
             onClick={onToggleSettings}
-            className={`hidden sm:inline-flex items-center justify-center h-10 w-10 rounded-xl border ${
-              isSettingsOpen ? 'border-emerald-500/60 text-emerald-300' : 'border-gray-800 text-gray-400 hover:text-white'
-            }`}
+            className={`hidden sm:inline-flex items-center justify-center h-10 w-10 rounded-xl border ${isSettingsOpen ? 'border-emerald-500/60 text-emerald-300' : 'border-gray-800 text-gray-400 hover:text-white'
+              }`}
             aria-label="Settings"
           >
             <Settings className="h-5 w-5" />
@@ -153,9 +151,8 @@ export function TradingHeader({
           <button
             key={view.id}
             type="button"
-            className={`flex-1 py-2 flex flex-col items-center gap-1 text-xs ${
-              view.id === currentView ? 'text-white' : 'text-gray-500'
-            }`}
+            className={`flex-1 py-2 flex flex-col items-center gap-1 text-xs ${view.id === currentView ? 'text-white' : 'text-gray-500'
+              }`}
             onClick={() => onViewChange(view.id)}
           >
             {view.icon}

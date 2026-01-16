@@ -5,6 +5,10 @@ export type AggregateBar = {
   low: number;
   close: number;
   volume: number;
+  // Enterprise fields
+  isFinal?: boolean;
+  source?: 'live' | 'backfill' | 'cache' | 'snapshot';
+  lastUpdatedAt?: number;
 };
 
 export type IndicatorPoint = {
@@ -134,36 +138,36 @@ export type OptionContractDetail = {
 
 export type WatchlistSnapshot =
   | {
-      entryType: 'underlying';
-      ticker: string;
-      name?: string;
-      price: number | null;
-      change: number | null;
-      changePercent: number | null;
-      iv?: number | null;
-      volume?: number | null;
-      openInterest?: number | null;
-      referenceContract?: string;
-      referenceMid?: number | null;
-      error?: string;
-    }
+    entryType: 'underlying';
+    ticker: string;
+    name?: string;
+    price: number | null;
+    change: number | null;
+    changePercent: number | null;
+    iv?: number | null;
+    volume?: number | null;
+    openInterest?: number | null;
+    referenceContract?: string;
+    referenceMid?: number | null;
+    error?: string;
+  }
   | {
-      entryType: 'contract';
-      ticker: string;
-      contract: string;
-      name?: string;
-      underlying: string;
-      strike: number | null;
-      expiration?: string;
-      type?: string;
-      price: number | null;
-      bid: number | null;
-      ask: number | null;
-      mid: number | null;
-      change: number | null;
-      changePercent: number | null;
-      iv?: number | null;
-      volume?: number | null;
-      openInterest?: number | null;
-      error?: string;
-    };
+    entryType: 'contract';
+    ticker: string;
+    contract: string;
+    name?: string;
+    underlying: string;
+    strike: number | null;
+    expiration?: string;
+    type?: string;
+    price: number | null;
+    bid: number | null;
+    ask: number | null;
+    mid: number | null;
+    change: number | null;
+    changePercent: number | null;
+    iv?: number | null;
+    volume?: number | null;
+    openInterest?: number | null;
+    error?: string;
+  };

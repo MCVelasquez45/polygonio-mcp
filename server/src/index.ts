@@ -3,12 +3,17 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 // Central application entrypoint wiring platform feature routers + shared middleware.
 import { analyzeRouter } from './features/assistant';
 import { chatRouter, conversationsRouter } from './features/conversations';
 import { marketRouter } from './features/market';
 import { brokerRouter } from './features/broker';
 import { analysisRouter } from './features/analysis';
+import { handoffRouter } from './features/handoff/handoff.routes';
+import { labRouter } from './features/lab/lab.routes';
+import { chartHealthRouter } from './features/market/chartHealth.routes';
+import { engineRouter } from './features/engine/engine.routes';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -22,6 +27,18 @@ import { initChartHub, registerChartHubHandlers } from './features/market/servic
 
 const app = express();
 app.use(cors());
+
+// Proxy: Python Screener Service
+// Must be placed before bodyParser/express.json() to stream requests correctly
+const SCREENER_URL = process.env.SCREENER_URL || 'http://localhost:8001';
+app.use(
+  ['/api/screen', '/api/scan', '/api/lab/backtest', '/api/lab/screener'],
+  createProxyMiddleware({
+    target: SCREENER_URL,
+    changeOrigin: true,
+  })
+);
+
 app.use(express.json());
 
 app.use((req, _res, next) => {
@@ -40,6 +57,10 @@ app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/broker', brokerRouter);
 app.use('/api/analysis', analysisRouter);
+app.use('/api/handoff', handoffRouter);
+app.use('/api/lab', labRouter);
+app.use('/api/chart/health', chartHealthRouter);
+app.use('/api/engine', engineRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
@@ -109,8 +130,8 @@ function resolveMongoConfig(): MongoConfig {
   const fromEnv = process.env.MONGO_URI
     ? 'MONGO_URI'
     : process.env.MONGODB_URI
-    ? 'MONGODB_URI'
-    : 'default';
+      ? 'MONGODB_URI'
+      : 'default';
   const uri = envUri || 'mongodb://127.0.0.1:27017/market-copilot';
   if (!uri) {
     throw new Error('MONGO_URI is required to start the server.');
@@ -129,8 +150,8 @@ function parseMongoUri(uri: string): { dbName: string | null; connectionType: Mo
   const connectionType = uri.startsWith('mongodb+srv://')
     ? 'atlas'
     : uri.startsWith('mongodb://')
-    ? 'local'
-    : 'unknown';
+      ? 'local'
+      : 'unknown';
   let dbName: string | null = null;
   let host: string | null = null;
   try {
@@ -154,8 +175,8 @@ function logMongoGuidance(config: MongoConfig) {
     config.connectionType === 'atlas'
       ? 'MongoDB Atlas detected (cloud-hosted database)'
       : config.connectionType === 'local'
-      ? 'Local MongoDB detected'
-      : 'MongoDB connection detected';
+        ? 'Local MongoDB detected'
+        : 'MongoDB connection detected';
   console.log(`[SERVER] ${typeLabel}.`);
   if (config.host) {
     console.log(`[SERVER] Mongo host: ${config.host}`);

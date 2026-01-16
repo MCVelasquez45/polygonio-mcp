@@ -19,7 +19,11 @@ dependencies = [
   "httpx",
   "fastapi",
   "uvicorn",
-  "beautifulsoup4"
+  "beautifulsoup4",
+  "opentelemetry-api",
+  "opentelemetry-sdk",
+  "opentelemetry-instrumentation-fastapi",
+  "opentelemetry-exporter-otlp"
 ]
 
 [build-system]

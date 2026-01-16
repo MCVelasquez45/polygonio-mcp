@@ -10,40 +10,59 @@ const socketSubscriptions: SocketSymbolMap = new Map();
 const symbolSubscriptions: SymbolSocketMap = new Map();
 const aggregateSubscriptions = new Map<string, number>();
 let ioServer: Server | null = null;
-let wsClient: MassiveWsClient | null = null;
+let wsClientOptions: MassiveWsClient | null = null;
+let wsClientStocks: MassiveWsClient | null = null;
 
-const MASSIVE_WS_URL = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
+// Options Config
+const MASSIVE_WS_URL_OPTIONS = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
+const MASSIVE_WS_CHANNELS_OPTIONS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q';
+const MASSIVE_WS_AGG_CHANNELS_OPTIONS = process.env.MASSIVE_OPTIONS_WS_AGG_CHANNELS ?? 'AM,A';
+
+// Stocks Config (New)
+const MASSIVE_WS_URL_STOCKS = process.env.MASSIVE_STOCKS_WS_URL ?? 'wss://socket.massive.com/stocks';
+const MASSIVE_WS_CHANNELS_STOCKS = process.env.MASSIVE_STOCKS_WS_CHANNELS ?? 'T,Q';
+const MASSIVE_WS_AGG_CHANNELS_STOCKS = process.env.MASSIVE_STOCKS_WS_AGG_CHANNELS ?? 'AM,A';
+
 const MASSIVE_WS_KEY = process.env.MASSIVE_API_KEY ?? '';
-const MASSIVE_OPTIONS_WS_CHANNELS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q';
-const MASSIVE_OPTIONS_WS_AGG_CHANNELS = process.env.MASSIVE_OPTIONS_WS_AGG_CHANNELS ?? 'AM,A';
-const OPTIONS_WS_ALLOWED_CHANNELS = new Set(['T', 'Q']);
-const OPTIONS_WS_AGG_ALLOWED_CHANNELS = new Set(['AM', 'A']);
+
+const ALLOWED_CHANNELS = new Set(['T', 'Q', 'A', 'AM']);
+
 const STORE_LIVE_AGGS_RAW = process.env.MASSIVE_OPTIONS_WS_STORE_AGGS;
 const STORE_LIVE_AGGS =
   STORE_LIVE_AGGS_RAW == null || STORE_LIVE_AGGS_RAW === ''
     ? process.env.NODE_ENV !== 'production'
     : STORE_LIVE_AGGS_RAW.toLowerCase() === 'true';
 
+function isOptionSymbol(symbol: string) {
+  return symbol.startsWith('O:');
+}
+
 function normalizeContractSymbol(value?: string | null) {
   if (!value) return null;
+  // We no longer enforce 'O:' start because we support stocks now.
+  // But we still want to uppercase and trim.
   const symbol = value.trim().toUpperCase();
-  if (!symbol.startsWith('O:')) return null;
-  return symbol;
+  return symbol.length > 0 ? symbol : null;
 }
 
-function buildOptionsSubscriptionParams(symbol: string) {
-  const channels = MASSIVE_OPTIONS_WS_CHANNELS.split(',')
-    .map(entry => entry.trim().toUpperCase())
-    .filter(entry => entry.length > 0 && OPTIONS_WS_ALLOWED_CHANNELS.has(entry));
-  const resolved = channels.length ? channels : ['T', 'Q'];
-  return resolved.map(channel => `${channel}.${symbol}`).join(',');
-}
+function buildSubscriptionParams(symbol: string, type: 'aggs' | 'trades_quotes') {
+  const isOption = isOptionSymbol(symbol);
 
-function buildAggregateSubscriptionParams(symbol: string) {
-  const channels = MASSIVE_OPTIONS_WS_AGG_CHANNELS.split(',')
+  let channelsStr = '';
+  if (type === 'aggs') {
+    channelsStr = isOption ? MASSIVE_WS_AGG_CHANNELS_OPTIONS : MASSIVE_WS_AGG_CHANNELS_STOCKS;
+  } else {
+    channelsStr = isOption ? MASSIVE_WS_CHANNELS_OPTIONS : MASSIVE_WS_CHANNELS_STOCKS;
+  }
+
+  const channels = channelsStr.split(',')
     .map(entry => entry.trim().toUpperCase())
-    .filter(entry => entry.length > 0 && OPTIONS_WS_AGG_ALLOWED_CHANNELS.has(entry));
-  const resolved = channels.length ? channels : ['AM', 'A'];
+    .filter(entry => entry.length > 0 && ALLOWED_CHANNELS.has(entry));
+
+  // Defaults if env vars are empty
+  const defaults = type === 'aggs' ? ['AM', 'A'] : ['T', 'Q'];
+  const resolved = channels.length ? channels : defaults;
+
   return resolved.map(channel => `${channel}.${symbol}`).join(',');
 }
 
@@ -109,32 +128,48 @@ function handleWsMessage(event: any) {
   broadcast(symbol, 'live:raw', payload);
 }
 
-function ensureWsClient() {
-  if (wsClient || !MASSIVE_WS_KEY) return;
-  wsClient = new MassiveWsClient({
-    url: MASSIVE_WS_URL,
-    apiKey: MASSIVE_WS_KEY,
-    assetClass: 'options',
-    onMessage: handleWsMessage,
-    onStatus: payload => {
-      console.log('[LiveFeed] WS status', payload);
-    },
-    onError: error => {
-      console.error('[LiveFeed] websocket error', error);
-    },
-    onConnect: () => {
-      console.log('[LiveFeed] Massive websocket connected');
-    }
-  });
-  wsClient.connect();
+function ensureWsClients() {
+  if (!MASSIVE_WS_KEY) return;
+
+  // 1. Options Client
+  if (!wsClientOptions) {
+    wsClientOptions = new MassiveWsClient({
+      url: MASSIVE_WS_URL_OPTIONS,
+      apiKey: MASSIVE_WS_KEY,
+      assetClass: 'options',
+      onMessage: handleWsMessage,
+      onConnect: () => console.log('[LiveFeed] Options WebSocket connected'),
+      onError: (err) => console.error('[LiveFeed] Options WS error', err),
+    });
+    wsClientOptions.connect();
+  }
+
+  // 2. Stocks Client
+  if (!wsClientStocks) {
+    wsClientStocks = new MassiveWsClient({
+      url: MASSIVE_WS_URL_STOCKS,
+      apiKey: MASSIVE_WS_KEY,
+      assetClass: 'stocks',
+      onMessage: handleWsMessage,
+      onConnect: () => console.log('[LiveFeed] Stocks WebSocket connected'),
+      onError: (err) => console.error('[LiveFeed] Stocks WS error', err),
+    });
+    wsClientStocks.connect();
+  }
+}
+
+function getClientForSymbol(symbol: string) {
+  return isOptionSymbol(symbol) ? wsClientOptions : wsClientStocks;
 }
 
 function subscribeSymbol(symbol: string) {
-  ensureWsClient();
+  ensureWsClients();
   const sockets = getSymbolSockets(symbol);
   symbolSubscriptions.set(symbol, sockets);
+
   if (sockets.size === 1) {
-    wsClient?.subscribe(buildOptionsSubscriptionParams(symbol));
+    const client = getClientForSymbol(symbol);
+    client?.subscribe(buildSubscriptionParams(symbol, 'trades_quotes'));
   }
 }
 
@@ -142,15 +177,19 @@ function unsubscribeSymbol(symbol: string) {
   const sockets = symbolSubscriptions.get(symbol);
   if (sockets && sockets.size > 0) return;
   symbolSubscriptions.delete(symbol);
-  wsClient?.unsubscribe(buildOptionsSubscriptionParams(symbol));
+
+  const client = getClientForSymbol(symbol);
+  client?.unsubscribe(buildSubscriptionParams(symbol, 'trades_quotes'));
 }
 
 export function subscribeAggregateSymbol(symbol: string) {
-  ensureWsClient();
+  ensureWsClients();
   const count = aggregateSubscriptions.get(symbol) ?? 0;
   aggregateSubscriptions.set(symbol, count + 1);
+
   if (count === 0) {
-    wsClient?.subscribe(buildAggregateSubscriptionParams(symbol));
+    const client = getClientForSymbol(symbol);
+    client?.subscribe(buildSubscriptionParams(symbol, 'aggs'));
   }
 }
 
@@ -158,7 +197,8 @@ export function unsubscribeAggregateSymbol(symbol: string) {
   const count = aggregateSubscriptions.get(symbol) ?? 0;
   if (count <= 1) {
     aggregateSubscriptions.delete(symbol);
-    wsClient?.unsubscribe(buildAggregateSubscriptionParams(symbol));
+    const client = getClientForSymbol(symbol);
+    client?.unsubscribe(buildSubscriptionParams(symbol, 'aggs'));
   } else {
     aggregateSubscriptions.set(symbol, count - 1);
   }
@@ -166,14 +206,14 @@ export function unsubscribeAggregateSymbol(symbol: string) {
 
 export function initLiveFeed(io: Server) {
   ioServer = io;
-  ensureWsClient();
+  ensureWsClients();
 }
 
 export function registerLiveFeedHandlers(socket: Socket) {
   socket.on('live:subscribe', payload => {
     const symbol = normalizeContractSymbol(payload?.symbol);
     if (!symbol) {
-      socket.emit('live:error', { message: 'Invalid option symbol. Use prefixed O: contracts.', request: payload });
+      socket.emit('live:error', { message: 'Invalid symbol.', request: payload });
       return;
     }
     socket.join(symbol);

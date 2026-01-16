@@ -239,7 +239,7 @@ function refreshAggregateSubscription(symbol: string) {
       needsLive = true;
     }
   });
-  if (needsLive && symbol.startsWith('O:')) {
+  if (needsLive) {
     subscribeAggregates(symbol);
   } else {
     unsubscribeAggregates(symbol);

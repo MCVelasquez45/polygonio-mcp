@@ -1,0 +1,87 @@
+
+
+services:
+  # 1. Node.js API Server (Gateway)
+  server:
+    build: 
+      context: ./server
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - MONGO_URI=mongodb://mongo:27017/market-copilot
+    env_file:
+      - ./server/.env
+    restart: unless-stopped
+    networks:
+      - polygon_net
+
+  # 2. React Client (Frontend)
+  webapp:
+    build:
+      context: ./client
+    ports:
+      - "5173:5173"
+      # Mapping 8080 as an alternative if preferred
+      - "8080:5173"
+    environment:
+      - VITE_API_URL=http://localhost:3000
+    depends_on:
+      - server
+    networks:
+      - polygon_net
+
+  # 3. Python Screener Service
+  screener:
+    build:
+      context: ./python-screener-service
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./python-screener-service/.env
+    # Fallback if no .env file exists yet, we can pass generic requirements
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - polygon_net
+
+  # 4. AI Agent Service
+  agent:
+    build:
+      context: ./agent
+    ports:
+      - "5001:5001"
+    env_file:
+      - ./agent/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=polygon-agent
+    networks:
+      - polygon_net
+
+  mongo:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - polygon_net
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC Receive
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - polygon_net
+
+networks:
+  polygon_net:
+    driver: bridge
+
+volumes:
+  mongo_data:

@@ -152,16 +152,16 @@ async function buildDeskContext(symbol: string): Promise<DeskContext> {
     getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => [])
   ]);
   const shortTicker =
-    typeof snapshot?.underlying === 'string'
+    snapshot && 'underlying' in snapshot && typeof snapshot.underlying === 'string'
       ? snapshot.underlying.toUpperCase()
       : symbol.startsWith('O:')
-      ? null
-      : symbol;
+        ? null
+        : symbol;
   const [shortInterestPayload, shortVolumePayload] = shortTicker
     ? await Promise.all([
-        getMassiveShortInterest({ ticker: shortTicker, limit: 2, sort: 'settlement_date', order: 'desc' }).catch(() => null),
-        getMassiveShortVolume({ ticker: shortTicker, limit: 12, sort: 'date', order: 'desc' }).catch(() => null)
-      ])
+      getMassiveShortInterest({ ticker: shortTicker, limit: 2, sort: 'settlement_date', order: 'desc' }).catch(() => null),
+      getMassiveShortVolume({ ticker: shortTicker, limit: 12, sort: 'date', order: 'desc' }).catch(() => null)
+    ])
     : [null, null];
   const shortInterest = summarizeShortInterest(shortInterestPayload);
   const shortVolume = summarizeShortVolume(shortVolumePayload);
@@ -201,12 +201,12 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
     shortBias.label && shortBias.label !== 'neutral'
       ? shortBias.label
       : typeof changePercent === 'number'
-      ? changePercent > 0
-        ? 'bullish'
-        : changePercent < 0
-        ? 'bearish'
-        : 'neutral'
-      : 'neutral';
+        ? changePercent > 0
+          ? 'bullish'
+          : changePercent < 0
+            ? 'bearish'
+            : 'neutral'
+        : 'neutral';
   const changeLabel = changePercent != null ? `${changePercent.toFixed(2)}%` : '—';
   const sentimentNote =
     shortBias.label && shortBias.label !== 'neutral'
@@ -229,9 +229,8 @@ function buildFallbackInsight(symbol: string, context: DeskContext): DeskInsight
 
   return {
     symbol,
-    summary: `Spot move ${changeLabel}. Ref contract ${snapshot?.referenceContract ?? 'n/a'}.${
-      sentimentNote ? ` ${sentimentNote}.` : ''
-    }`,
+    summary: `Spot move ${changeLabel}. Ref contract ${snapshot?.referenceContract ?? 'n/a'}.${sentimentNote ? ` ${sentimentNote}.` : ''
+      }`,
     sentiment: { label: sentimentLabel, score: null },
     fedEvent: null,
     highlights,
@@ -252,18 +251,18 @@ function parseAgentInsight(symbol: string, parsed: any): DeskInsight | null {
   const sentiment =
     payload.sentiment && typeof payload.sentiment === 'object'
       ? {
-          label: typeof payload.sentiment.label === 'string' ? payload.sentiment.label : null,
-          score: typeof payload.sentiment.score === 'number' ? payload.sentiment.score : null
-        }
+        label: typeof payload.sentiment.label === 'string' ? payload.sentiment.label : null,
+        score: typeof payload.sentiment.score === 'number' ? payload.sentiment.score : null
+      }
       : null;
   const fedEvent =
     payload.fedEvent && typeof payload.fedEvent === 'object'
       ? {
-          title: typeof payload.fedEvent.title === 'string' ? payload.fedEvent.title : undefined,
-          name: typeof payload.fedEvent.name === 'string' ? payload.fedEvent.name : undefined,
-          date: typeof payload.fedEvent.date === 'string' ? payload.fedEvent.date : undefined,
-          impact: typeof payload.fedEvent.impact === 'string' ? payload.fedEvent.impact : undefined
-        }
+        title: typeof payload.fedEvent.title === 'string' ? payload.fedEvent.title : undefined,
+        name: typeof payload.fedEvent.name === 'string' ? payload.fedEvent.name : undefined,
+        date: typeof payload.fedEvent.date === 'string' ? payload.fedEvent.date : undefined,
+        impact: typeof payload.fedEvent.impact === 'string' ? payload.fedEvent.impact : undefined
+      }
       : null;
   const highlights = sanitizeHighlights(payload.highlights);
   return {

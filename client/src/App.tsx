@@ -10,6 +10,7 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
+import { Dashboard } from './components/dashboard';
 import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
@@ -331,7 +332,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -2919,6 +2920,16 @@ function App() {
             {view === 'portfolio' && (
               <div className="pb-24">
                 <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+              </div>
+            )}
+            {view === 'dashboard' && (
+              <div className="fixed inset-0 z-50">
+                <Dashboard
+                  onTickerSelect={(ticker) => {
+                    setTicker(ticker);
+                    setView('trading');
+                  }}
+                />
               </div>
             )}
           </div>

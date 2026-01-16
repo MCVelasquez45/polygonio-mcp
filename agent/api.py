@@ -10,8 +10,10 @@ from typing import Any
 from agents.exceptions import InputGuardrailTripwireTriggered
 
 from core.polygon_agent import run_analysis
+from instrumentation import setup_telemetry
 
 app = FastAPI(title="Polygon Market Analysis API", version="1.0.0")
+setup_telemetry(app)
 
 
 class AnalysisRequest(BaseModel):
