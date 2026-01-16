@@ -46,7 +46,7 @@ function getTypeIcon(type: string): string {
   return type === 'screener' ? '🔍' : '📈';
 }
 
-export function ActiveStrategiesPanel({ apiBase = 'http://localhost:4000', refreshIntervalMs = 10000, onStrategyClick }: Props) {
+export function ActiveStrategiesPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 10000, onStrategyClick }: Props) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

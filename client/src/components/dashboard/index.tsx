@@ -10,7 +10,7 @@ type Props = {
   onTickerSelect?: (ticker: string) => void;
 };
 
-export function Dashboard({ apiBase = 'http://localhost:4000', onTickerSelect }: Props) {
+export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }: Props) {
   const [activePanel, setActivePanel] = useState('health');
 
   const renderPanel = () => {

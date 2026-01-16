@@ -2,7 +2,41 @@ import express from 'express';
 import { EngineStrategyModel } from '../handoff/models/strategyModel';
 import { screenerScheduler } from './services/screenerScheduler';
 
+import { io } from '../../index';
+
 const router = express.Router();
+
+/**
+ * POST /api/engine/hooks/screener-result
+ * Webhook to receive screener results from external agents (e.g. Python Agent)
+ * and broadcast them to the UI.
+ */
+router.post('/hooks/screener-result', (req, res) => {
+  try {
+    const { opportunities, strategyName = 'AI Agent Scan' } = req.body;
+
+    if (!opportunities || !Array.isArray(opportunities)) {
+      return res.status(400).json({ error: 'opportunities array is required' });
+    }
+
+    console.log(`[Engine] Received ${opportunities.length} opportunities from ${strategyName}`);
+
+    // Broadcast each opportunity as a signal
+    opportunities.forEach(opp => {
+      io.emit('screener_signal', {
+        strategyId: 'agent-scan',
+        strategyName,
+        opportunity: opp.top_opportunities?.[0]?.best_option ?? opp, // Handle nested structure if needed
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    res.json({ success: true, count: opportunities.length });
+  } catch (error: any) {
+    console.error('[Engine] Error processing screener webhook:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 /**
  * GET /api/engine/strategies

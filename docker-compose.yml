@@ -12,6 +12,10 @@ services:
       - MONGO_URI=mongodb://mongo:27017/market-copilot
     env_file:
       - ./server/.env
+    volumes:
+      - ./server/src:/app/src
+      - ./server/nodemon.json:/app/nodemon.json
+      - /app/node_modules
     restart: unless-stopped
     networks:
       - polygon_net
@@ -26,6 +30,12 @@ services:
       - "8080:5173"
     environment:
       - VITE_API_URL=http://localhost:3000
+    volumes:
+      - ./client/src:/app/src
+      - ./client/public:/app/public
+      - ./client/index.html:/app/index.html
+      - ./client/vite.config.ts:/app/vite.config.ts
+      - /app/node_modules
     depends_on:
       - server
     networks:

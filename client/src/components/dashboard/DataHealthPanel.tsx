@@ -43,7 +43,7 @@ function getQualityColor(score: number): string {
   return '#dc2626';
 }
 
-export function DataHealthPanel({ apiBase = 'http://localhost:4000', refreshIntervalMs = 5000 }: Props) {
+export function DataHealthPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 5000 }: Props) {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

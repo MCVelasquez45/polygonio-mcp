@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { runAgentScan } from '../../api/agent';
 
 type ScannerSignal = {
   strategyId: string;
@@ -46,10 +47,12 @@ function formatTime(dateStr: string): string {
   });
 }
 
-export function ScannerResultsPanel({ socketUrl = 'http://localhost:4000', maxSignals = 20, onTickerSelect }: Props) {
+export function ScannerResultsPanel({ socketUrl = 'http://localhost:3000', maxSignals = 20, onTickerSelect }: Props) {
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastSignalTime, setLastSignalTime] = useState<Date | null>(null);
+  const [agentThinking, setAgentThinking] = useState(false);
+  const [agentResponse, setAgentResponse] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
@@ -84,6 +87,22 @@ export function ScannerResultsPanel({ socketUrl = 'http://localhost:4000', maxSi
 
   const clearSignals = () => {
     setSignals([]);
+    setAgentResponse(null);
+  };
+
+  const handleRunScan = async () => {
+    setAgentThinking(true);
+    setAgentResponse(null);
+    try {
+      // Trigger the 0-DTE scan via the Agent
+      const result = await runAgentScan("Scan for the best 0-DTE covered call candidates for SPY.");
+      setAgentResponse(result.output);
+    } catch (err) {
+      console.error("Agent scan failed", err);
+      setAgentResponse("Error: Failed to run AI scan. Please ensure the agent is running.");
+    } finally {
+      setAgentThinking(false);
+    }
   };
 
   return (
@@ -94,6 +113,15 @@ export function ScannerResultsPanel({ socketUrl = 'http://localhost:4000', maxSi
           <p className="header-subtitle">Real-time screener opportunities</p>
         </div>
         <div className="header-controls">
+          <button
+            type="button"
+            className="btn-run-scan"
+            onClick={handleRunScan}
+            disabled={agentThinking}
+          >
+            {agentThinking ? 'Scanning...' : '✨ Run AI 0-DTE Scan'}
+          </button>
+
           <div className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
             <span className="status-dot"></span>
             <span className="status-text">{connected ? 'Connected' : 'Disconnected'}</span>
@@ -106,7 +134,22 @@ export function ScannerResultsPanel({ socketUrl = 'http://localhost:4000', maxSi
         </div>
       </header>
 
-      {signals.length === 0 ? (
+      {agentResponse && (
+        <div className="agent-insight">
+          <div className="agent-header">
+            <span className="agent-icon">🤖</span>
+            <span className="agent-title">AI Agent Analysis</span>
+            <button className="close-agent" onClick={() => setAgentResponse(null)}>×</button>
+          </div>
+          <div className="agent-content">
+            {agentResponse.split('\n').map((line, i) => (
+              <p key={i} className="agent-line">{line}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {signals.length === 0 && !agentThinking ? (
         <div className="empty-state">
           <span className="empty-icon">🔍</span>
           <p>Waiting for scanner signals...</p>
@@ -204,6 +247,67 @@ export function ScannerResultsPanel({ socketUrl = 'http://localhost:4000', maxSi
       )}
 
       <style>{`
+        .agent-insight {
+          margin: 1rem;
+          background: rgba(124, 58, 237, 0.1); /* Violet tint */
+          border: 1px solid rgba(124, 58, 237, 0.3);
+          border-radius: 0.5rem;
+          color: #e5e5e5;
+          font-size: 0.9rem;
+          overflow: hidden;
+        }
+        .agent-header {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1rem;
+          background: rgba(124, 58, 237, 0.15);
+          border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+        }
+        .agent-title {
+          font-weight: 600;
+          color: #a78bfa;
+          flex: 1;
+        }
+        .close-agent {
+          background: none;
+          border: none;
+          color: #a78bfa;
+          font-size: 1.2rem;
+          cursor: pointer;
+        }
+        .agent-content {
+          padding: 1rem;
+          white-space: pre-wrap;
+          line-height: 1.5;
+        }
+        .agent-line {
+          margin: 0 0 0.5rem 0;
+        }
+        .btn-run-scan {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.85rem;
+            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+            border: 1px solid #5b21b6;
+            color: white;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .btn-run-scan:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+        .btn-run-scan:disabled {
+            opacity: 0.7;
+            cursor: wait;
+        }
+        
         .scanner-panel {
           background: #111118;
           border-radius: 1rem;

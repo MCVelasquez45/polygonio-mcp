@@ -32,6 +32,10 @@ export interface ScreenerConfig {
   schedule?: string; // e.g., 'daily_at_935', 'hourly', 'manual'
 }
 
+export interface JesseConfig {
+  code: string;
+}
+
 export interface StrategyBase extends Document {
   name: string;
   description: string;
@@ -44,7 +48,7 @@ export interface StrategyBase extends Document {
 // --- Lab Strategy (Development) ---
 
 export interface LabStrategy extends StrategyBase {
-  strategyType: 'quant' | 'screener';
+  strategyType: 'quant' | 'screener' | 'jesse';
   status: 'development' | 'validated' | 'failed';
 
   // For quant strategies
@@ -52,6 +56,9 @@ export interface LabStrategy extends StrategyBase {
 
   // For screener strategies
   screenerConfig?: ScreenerConfig;
+
+  // For jesse strategies
+  jesseConfig?: JesseConfig;
 
   backtestResults?: {
     period: { start: Date; end: Date };
@@ -70,7 +77,7 @@ const LabStrategySchema = new Schema({
   description: { type: String },
   version: { type: String, default: '1.0.0' },
   ownerId: { type: String, required: true },
-  strategyType: { type: String, enum: ['quant', 'screener'], required: true },
+  strategyType: { type: String, enum: ['quant', 'screener', 'jesse'], required: true },
   status: { type: String, enum: ['development', 'validated', 'failed'], default: 'development' },
 
   // Quant Model Config (optional, required if strategyType = 'quant')
@@ -90,6 +97,11 @@ const LabStrategySchema = new Schema({
     schedule: { type: String }
   },
 
+  // Jesse Config (optional, required if strategyType = 'jesse')
+  jesseConfig: {
+    code: { type: String }
+  },
+
   backtestResults: {
     period: { start: Date, end: Date },
     metrics: {
@@ -106,7 +118,7 @@ const LabStrategySchema = new Schema({
 
 export interface EngineStrategy extends StrategyBase {
   labStrategyId: string; // Link back to Lab
-  strategyType: 'quant' | 'screener';
+  strategyType: 'quant' | 'screener' | 'jesse';
   status: 'active' | 'paused' | 'stopped';
   runtimeConfig: {
     maxCapital: number;
@@ -129,7 +141,7 @@ const EngineStrategySchema = new Schema({
   version: { type: String },
   ownerId: { type: String, required: true },
   labStrategyId: { type: Schema.Types.ObjectId, ref: 'LabStrategy', required: true },
-  strategyType: { type: String, enum: ['quant', 'screener'], required: true },
+  strategyType: { type: String, enum: ['quant', 'screener', 'jesse'], required: true },
   status: { type: String, enum: ['active', 'paused', 'stopped'], default: 'active' },
   runtimeConfig: {
     maxCapital: Number,

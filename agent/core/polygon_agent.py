@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import uuid
-import re
 import json
+import os
+import re
+import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from textwrap import dedent
@@ -339,6 +340,16 @@ async def save_analysis_report(content: str, title: str = None, category: str = 
 
     filepath.write_text(report_body, encoding="utf-8")
     return f"Report saved: {filepath}"
+
+
+@function_tool
+async def read_jesse_documentation() -> str:
+    """Read comprehensive instructions and examples for the Jesse trading framework."""
+    # PROJECT_ROOT is currently .../agent, so we go up one level to the repo root
+    docs_path = PROJECT_ROOT.parent / "gpt-instructions" / "instructions.md"
+    if not docs_path.exists():
+        return "Jesse instructions file not found at expected path."
+    return docs_path.read_text(encoding="utf-8")
 
 
 def _require_env(key: str) -> str:
@@ -1102,6 +1113,43 @@ async def create_lab_strategy(
         return json.dumps(response.json())
 
 
+
+@function_tool
+async def create_jesse_strategy(
+    name: str,
+    code: str,
+    description: str = "",
+) -> str:
+    """
+    Register a complex Python strategy (Jesse framework) in the Lab.
+    
+    Args:
+        name: Strategy name (e.g., "Golden Cross AAPL")
+        code: The complete Python source code of the strategy class.
+        description: Optional description of the strategy.
+    
+    Returns:
+        JSON string with strategy object including _id, status, and config.
+    """
+    import json
+    
+    payload = {
+        "name": name,
+        "description": description,
+        "strategyType": "jesse",
+        "ownerId": "ai_agent",
+        "jesseConfig": {
+            "code": code
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        # We reuse the same endpoint, the server now handles strategyType='jesse'
+        response = await client.post(f"{LAB_API_URL}/strategy/create", json=payload)
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
 @function_tool
 async def backtest_screener_strategy(
     screener_type: str,
@@ -1271,8 +1319,8 @@ def create_polygon_mcp_server() -> MCPServerStdio:
 
     return MCPServerStdio(
         params={
-            "command": "uvx",
-            "args": ["--from", "git+https://github.com/polygon-io/mcp_polygon@v0.4.0", "mcp_polygon"],
+            "command": sys.executable,
+            "args": ["-m", "mcp_polygon"],
             "env": {**os.environ, "POLYGON_API_KEY": api_key},
         },
         # First-time `uvx` installs can exceed the 5s default; give the MCP
@@ -1296,6 +1344,14 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "2. Call Polygon tools precisely; pull the minimal required data.\n"
             "3. Include disclaimers.\n"
             "4. Offer to save reports if not asked by the user to save a report.\n\n"
+            "JESSE STRATEGY ASSISTANT:\n"
+            "If the user asks about Jesse strategies, indicators, or debugging:\n"
+            "1. ALWAYS call `read_jesse_documentation` first to get the context.\n"
+            "2. Use the examples and syntax from that file to write the code.\n"
+            "3. If the user wants to SAVE or CREATE the strategy, use `create_jesse_strategy` tool.\n"
+            "   - Pass the full Python code as the `code` argument.\n"
+            "   - This saves it to the Lab for future execution or reference.\n"
+            "4. Follow the specific debugging and optimization advice provided in the docs.\n\n"
             "STRATEGY LIFECYCLE:\n"
             "You can now manage trading strategies end-to-end:\n"
             "- DISCOVER: Use `scan_best_0dte_candidates` to find opportunities.\n"
@@ -1313,7 +1369,9 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "If data unavailable or tool fails, explain gracefully — never fabricate.\n"
             "Note: `params_json` and `symbols_json` arguments MUST be valid JSON strings.\n\n"
             "TOOLS:\n"
-            "Polygon.io data, save_analysis_report, get_polygon_options_snapshot,\n"
+            "Polygon.io data, save_analysis_report, read_jesse_documentation,\n"
+            "get_polygon_options_snapshot, create_jesse_strategy,\n"
+            "get_polygon_option_contract_snapshot, get_polygon_option_quotes,\n"
             "get_polygon_option_contract_snapshot, get_polygon_option_quotes,\n"
             "get_polygon_option_trades, get_polygon_intraday_aggregates,\n"
             "get_polygon_exchanges, get_polygon_ticker_sentiment,\n"
@@ -1326,6 +1384,8 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
         mcp_servers=[server],
         tools=[
             save_analysis_report,
+            read_jesse_documentation,
+            create_jesse_strategy,
             get_polygon_options_snapshot,
             get_polygon_option_contract_snapshot,
             get_polygon_option_quotes,
@@ -1405,6 +1465,8 @@ __all__ = [
     "run_analysis",
     # tool functions
     "save_analysis_report",
+    "read_jesse_documentation",
+    "create_jesse_strategy",
     "get_polygon_options_snapshot",
     "get_polygon_option_contract_snapshot",
     "get_polygon_ticker_sentiment",

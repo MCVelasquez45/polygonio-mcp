@@ -66,7 +66,7 @@ function getStatusColor(status: string): string {
   }
 }
 
-export function HandoffRequestsPanel({ apiBase = 'http://localhost:4000', refreshIntervalMs = 10000, onApprove, onReject }: Props) {
+export function HandoffRequestsPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 10000, onApprove, onReject }: Props) {
   const [requests, setRequests] = useState<HandoffRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const DEFAULT_API_PORT = '4000';
+const DEFAULT_API_PORT = '3000';
 const DEV_SERVER_PORTS = new Set(['5173', '5174', '3000']);
 
 function normalizeHost(hostname: string): string {

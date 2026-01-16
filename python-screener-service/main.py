@@ -216,6 +216,17 @@ def scan_universe(request: ScanRequest):
     successful.sort(key=lambda x: x.premium_yield, reverse=True)
     top_n = successful[:request.top_n]
     
+    # Broadcast to UI if running in integrated mode
+    try:
+        if top_n:
+            import requests  # Ensure requests is imported or available
+            webhook_url = "http://localhost:4000/api/engine/hooks/screener-result"
+            # Extract just the dicts from the Pydantic models for JSON serialization
+            opps_json = [r.dict() for r in top_n]
+            requests.post(webhook_url, json={"opportunities": opps_json, "strategyName": "AI Agent 0-DTE Scan"}, timeout=1)
+    except Exception as e:
+        logger.warning(f"Failed to broadcast results to UI: {e}")
+
     return ScanResponse(
         scanned_count=len(request.tickers),
         successful_count=len(successful),

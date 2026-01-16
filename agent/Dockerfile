@@ -9,6 +9,12 @@ COPY pyproject.toml .
 # We copy everything so the local packages (core, cli) are present
 COPY . .
 
+# Install git for pip dependencies
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+# Install MCP Server for Polygon
+RUN pip install "git+https://github.com/polygon-io/mcp_polygon@v0.4.0"
+
 # Install dependencies
 # We install directly from . to respect pyproject.toml
 RUN pip install --no-cache-dir .

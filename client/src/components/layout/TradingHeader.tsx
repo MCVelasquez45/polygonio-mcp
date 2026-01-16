@@ -21,7 +21,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'trading', label: 'Trading', icon: <TrendingUp className="h-4 w-4" /> },
   { id: 'scanner', label: 'Scanner', icon: <ScanSearch className="h-4 w-4" /> },
   { id: 'portfolio', label: 'Portfolio', icon: <Briefcase className="h-4 w-4" /> },
-  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
+  { id: 'dashboard', label: 'The Lab', icon: <LayoutDashboard className="h-4 w-4" /> },
 ];
 
 export function TradingHeader({
@@ -82,8 +82,8 @@ export function TradingHeader({
               key={view.id}
               type="button"
               className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${currentView === view.id
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-gray-400 hover:text-gray-100'
+                ? 'bg-emerald-600 text-white'
+                : 'text-gray-400 hover:text-gray-100'
                 }`}
               onClick={() => onViewChange(view.id)}
             >
@@ -125,10 +125,10 @@ export function TradingHeader({
             onClick={onToggleChat}
             disabled={chatDisabled}
             className={`inline-flex items-center justify-center h-10 w-10 rounded-xl border ${isChatOpen
-                ? 'border-emerald-500 text-emerald-300'
-                : chatDisabled
-                  ? 'border-gray-900 text-gray-600'
-                  : 'border-gray-800 text-gray-400 hover:text-white'
+              ? 'border-emerald-500 text-emerald-300'
+              : chatDisabled
+                ? 'border-gray-900 text-gray-600'
+                : 'border-gray-800 text-gray-400 hover:text-white'
               }`}
             aria-label="Toggle chat"
           >

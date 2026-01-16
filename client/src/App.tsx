@@ -2923,14 +2923,12 @@ function App() {
               </div>
             )}
             {view === 'dashboard' && (
-              <div className="fixed inset-0 z-50">
-                <Dashboard
-                  onTickerSelect={(ticker) => {
-                    setTicker(ticker);
-                    setView('trading');
-                  }}
-                />
-              </div>
+              <Dashboard
+                onTickerSelect={(ticker) => {
+                  setTicker(ticker);
+                  setView('trading');
+                }}
+              />
             )}
           </div>
         </main>
