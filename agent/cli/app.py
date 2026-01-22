@@ -43,13 +43,18 @@ async def run_cli(
 
     owns_server = server is None
     server_obj = server
+    mcp_failed = False
     if server_obj is None:
         try:
             server_obj = create_polygon_mcp_server()
-        except Exception as exc:  # pragma: no cover - defensive initialization
-            show_error(console, exc, label="Setup Error")
-            show_shutdown(console)
-            return
+        except Exception as exc:
+            # MCP failed - continue without it (native Polygon tools still work)
+            console.print(
+                f"[yellow]⚠ MCP server unavailable ({exc}). "
+                "Continuing with native Polygon REST API tools.[/yellow]"
+            )
+            mcp_failed = True
+            server_obj = None
 
     async def _cli_loop() -> None:
         while True:
@@ -68,7 +73,7 @@ async def run_cli(
                 continue
 
             try:
-                result = await run_analysis(user_input, session=session_obj, server=server_obj)
+                result = await run_analysis(user_input, session=session_obj, server=server_obj, skip_mcp=(server_obj is None))
                 show_success(console, user_input, result)
             except InputGuardrailTripwireTriggered as exc:
                 show_guardrail_warning(console, exc)
@@ -76,10 +81,20 @@ async def run_cli(
                 show_error(console, exc, label="Agent Error")
 
     try:
-        if owns_server:
-            async with server_obj:
+        if owns_server and server_obj is not None:
+            try:
+                async with server_obj:
+                    await _cli_loop()
+            except Exception as mcp_exc:
+                # MCP failed during connection - fallback to native tools
+                console.print(
+                    f"[yellow]⚠ MCP connection failed ({mcp_exc}). "
+                    "Continuing with native Polygon REST API tools.[/yellow]"
+                )
+                server_obj = None  # Clear the failed server
                 await _cli_loop()
         else:
+            # Either server was passed in, MCP failed, or not using MCP
             await _cli_loop()
     except Exception as exc:  # pragma: no cover - guard unforeseen runtime issues
         show_error(console, exc, label="Unexpected Error")

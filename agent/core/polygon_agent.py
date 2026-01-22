@@ -39,6 +39,7 @@ load_dotenv()
 POLYGON_BASE_URL = "https://api.polygon.io"
 CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
 CAPITOL_TRADES_BFF_URL = "https://bff.capitoltrades.com"
+QUANDL_BASE_URL = "https://data.nasdaq.com/api/v3"
 DEFAULT_TRACE_LABEL = "Polygon.io Demo"
 # Disable history replay by default until the OpenAI Responses API exposes a safe way
 # to trim reasoning/function_call pairs without corrupting the transcript.
@@ -343,13 +344,167 @@ async def save_analysis_report(content: str, title: str = None, category: str = 
 
 
 @function_tool
-async def read_jesse_documentation() -> str:
-    """Read comprehensive instructions and examples for the Jesse trading framework."""
+async def read_zonexi_documentation() -> str:
+    """Read comprehensive instructions and examples for the ZoneXI trading framework."""
     # PROJECT_ROOT is currently .../agent, so we go up one level to the repo root
     docs_path = PROJECT_ROOT.parent / "gpt-instructions" / "instructions.md"
     if not docs_path.exists():
-        return "Jesse instructions file not found at expected path."
+        return "ZoneXI instructions file not found at expected path."
     return docs_path.read_text(encoding="utf-8")
+
+
+# =============================================================================
+# LAB INTEGRATION: Strategy Code Assistant Tools (Phase 1)
+# =============================================================================
+# These tools enable the agent to assist with strategy code development.
+# They do NOT execute code - they only generate, analyze, and explain text.
+# =============================================================================
+
+
+@function_tool
+async def generate_strategy_code(description: str, language: str = "python") -> str:
+    """Generate trading strategy code from a natural language description.
+    
+    This tool creates a complete, runnable strategy template based on the user's
+    requirements. The generated code follows best practices for the Lab environment.
+    
+    Args:
+        description: Natural language description of the desired strategy
+                     (e.g., "mean reversion strategy for SPY on 5-minute bars")
+        language: Programming language for the output (default: 'python')
+    
+    Returns:
+        A complete strategy code template with:
+        - Required imports
+        - Configuration parameters
+        - Entry/exit logic
+        - Risk management (stop loss, position sizing)
+        - Logging and error handling
+    
+    Note: This tool generates CODE AS TEXT. It does not execute anything.
+    The human must review and deploy the code through the Lab workflow.
+    """
+    # This is a "smart" tool - the LLM synthesizes the code based on the description.
+    # The tool itself just returns a structured prompt for the agent to complete.
+    # The actual code generation happens in the agent's reasoning loop.
+    
+    template_guidance = dedent(f"""
+    Generate a complete {language} trading strategy based on this description:
+    
+    DESCRIPTION: {description}
+    
+    REQUIREMENTS:
+    1. Include all necessary imports
+    2. Define configurable parameters (lookback, thresholds, position size)
+    3. Implement clear entry/exit signals
+    4. Add stop-loss and take-profit logic
+    5. Include logging for debugging
+    6. Add docstrings explaining the logic
+    7. Follow PEP 8 style guidelines
+    
+    OUTPUT FORMAT:
+    Return the complete code wrapped in a Python code block.
+    Include a header comment explaining the strategy.
+    """).strip()
+    
+    return template_guidance
+
+
+@function_tool
+async def analyze_strategy_code(code: str) -> str:
+    """Analyze trading strategy code for bugs, improvements, and best practices.
+    
+    This tool performs a comprehensive review of strategy code, identifying:
+    - Logical errors that could cause incorrect trades
+    - Performance issues (inefficient loops, memory leaks)
+    - Missing error handling
+    - Risk management gaps
+    - Code style violations
+    
+    Args:
+        code: The strategy code to analyze (as a string)
+    
+    Returns:
+        A structured analysis with:
+        - CRITICAL: Issues that must be fixed before deployment
+        - WARNINGS: Potential problems that should be reviewed
+        - SUGGESTIONS: Optional improvements for performance/readability
+        - BEST PRACTICES: Recommendations for production readiness
+    
+    Note: This tool READS code as text. It does not execute anything.
+    """
+    analysis_prompt = dedent(f"""
+    Analyze this trading strategy code for issues and improvements:
+    
+    ```python
+    {code}
+    ```
+    
+    ANALYSIS CHECKLIST:
+    1. **Logic Errors**: Check for off-by-one errors, incorrect comparisons, order of operations
+    2. **Risk Management**: Verify stop-loss, position sizing, max drawdown limits
+    3. **Data Handling**: Check for NaN handling, timezone issues, data gaps
+    4. **Performance**: Look for vectorization opportunities, unnecessary loops
+    5. **Error Handling**: Verify try/except blocks, graceful degradation
+    6. **Edge Cases**: Consider market holidays, pre/post market, gaps
+    7. **Dependencies**: Check for missing imports, version compatibility
+    
+    OUTPUT FORMAT:
+    Structure your response with these sections:
+    - **CRITICAL ISSUES** (must fix)
+    - **WARNINGS** (should review)
+    - **SUGGESTIONS** (nice to have)
+    - **OVERALL ASSESSMENT** (1-10 readiness score)
+    """).strip()
+    
+    return analysis_prompt
+
+
+@function_tool
+async def explain_strategy_code(code: str) -> str:
+    """Explain trading strategy code in plain English for beginners.
+    
+    This tool translates complex strategy logic into an easy-to-understand
+    explanation suitable for someone learning algorithmic trading.
+    
+    Args:
+        code: The strategy code to explain (as a string)
+    
+    Returns:
+        A beginner-friendly explanation covering:
+        - What the strategy does (in simple terms)
+        - When it enters trades (buy signals)
+        - When it exits trades (sell signals)
+        - How it manages risk
+        - What market conditions it works best in
+    
+    Note: This tool READS code as text. It does not execute anything.
+    """
+    explanation_prompt = dedent(f"""
+    Explain this trading strategy code in plain English for a beginner:
+    
+    ```python
+    {code}
+    ```
+    
+    EXPLANATION GUIDELINES:
+    1. Start with a one-sentence summary of what the strategy does
+    2. Explain the "why" behind each major section
+    3. Use analogies when helpful (e.g., "like a thermostat...")
+    4. Define any jargon (RSI, moving average, etc.)
+    5. Describe the ideal market conditions for this strategy
+    6. Mention the risks in plain terms
+    
+    OUTPUT FORMAT:
+    - **What This Strategy Does**: (1-2 sentences)
+    - **How It Works**: (step-by-step breakdown)
+    - **When It Trades**: (entry conditions in plain English)
+    - **Risk Management**: (how it protects capital)
+    - **Best Used When**: (ideal market conditions)
+    - **Watch Out For**: (common pitfalls)
+    """).strip()
+    
+    return explanation_prompt
 
 
 def _require_env(key: str) -> str:
@@ -746,6 +901,288 @@ def _get_polygon_fetcher() -> PolygonDataFetcher:
     return _polygon_fetcher
 
 
+class FuturesDataFetcher:
+    """Helper for fetching futures data from Quandl/Nasdaq Data Link.
+    
+    Polygon.io does not support futures data, so we use Quandl for historical
+    futures prices. This supports continuous contracts and specific contract months.
+    """
+    
+    # Continuous contract mappings for common futures
+    CONTINUOUS_CONTRACTS = {
+        "ES": "CHRIS/CME_ES1",    # E-mini S&P 500
+        "NQ": "CHRIS/CME_NQ1",    # E-mini Nasdaq 100
+        "YM": "CHRIS/CME_YM1",    # E-mini Dow
+        "RTY": "CHRIS/CME_RTY1",  # E-mini Russell 2000
+        "CL": "CHRIS/CME_CL1",    # Crude Oil
+        "GC": "CHRIS/CME_GC1",    # Gold
+        "SI": "CHRIS/CME_SI1",    # Silver
+        "ZB": "CHRIS/CME_US1",    # 30-Year Treasury
+        "ZN": "CHRIS/CME_TY1",    # 10-Year Treasury
+        "6E": "CHRIS/CME_EC1",    # Euro FX
+    }
+    
+    # Contract month codes
+    MONTH_CODES = {
+        1: "F", 2: "G", 3: "H", 4: "J", 5: "K", 6: "M",
+        7: "N", 8: "Q", 9: "U", 10: "V", 11: "X", 12: "Z"
+    }
+    
+    def __init__(self, api_key: str, timeout: float = 20.0):
+        self.api_key = api_key
+        self.timeout = timeout
+    
+    def _resolve_symbol(self, symbol: str) -> str:
+        """Resolve a user-friendly symbol to Quandl dataset code.
+        
+        Examples:
+            ES -> CHRIS/CME_ES1 (continuous front month)
+            ESH26 -> CME/ESH2026 (specific contract)
+        """
+        symbol = symbol.upper().strip()
+        
+        # Check if it's a known continuous contract
+        if symbol in self.CONTINUOUS_CONTRACTS:
+            return self.CONTINUOUS_CONTRACTS[symbol]
+        
+        # Check if it's a specific contract like ESH26 or ESH2026
+        # Format: <root><month_code><year>
+        import re
+        match = re.match(r"^([A-Z]{2,3})([FGHJKMNQUVXZ])(\d{1,4})$", symbol)
+        if match:
+            root, month_code, year = match.groups()
+            # Convert 2-digit year to 4-digit
+            if len(year) <= 2:
+                year = f"20{year.zfill(2)}"
+            return f"CME/{root}{month_code}{year}"
+        
+        # Fallback: treat as continuous contract root
+        if symbol in self.CONTINUOUS_CONTRACTS:
+            return self.CONTINUOUS_CONTRACTS[symbol]
+        
+        # If nothing matches, try as a direct Quandl code
+        return symbol
+    
+    async def get_daily_aggregates(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Fetch daily OHLCV for a futures contract from Quandl.
+        
+        Args:
+            symbol: Futures symbol (e.g., "ES", "ESH26", "CHRIS/CME_ES1")
+            start_date: Start date YYYY-MM-DD
+            end_date: End date YYYY-MM-DD
+            limit: Maximum number of rows to return
+            
+        Returns:
+            Dict with 'bars' containing OHLCV data
+        """
+        quandl_code = self._resolve_symbol(symbol)
+        
+        # Build Quandl API URL
+        url = f"{QUANDL_BASE_URL}/datasets/{quandl_code}.json"
+        params = {
+            "api_key": self.api_key,
+            "start_date": start_date,
+            "end_date": end_date,
+            "limit": min(limit, 1000),
+            "order": "asc",
+        }
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                response = await client.get(url, params=params, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    return {
+                        "symbol": symbol,
+                        "quandl_code": quandl_code,
+                        "bars": [],
+                        "error": f"Dataset not found: {quandl_code}. Check symbol or contract availability.",
+                    }
+                if exc.response.status_code == 403:
+                    error_text = exc.response.text
+                    if "Incapsula" in error_text or "Request unsuccessful" in error_text:
+                        return {
+                            "symbol": symbol,
+                            "error": "Request blocked by Nasdaq Data Link WAF (Incapsula). Your IP may be flagged. Try using a different network or VPN."
+                        }
+                    return {
+                        "symbol": symbol,
+                        "error": "403 Forbidden. Check if your API key is valid and has access to the 'CHRIS' dataset."
+                    }
+                raise
+        
+        dataset = payload.get("dataset", {})
+        columns = dataset.get("column_names", [])
+        data = dataset.get("data", [])
+        
+        # Map column names to indices (Quandl columns vary by dataset)
+        col_map = {name.lower(): idx for idx, name in enumerate(columns)}
+        
+        bars = []
+        for row in data:
+            bar = {
+                "date": row[col_map.get("date", 0)] if "date" in col_map else None,
+                "o": row[col_map.get("open", 1)] if "open" in col_map else None,
+                "h": row[col_map.get("high", 2)] if "high" in col_map else None,
+                "l": row[col_map.get("low", 3)] if "low" in col_map else None,
+                "c": row[col_map.get("last", 4)] if "last" in col_map else (
+                    row[col_map.get("settle", 4)] if "settle" in col_map else (
+                        row[col_map.get("close", 4)] if "close" in col_map else None
+                    )
+                ),
+                "v": row[col_map.get("volume", 5)] if "volume" in col_map else None,
+                "oi": row[col_map.get("open interest", 6)] if "open interest" in col_map else (
+                    row[col_map.get("open_interest", 6)] if "open_interest" in col_map else None
+                ),
+            }
+            bars.append(bar)
+        
+        return {
+            "symbol": symbol,
+            "quandl_code": quandl_code,
+            "dataset_name": dataset.get("name"),
+            "bars": bars,
+            "bar_count": len(bars),
+            "columns_available": columns,
+        }
+    
+    async def get_4h_bars(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        num_bars: int = 3,
+    ) -> Dict[str, Any]:
+        """Compute 4-hour bars from daily data for futures.
+        
+        Note: Quandl free tier only provides daily data. This method fetches
+        daily bars and provides guidance on session structure.
+        
+        For true intraday 4H bars, a paid data source (Databento, CME) is required.
+        
+        Globex session structure for ES (nearly 24h trading):
+        - Session 1: 18:00 - 22:00 ET (4h) - Sunday open / evening
+        - Session 2: 22:00 - 02:00 ET (4h) - overnight
+        - Session 3: 02:00 - 06:00 ET (4h) - early morning
+        - Session 4: 06:00 - 10:00 ET (4h) - includes RTH open at 9:30
+        - Session 5: 10:00 - 14:00 ET (4h) - midday
+        - Session 6: 14:00 - 17:00 ET (3h) - afternoon close
+        
+        Args:
+            symbol: Futures symbol (e.g., "ES")
+            start_date: Start date YYYY-MM-DD
+            end_date: End date YYYY-MM-DD
+            num_bars: Number of 4H "approximated" bars to return
+            
+        Returns:
+            Dict with daily bars and 4H approximation guidance
+        """
+        # Fetch daily data
+        daily_result = await self.get_daily_aggregates(symbol, start_date, end_date, limit=num_bars * 2)
+        
+        if daily_result.get("error"):
+            return daily_result
+        
+        daily_bars = daily_result.get("bars", [])
+        
+        # Since we only have daily data, we approximate 4H structure
+        # by dividing the daily range into theoretical 4H windows
+        approximated_bars = []
+        for bar in daily_bars[-num_bars:]:
+            if bar.get("o") is None or bar.get("h") is None:
+                continue
+                
+            daily_open = float(bar.get("o", 0))
+            daily_high = float(bar.get("h", 0))
+            daily_low = float(bar.get("l", 0))
+            daily_close = float(bar.get("c", 0))
+            daily_range = daily_high - daily_low
+            
+            # Create approximated 4H windows for the day
+            # This is an estimation - real 4H bars require intraday data
+            windows = []
+            
+            # Window 1: Open to ~1/4 of daily range
+            w1_close = daily_open + (daily_close - daily_open) * 0.25
+            windows.append({
+                "date": bar.get("date"),
+                "window": 1,
+                "window_label": "Globex Evening (18:00-22:00 ET)",
+                "o": daily_open,
+                "h": daily_open + daily_range * 0.15,
+                "l": daily_low if daily_low < w1_close else daily_open - daily_range * 0.05,
+                "c": w1_close,
+                "note": "Approximated from daily data",
+            })
+            
+            # Window 4: RTH morning session (most relevant for One Candle Theory)
+            w4_open = daily_open + (daily_close - daily_open) * 0.3
+            w4_close = daily_open + (daily_close - daily_open) * 0.7
+            windows.append({
+                "date": bar.get("date"),
+                "window": 4,
+                "window_label": "RTH Morning (06:00-10:00 ET, includes 9:30 open)",
+                "o": w4_open,
+                "h": max(w4_open, w4_close) + daily_range * 0.1,
+                "l": min(w4_open, w4_close) - daily_range * 0.08,
+                "c": w4_close,
+                "note": "Approximated from daily data",
+            })
+            
+            approximated_bars.append({
+                "date": bar.get("date"),
+                "daily_bar": bar,
+                "estimated_4h_windows": windows,
+            })
+        
+        return {
+            "symbol": symbol,
+            "quandl_code": daily_result.get("quandl_code"),
+            "timeframe": "4H (approximated from daily)",
+            "bars": approximated_bars,
+            "total_days": len(daily_bars),
+            "requested": num_bars,
+            "note": (
+                "True 4H intraday bars require a paid data source (Databento, CME). "
+                "These bars are approximated from daily OHLC data using Globex session patterns."
+            ),
+            "globex_sessions": [
+                "Session 1: 18:00-22:00 ET (Sunday open/evening)",
+                "Session 2: 22:00-02:00 ET (overnight)",
+                "Session 3: 02:00-06:00 ET (early morning)",
+                "Session 4: 06:00-10:00 ET (includes RTH 9:30 open)",
+                "Session 5: 10:00-14:00 ET (midday)",
+                "Session 6: 14:00-17:00 ET (afternoon, 3h to close)",
+            ],
+        }
+
+
+_futures_fetcher: FuturesDataFetcher | None = None
+
+
+def _get_futures_fetcher() -> FuturesDataFetcher | None:
+    """Get the futures data fetcher if QUANDL_API_KEY is available."""
+    global _futures_fetcher
+    if _futures_fetcher is None:
+        api_key = os.getenv("QUANDL_API_KEY")
+        if api_key:
+            _futures_fetcher = FuturesDataFetcher(api_key=api_key)
+    return _futures_fetcher
+
+
 @function_tool
 async def get_polygon_options_snapshot(
     ticker: str,
@@ -928,6 +1365,211 @@ async def get_polygon_intraday_aggregates(
     fetcher = _get_polygon_fetcher()
     to_date = end_date or date
     return await fetcher.get_intraday_aggregates(ticker, multiplier, timespan, date, to_date, limit)
+
+
+@function_tool
+async def get_polygon_4h_bars(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    num_bars: int = 3,
+) -> Dict[str, Any]:
+    """
+    Fetch 4-hour bars for a ticker by aggregating minute data from Polygon.
+    
+    Polygon's hourly aggregates may be limited on some API tiers, so this
+    fetches minute data and computes 4H OHLCV bars aligned to market sessions.
+    
+    Market session breakdown (EST):
+    - 4H Bar 1: 09:30-13:30 (first 4 hours of regular session)
+    - 4H Bar 2: 13:30-16:00 (last 2.5 hours, may be partial)
+    
+    Args:
+        ticker: Stock ticker symbol (e.g., "SPY")
+        start_date: Start date YYYY-MM-DD
+        end_date: End date YYYY-MM-DD
+        num_bars: Number of 4H bars to return (default 3)
+    
+    Returns:
+        Dict with 'bars' list containing OHLCV for each 4H period
+    """
+    import httpx
+    from datetime import datetime, timedelta, timezone
+    
+    api_key = os.getenv("POLYGON_API_KEY")
+    if not api_key:
+        return {"ticker": ticker, "bars": [], "error": "POLYGON_API_KEY not set"}
+    
+    # Fetch minute data for the date range (need more data for 4H aggregation)
+    # Limit to 5000 minutes (~8 trading days worth) to ensure we get enough bars
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/"
+        f"{start_date}/{end_date}?adjusted=true&sort=asc&limit=5000&apiKey={api_key}"
+    )
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url)
+        data = response.json()
+    
+    if data.get("status") != "OK" or not data.get("results"):
+        return {
+            "ticker": ticker,
+            "bars": [],
+            "message": f"No minute data available. API returned: {data.get('status', 'unknown')}"
+        }
+    
+    minute_bars = data.get("results", [])
+    
+    # Group minute bars by 4H window
+    # Market hours: 9:30 AM - 4:00 PM EST = 6.5 hours
+    # We'll create 2 bars per day: 9:30-13:30 (4h) and 13:30-16:00 (2.5h)
+    four_hour_bars = []
+    current_window_bars = []
+    current_window_start = None
+    
+    for bar in minute_bars:
+        ts = bar.get("t", 0) / 1000  # Convert ms to seconds
+        bar_time = datetime.fromtimestamp(ts, tz=timezone.utc)
+        
+        # Calculate 4H window (0-3 = first 4H, 4-7 = second 4H, etc.)
+        # Align to 4-hour blocks starting from midnight
+        window_id = bar_time.hour // 4
+        window_key = (bar_time.date(), window_id)
+        
+        if current_window_start is None:
+            current_window_start = window_key
+            current_window_bars = [bar]
+        elif window_key == current_window_start:
+            current_window_bars.append(bar)
+        else:
+            # Save previous window
+            if current_window_bars:
+                agg_bar = {
+                    "t": current_window_bars[0].get("t"),
+                    "date": str(current_window_start[0]),
+                    "window": current_window_start[1],
+                    "o": current_window_bars[0].get("o"),
+                    "h": max(b.get("h", 0) for b in current_window_bars),
+                    "l": min(b.get("l", float("inf")) for b in current_window_bars),
+                    "c": current_window_bars[-1].get("c"),
+                    "v": sum(b.get("v", 0) for b in current_window_bars),
+                    "minutes_in_bar": len(current_window_bars),
+                }
+                four_hour_bars.append(agg_bar)
+            
+            # Start new window
+            current_window_start = window_key
+            current_window_bars = [bar]
+    
+    # Don't forget the last window
+    if current_window_bars:
+        agg_bar = {
+            "t": current_window_bars[0].get("t"),
+            "date": str(current_window_start[0]),
+            "window": current_window_start[1],
+            "o": current_window_bars[0].get("o"),
+            "h": max(b.get("h", 0) for b in current_window_bars),
+            "l": min(b.get("l", float("inf")) for b in current_window_bars),
+            "c": current_window_bars[-1].get("c"),
+            "v": sum(b.get("v", 0) for b in current_window_bars),
+            "minutes_in_bar": len(current_window_bars),
+        }
+        four_hour_bars.append(agg_bar)
+    
+    # Filter to only market-hour windows (windows 2, 3, 4 cover ~9:30-16:00 roughly)
+    market_bars = [b for b in four_hour_bars if b.get("window") in [2, 3, 4]]
+    
+    # Return only the requested number of most recent bars
+    result_bars = market_bars[-num_bars:] if len(market_bars) > num_bars else market_bars
+    
+    return {
+        "ticker": ticker,
+        "timeframe": "4H",
+        "bars": result_bars,
+        "total_4h_bars_found": len(market_bars),
+        "requested": num_bars,
+    }
+
+
+@function_tool
+async def get_futures_daily_aggregates(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Fetch daily OHLCV bars for futures contracts from Quandl/Nasdaq Data Link.
+    
+    Polygon.io does not support futures data. This tool uses Quandl for historical
+    futures prices including ES (E-mini S&P 500), NQ, CL, GC, and more.
+    
+    Symbol formats supported:
+    - Continuous contracts: "ES", "NQ", "CL", "GC" (auto-resolves to front month)
+    - Specific contracts: "ESH26" or "ESH2026" (March 2026 E-mini S&P)
+    
+    Args:
+        symbol: Futures symbol (e.g., "ES", "NQ", "ESH26", "CLM25")
+        start_date: Start date YYYY-MM-DD
+        end_date: End date YYYY-MM-DD
+        limit: Maximum number of bars to return (default 50)
+    
+    Returns:
+        Dict with 'bars' containing date, open, high, low, close, volume, open_interest
+    
+    Note:
+        Requires QUANDL_API_KEY environment variable. Get a free key at data.nasdaq.com
+    """
+    fetcher = _get_futures_fetcher()
+    if fetcher is None:
+        return {
+            "symbol": symbol,
+            "bars": [],
+            "error": "QUANDL_API_KEY not configured. Get a free key at https://data.nasdaq.com",
+        }
+    return await fetcher.get_daily_aggregates(symbol, start_date, end_date, limit)
+
+
+@function_tool
+async def get_futures_4h_bars(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    num_bars: int = 3,
+) -> Dict[str, Any]:
+    """
+    Get 4-hour bars for futures contracts with Globex session awareness.
+    
+    Note: Quandl free tier provides daily data only. This tool fetches daily bars
+    and provides approximated 4H windows based on typical Globex session patterns.
+    
+    For true intraday 4H bars, a paid data source (Databento, CME) is required.
+    
+    Globex session structure (nearly 24-hour trading):
+    - Session 1: 18:00-22:00 ET - Sunday open / evening
+    - Session 2: 22:00-02:00 ET - overnight
+    - Session 3: 02:00-06:00 ET - early morning
+    - Session 4: 06:00-10:00 ET - RTH open (includes 9:30 AM equity open)
+    - Session 5: 10:00-14:00 ET - midday
+    - Session 6: 14:00-17:00 ET - afternoon close (3h)
+    
+    Args:
+        symbol: Futures symbol (e.g., "ES", "NQ")
+        start_date: Start date YYYY-MM-DD
+        end_date: End date YYYY-MM-DD
+        num_bars: Number of 4H periods to return (default 3)
+    
+    Returns:
+        Dict with approximated 4H bars and Globex session guidance
+    """
+    fetcher = _get_futures_fetcher()
+    if fetcher is None:
+        return {
+            "symbol": symbol,
+            "bars": [],
+            "error": "QUANDL_API_KEY not configured. Get a free key at https://data.nasdaq.com",
+        }
+    return await fetcher.get_4h_bars(symbol, start_date, end_date, num_bars)
 
 
 @function_tool
@@ -1115,13 +1757,13 @@ async def create_lab_strategy(
 
 
 @function_tool
-async def create_jesse_strategy(
+async def create_zonexi_strategy(
     name: str,
     code: str,
     description: str = "",
 ) -> str:
     """
-    Register a complex Python strategy (Jesse framework) in the Lab.
+    Register a complex Python strategy (ZoneXI framework) in the Lab.
     
     Args:
         name: Strategy name (e.g., "Golden Cross AAPL")
@@ -1136,15 +1778,15 @@ async def create_jesse_strategy(
     payload = {
         "name": name,
         "description": description,
-        "strategyType": "jesse",
+        "strategyType": "zonexi",
         "ownerId": "ai_agent",
-        "jesseConfig": {
+        "zonexiConfig": {
             "code": code
         }
     }
     
     async with httpx.AsyncClient(timeout=20.0) as client:
-        # We reuse the same endpoint, the server now handles strategyType='jesse'
+        # We reuse the same endpoint, the server now handles strategyType='zonexi'
         response = await client.post(f"{LAB_API_URL}/strategy/create", json=payload)
         response.raise_for_status()
         return json.dumps(response.json())
@@ -1329,12 +1971,15 @@ def create_polygon_mcp_server() -> MCPServerStdio:
     )
 
 
-def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail: bool = True) -> Agent:
-    """Instantiate the financial analysis agent bound to the provided MCP server.
+def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enforce_guardrail: bool = True) -> Agent:
+    """Instantiate the financial analysis agent, optionally bound to an MCP server.
 
     The finance guardrail is enforced on the first turn of a session to keep the
     agent scoped to market analysis, but subsequent turns can skip it for smoother
     follow-up questions once intent is established.
+    
+    If no MCP server is provided (or MCP failed to start), the agent still works
+    using the native Polygon REST API tools.
     """
     return Agent(
         name="Financial Analysis Agent",
@@ -1344,11 +1989,19 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "2. Call Polygon tools precisely; pull the minimal required data.\n"
             "3. Include disclaimers.\n"
             "4. Offer to save reports if not asked by the user to save a report.\n\n"
-            "JESSE STRATEGY ASSISTANT:\n"
-            "If the user asks about Jesse strategies, indicators, or debugging:\n"
-            "1. ALWAYS call `read_jesse_documentation` first to get the context.\n"
+            "FUTURES DATA SUPPORT:\n"
+            "Polygon.io does NOT support futures. For futures (ES, NQ, CL, GC, etc.):\n"
+            "- Use `get_futures_daily_aggregates` for daily OHLCV bars\n"
+            "- Use `get_futures_4h_bars` for 4-hour bars (approximated from daily data)\n"
+            "- Supported symbols: ES (E-mini S&P 500), NQ, YM, RTY, CL, GC, SI, ZB, ZN, 6E\n"
+            "- Specific contracts: ESH26 (March 2026), NQM25 (June 2025), etc.\n"
+            "- Globex sessions run nearly 24h (18:00-17:00 ET next day with 1h break)\n"
+            "- If QUANDL_API_KEY is not set, explain how to get a free key at data.nasdaq.com\n\n"
+            "ZONEXI STRATEGY ASSISTANT:\n"
+            "If the user asks about ZoneXI strategies, indicators, or debugging:\n"
+            "1. ALWAYS call `read_zonexi_documentation` first to get the context.\n"
             "2. Use the examples and syntax from that file to write the code.\n"
-            "3. If the user wants to SAVE or CREATE the strategy, use `create_jesse_strategy` tool.\n"
+            "3. If the user wants to SAVE or CREATE the strategy, use `create_zonexi_strategy` tool.\n"
             "   - Pass the full Python code as the `code` argument.\n"
             "   - This saves it to the Lab for future execution or reference.\n"
             "4. Follow the specific debugging and optimization advice provided in the docs.\n\n"
@@ -1358,6 +2011,13 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "- DESIGN: Use `create_lab_strategy` to save a strategy concept to the Lab.\n"
             "- VALIDATE: Use `backtest_screener_strategy` to check historical performance.\n"
             "- DEPLOY: Use `request_strategy_handoff` to promote validated strategies to the Engine.\n\n"
+            "LAB CODE ASSISTANT (Phase 1):\n"
+            "You can help users develop strategy code:\n"
+            "- `generate_strategy_code`: Create Python strategy code from natural language descriptions.\n"
+            "- `analyze_strategy_code`: Review code for bugs, improvements, and best practices.\n"
+            "- `explain_strategy_code`: Explain strategy code in plain English for beginners.\n"
+            "These tools only produce TEXT (code/analysis). They do NOT execute anything.\n"
+            "All code must be reviewed by humans before deployment.\n\n"
             "RESPONSE FORMAT:\n"
             "You MUST structure your response in two distinct sections:\n"
             "1. **Executive Summary**: High-level, professional, dense with data and metrics (Delta, IV, Yield, Greeks). This is for experienced traders.\n"
@@ -1369,28 +2029,32 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             "If data unavailable or tool fails, explain gracefully — never fabricate.\n"
             "Note: `params_json` and `symbols_json` arguments MUST be valid JSON strings.\n\n"
             "TOOLS:\n"
-            "Polygon.io data, save_analysis_report, read_jesse_documentation,\n"
-            "get_polygon_options_snapshot, create_jesse_strategy,\n"
-            "get_polygon_option_contract_snapshot, get_polygon_option_quotes,\n"
-            "get_polygon_option_contract_snapshot, get_polygon_option_quotes,\n"
-            "get_polygon_option_trades, get_polygon_intraday_aggregates,\n"
+            "Polygon.io data (equities/options), Quandl futures data,\n"
+            "get_futures_daily_aggregates, get_futures_4h_bars (for ES, NQ, etc.),\n"
+            "get_polygon_options_snapshot, get_polygon_option_contract_snapshot,\n"
+            "get_polygon_option_quotes, get_polygon_option_trades,\n"
+            "get_polygon_intraday_aggregates, get_polygon_4h_bars,\n"
             "get_polygon_exchanges, get_polygon_ticker_sentiment,\n"
             "get_polygon_earnings, get_polygon_dividends, get_polygon_financials,\n"
             "get_capitol_trades, get_fred_series, get_fred_release_calendar,\n"
             "create_lab_strategy, backtest_screener_strategy, request_strategy_handoff,\n"
-            "scan_best_0dte_candidates\n"
+            "scan_best_0dte_candidates, save_analysis_report, read_zonexi_documentation, create_zonexi_strategy,\n"
+            "generate_strategy_code, analyze_strategy_code, explain_strategy_code\n"
             "Disclaimer: Not financial advice. For informational purposes only."
         ),
-        mcp_servers=[server],
+        mcp_servers=[server] if server else [],
         tools=[
             save_analysis_report,
-            read_jesse_documentation,
-            create_jesse_strategy,
+            read_zonexi_documentation,
+            create_zonexi_strategy,
             get_polygon_options_snapshot,
             get_polygon_option_contract_snapshot,
             get_polygon_option_quotes,
             get_polygon_option_trades,
             get_polygon_intraday_aggregates,
+            get_polygon_4h_bars,
+            get_futures_daily_aggregates,
+            get_futures_4h_bars,
             get_polygon_exchanges,
             get_polygon_ticker_sentiment,
             get_polygon_dividends,
@@ -1404,6 +2068,10 @@ def create_financial_analysis_agent(server: MCPServerStdio, *, enforce_guardrail
             backtest_screener_strategy,
             request_strategy_handoff,
             scan_best_0dte_candidates,
+            # Lab Code Assistant (Phase 1)
+            generate_strategy_code,
+            analyze_strategy_code,
+            explain_strategy_code,
         ],
         input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)] if enforce_guardrail else [],
         model=OpenAIResponsesModel(model="gpt-5", openai_client=AsyncOpenAI()),
@@ -1418,14 +2086,29 @@ async def run_analysis(
     session_name: str | None = None,
     context: Dict[str, Any] | None = None,
     trace_label: str = DEFAULT_TRACE_LABEL,
+    skip_mcp: bool = False,
 ):
-    """Execute the financial analysis agent for a single query."""
+    """Execute the financial analysis agent for a single query.
+    
+    If server is None and skip_mcp is False, attempts to create an MCP server.
+    If server is None and skip_mcp is True, runs without MCP (native tools only).
+    """
     session_obj = session
     if session_obj is None:
         session_label = session_name or f"analysis_{uuid.uuid4().hex}"
         session_obj = SQLiteSession(session_label)
 
-    server_obj = server or create_polygon_mcp_server()
+    # Determine if we should use MCP
+    server_obj = server
+    owns_server = False
+    if server_obj is None and not skip_mcp:
+        try:
+            server_obj = create_polygon_mcp_server()
+            owns_server = True
+        except Exception:
+            # MCP creation failed - continue without it
+            server_obj = None
+    
     session_key = _session_guardrail_key(session_obj)
     enforce_guardrail = session_key is None or session_key not in _GUARDRAIL_PASSED_SESSIONS
     agent = create_financial_analysis_agent(server_obj, enforce_guardrail=enforce_guardrail)
@@ -1448,8 +2131,16 @@ async def run_analysis(
             _GUARDRAIL_PASSED_SESSIONS.add(session_key)
         return result
 
-    if server is None:
-        async with server_obj:
+    # Only use async context if we own the server and it exists
+    if owns_server and server_obj is not None:
+        try:
+            async with server_obj:
+                return await _tracked_execute()
+        except Exception as mcp_exc:
+            # MCP connection failed at runtime - fall back to native tools
+            print(f"Error initializing MCP server: {mcp_exc}")
+            # Re-create agent without MCP
+            agent = create_financial_analysis_agent(None, enforce_guardrail=enforce_guardrail)
             return await _tracked_execute()
     return await _tracked_execute()
 
@@ -1457,7 +2148,9 @@ async def run_analysis(
 __all__ = [
     "FinanceOutput",
     "PolygonDataFetcher",
+    "FuturesDataFetcher",
     "POLYGON_BASE_URL",
+    "QUANDL_BASE_URL",
     "DEFAULT_TRACE_LABEL",
     "create_financial_analysis_agent",
     "create_polygon_mcp_server",
@@ -1465,8 +2158,8 @@ __all__ = [
     "run_analysis",
     # tool functions
     "save_analysis_report",
-    "read_jesse_documentation",
-    "create_jesse_strategy",
+    "read_zonexi_documentation",
+    "create_zonexi_strategy",
     "get_polygon_options_snapshot",
     "get_polygon_option_contract_snapshot",
     "get_polygon_ticker_sentiment",
@@ -1476,6 +2169,9 @@ __all__ = [
     "get_polygon_option_quotes",
     "get_polygon_option_trades",
     "get_polygon_intraday_aggregates",
+    "get_polygon_4h_bars",
+    "get_futures_daily_aggregates",
+    "get_futures_4h_bars",
     "get_polygon_exchanges",
     "get_polygon_earnings",
     "get_polygon_dividends",
@@ -1486,6 +2182,10 @@ __all__ = [
     "backtest_screener_strategy",
     "request_strategy_handoff",
     "scan_best_0dte_candidates",
+    # Lab Code Assistant (Phase 1)
+    "generate_strategy_code",
+    "analyze_strategy_code",
+    "explain_strategy_code",
     # helper
     "InputGuardrailTripwireTriggered",
 ]

@@ -21,7 +21,20 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
     throw new Error('MONGO_URI is not set. Please provide a MongoDB connection string.');
   }
 
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, {
+    // Work around Node.js 24+ OpenSSL 3.x TLS strictness
+    tls: true,
+    tlsAllowInvalidCertificates: false,
+    // Force TLS 1.2+ (Atlas requirement)
+    minPoolSize: 1,
+    maxPoolSize: 10,
+    // Increase timeout for Atlas connections
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
+    // Retry settings
+    retryWrites: true,
+    retryReads: true,
+  });
   await client.connect();
   database = client.db(dbName);
 
