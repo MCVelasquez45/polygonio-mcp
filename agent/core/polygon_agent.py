@@ -459,52 +459,87 @@ async def analyze_strategy_code(code: str) -> str:
     
     return analysis_prompt
 
-
 @function_tool
 async def explain_strategy_code(code: str) -> str:
     """Explain trading strategy code in plain English for beginners.
-    
-    This tool translates complex strategy logic into an easy-to-understand
-    explanation suitable for someone learning algorithmic trading.
-    
+
+    This tool takes Python strategy code and breaks it down into simple,
+    non-technical language that a beginner trader can understand.
+
     Args:
         code: The strategy code to explain (as a string)
-    
+
     Returns:
-        A beginner-friendly explanation covering:
-        - What the strategy does (in simple terms)
-        - When it enters trades (buy signals)
-        - When it exits trades (sell signals)
-        - How it manages risk
-        - What market conditions it works best in
-    
-    Note: This tool READS code as text. It does not execute anything.
+        A natural language explanation of the strategy's logic and rules.
     """
     explanation_prompt = dedent(f"""
     Explain this trading strategy code in plain English for a beginner:
-    
+
     ```python
     {code}
     ```
-    
-    EXPLANATION GUIDELINES:
-    1. Start with a one-sentence summary of what the strategy does
-    2. Explain the "why" behind each major section
-    3. Use analogies when helpful (e.g., "like a thermostat...")
-    4. Define any jargon (RSI, moving average, etc.)
-    5. Describe the ideal market conditions for this strategy
-    6. Mention the risks in plain terms
-    
-    OUTPUT FORMAT:
-    - **What This Strategy Does**: (1-2 sentences)
-    - **How It Works**: (step-by-step breakdown)
-    - **When It Trades**: (entry conditions in plain English)
-    - **Risk Management**: (how it protects capital)
-    - **Best Used When**: (ideal market conditions)
-    - **Watch Out For**: (common pitfalls)
+
+    INSTRUCTIONS:
+    1. Avoid technical jargon where possible.
+    2. Explain the "Why" behind the rules.
+    3. Use analogies if they help clarify complex concepts.
+    4. Break down the explanation into key sections:
+       - Strategy Goal
+       - When it Buys
+       - When it Sells
+       - Risk Management
     """).strip()
-    
+
     return explanation_prompt
+
+
+@function_tool
+async def extract_strategy_parameters(transcript: str) -> str:
+    """Extract structured trading strategy parameters from a natural language transcript.
+
+    This tool analyzes a user's description of their trading strategy and extracts
+    the core "Decision Engine" parameters, while ignoring "Execution Mechanics".
+
+    Args:
+        transcript: The natural language description or transcript of the strategy.
+
+    Returns:
+        A structured JSON string containing:
+        - name: The strategy name.
+        - description: A brief summary.
+        - hypothesis: The core trading thesis.
+        - parameters: A dynamic dictionary of strategy logic knobs (e.g., opening_range, delta).
+
+    Note: This tool produces structured DATA. It does not execute trades.
+    """
+    extraction_prompt = dedent(f"""
+    Analyze the following trading strategy transcript and extract the key "Decision Engine" components into a structured JSON format.
+
+    TRANSCRIPT:
+    {transcript}
+
+    GUIDELINES:
+    1. **Separate Strategy from Execution**:
+       - DO extract strategy logic (Opening Range time, Delta targets, Stop Loss %, Take Profit %, etc.).
+       - DO NOT extract execution mechanics (Bid/Ask/Mid, specific entry prices, limit vs market, broker UI steps).
+    2. **Dynamic Parameters**: Extract any relevant logic knobs mentioned. Use snake_case for parameter keys.
+    3. **Focus on Thesis**: Ensure the 'hypothesis' field captures the "Why" and "When" of the strategy.
+
+    OUTPUT FORMAT (Strict JSON):
+    {{
+      "name": "string",
+      "description": "string",
+      "hypothesis": "string",
+      "parameters": {{
+        "key1": value1,
+        "key2": value2
+      }}
+    }}
+
+    Return ONLY the JSON object. Do not include any markdown formatting or character prefix/suffix.
+    """).strip()
+
+    return extraction_prompt
 
 
 def _require_env(key: str) -> str:
@@ -2016,7 +2051,8 @@ def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enf
             "- `generate_strategy_code`: Create Python strategy code from natural language descriptions.\n"
             "- `analyze_strategy_code`: Review code for bugs, improvements, and best practices.\n"
             "- `explain_strategy_code`: Explain strategy code in plain English for beginners.\n"
-            "These tools only produce TEXT (code/analysis). They do NOT execute anything.\n"
+            "- `extract_strategy_parameters`: Extract structured JSON parameters from a transcript/description.\n"
+            "These tools only produce TEXT (code/analysis) or DATA (JSON). They do NOT execute anything.\n"
             "All code must be reviewed by humans before deployment.\n\n"
             "RESPONSE FORMAT:\n"
             "You MUST structure your response in two distinct sections:\n"
@@ -2039,7 +2075,7 @@ def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enf
             "get_capitol_trades, get_fred_series, get_fred_release_calendar,\n"
             "create_lab_strategy, backtest_screener_strategy, request_strategy_handoff,\n"
             "scan_best_0dte_candidates, save_analysis_report, read_zonexi_documentation, create_zonexi_strategy,\n"
-            "generate_strategy_code, analyze_strategy_code, explain_strategy_code\n"
+            "generate_strategy_code, analyze_strategy_code, explain_strategy_code, extract_strategy_parameters\n"
             "Disclaimer: Not financial advice. For informational purposes only."
         ),
         mcp_servers=[server] if server else [],
@@ -2072,6 +2108,7 @@ def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enf
             generate_strategy_code,
             analyze_strategy_code,
             explain_strategy_code,
+            extract_strategy_parameters,
         ],
         input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)] if enforce_guardrail else [],
         model=OpenAIResponsesModel(model="gpt-5", openai_client=AsyncOpenAI()),
@@ -2087,6 +2124,7 @@ async def run_analysis(
     context: Dict[str, Any] | None = None,
     trace_label: str = DEFAULT_TRACE_LABEL,
     skip_mcp: bool = False,
+    enforce_guardrail: bool | None = None,
 ):
     """Execute the financial analysis agent for a single query.
     
@@ -2110,8 +2148,14 @@ async def run_analysis(
             server_obj = None
     
     session_key = _session_guardrail_key(session_obj)
-    enforce_guardrail = session_key is None or session_key not in _GUARDRAIL_PASSED_SESSIONS
-    agent = create_financial_analysis_agent(server_obj, enforce_guardrail=enforce_guardrail)
+    
+    # If explicit override provided, use it. Otherwise, check session history.
+    if enforce_guardrail is not None:
+        actual_enforce = enforce_guardrail
+    else:
+        actual_enforce = session_key is None or session_key not in _GUARDRAIL_PASSED_SESSIONS
+
+    agent = create_financial_analysis_agent(server_obj, enforce_guardrail=actual_enforce)
 
     run_config = RunConfig(session_input_callback=_session_history_input_callback) if session_obj else None
 
@@ -2127,7 +2171,7 @@ async def run_analysis(
 
     async def _tracked_execute():
         result = await _execute()
-        if session_key and enforce_guardrail:
+        if session_key and actual_enforce:
             _GUARDRAIL_PASSED_SESSIONS.add(session_key)
         return result
 
@@ -2140,7 +2184,7 @@ async def run_analysis(
             # MCP connection failed at runtime - fall back to native tools
             print(f"Error initializing MCP server: {mcp_exc}")
             # Re-create agent without MCP
-            agent = create_financial_analysis_agent(None, enforce_guardrail=enforce_guardrail)
+            agent = create_financial_analysis_agent(None, enforce_guardrail=actual_enforce)
             return await _tracked_execute()
     return await _tracked_execute()
 

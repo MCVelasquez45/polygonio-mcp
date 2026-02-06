@@ -111,4 +111,26 @@ router.delete('/strategy/:id', async (req, res) => {
   }
 });
 
+// Webhook for AI Agent to notify extraction completion
+router.post('/notify-extraction', (req, res) => {
+  const { socketId, data, status, error } = req.body;
+  const io = req.app.get('io');
+
+  if (!io) {
+    console.warn('[LAB] io instance not found in app, cannot notify client');
+    return res.status(500).json({ error: 'Socket.io not initialized on server' });
+  }
+
+  if (socketId) {
+    console.log(`[LAB] Notifying client ${socketId} about extraction ${status}`);
+    io.to(socketId).emit('strategy-extracted', { data, status, error });
+  } else {
+    // Broadcast if no socketId (rare case for manual transcript paste if we want)
+    console.log('[LAB] Broadcasting extraction completion');
+    io.emit('strategy-extracted', { data, status, error });
+  }
+
+  res.json({ ok: true });
+});
+
 export const labRouter = router;

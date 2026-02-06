@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from './DashboardLayout';
 import { DataHealthPanel } from './DataHealthPanel';
 import { ActiveStrategiesPanel } from './ActiveStrategiesPanel';
@@ -16,19 +16,28 @@ import {
 } from '../lab';
 import { EngineRoomDashboard } from '../engine';
 import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
+import { type Socket } from 'socket.io-client';
+import { toast } from 'sonner';
 
 type Props = {
   apiBase?: string;
   onTickerSelect?: (ticker: string) => void;
+  socket?: Socket | null;
 };
 
-export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }: Props) {
+export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, socket }: Props) {
   const [activePanel, setActivePanel] = useState('lab-strategies');
   const [lastActivePanel, setLastActivePanel] = useState('lab-strategies');
   const [showCreationWizard, setShowCreationWizard] = useState(false);
   const [showBacktestConfig, setShowBacktestConfig] = useState(false);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [backtestResultsId, setBacktestResultsId] = useState<string | null>(null);
+  const [backgroundExtraction, setBackgroundExtraction] = useState<{
+    data?: any;
+    status: 'idle' | 'processing' | 'completed' | 'error';
+    error?: string;
+  }>({ status: 'idle' });
+  const [wizardInitialData, setWizardInitialData] = useState<any>(null);
 
   const handlePanelChange = (panelId: string) => {
     if (panelId !== 'chat') {
@@ -44,7 +53,6 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }:
   const handleWizardComplete = (strategy: any) => {
     console.log('Strategy created:', strategy);
     setShowCreationWizard(false);
-    // TODO: Save to backend
   };
 
   const handleSelectStrategy = (strategy: any) => {
@@ -52,14 +60,66 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }:
     setActivePanel('lab-editor');
   };
 
+  const handleOpenWizardWithData = (data: any) => {
+    setWizardInitialData(data);
+    setShowCreationWizard(true);
+  };
+
+  const handleExtractionStart = () => {
+    setBackgroundExtraction(prev => ({ ...prev, status: 'processing' }));
+    toast.loading('AI is processing your strategy...', {
+      id: 'ai-extraction',
+      description: 'You can continue using the app while I work.',
+      action: {
+        label: 'View',
+        onClick: () => setShowCreationWizard(true)
+      }
+    });
+  };
+
+  // Socket listener for background extraction
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleExtraction = (payload: any) => {
+      console.log('[DASHBOARD] Received background extraction:', payload);
+      setBackgroundExtraction({
+        data: payload.data,
+        status: payload.status,
+        error: payload.error
+      });
+
+      if (payload.status === 'completed') {
+        toast.success('AI Strategy Ready!', {
+          id: 'ai-extraction',
+          description: 'Click to review the extracted parameters.',
+          duration: 10000,
+          action: {
+            label: 'Review',
+            onClick: () => handleOpenWizardWithData(payload.data)
+          }
+        });
+      } else if (payload.status === 'error') {
+        toast.error('AI Extraction Failed', {
+          id: 'ai-extraction',
+          description: payload.error || 'There was an error processing your transcript.'
+        });
+      }
+    };
+
+    socket.on('strategy-extracted', handleExtraction);
+
+    return () => {
+      socket.off('strategy-extracted', handleExtraction);
+    };
+  }, [socket]);
+
   const handleRunBacktest = () => {
     setShowBacktestConfig(true);
   };
 
   const handleStartBacktest = (config: any) => {
-    console.log('Starting backtest with:', config);
     setShowBacktestConfig(false);
-    // Simulate backtest run and show results
     setBacktestResultsId('BT-20250116-001');
     setActivePanel('lab-backtest-results');
   };
@@ -152,14 +212,29 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }:
         </div>
 
         <style>{`
-          .dashboard-content {
+          .dashboard-main {
             display: flex;
             flex-direction: column;
             gap: 1.5rem;
             height: 100%;
           }
 
-          .breadcrumb {
+          .main-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          }
+
+          .main-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #e5e5e5;
+          }
+
+          .header-actions {
             display: flex;
             align-items: center;
             gap: 0.5rem;
@@ -175,16 +250,23 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect }:
           }
 
           .breadcrumb-current {
-            color: #e5e5e5;
-            font-weight: 500;
+            color: #10b981;
+            font-weight: 600;
           }
         `}</style>
       </DashboardLayout>
 
       {showCreationWizard && (
         <StrategyCreationWizard
+          initialData={wizardInitialData}
+          socketId={socket?.id}
+          isProcessing={backgroundExtraction.status === 'processing'}
+          onExtractionStart={handleExtractionStart}
           onComplete={handleWizardComplete}
-          onCancel={() => setShowCreationWizard(false)}
+          onCancel={() => {
+            setShowCreationWizard(false);
+            setWizardInitialData(null);
+          }}
         />
       )}
 
@@ -206,4 +288,3 @@ export { ActiveStrategiesPanel } from './ActiveStrategiesPanel';
 export { HandoffRequestsPanel } from './HandoffRequestsPanel';
 export { ScannerResultsPanel } from './ScannerResultsPanel';
 export { AgentChatPanel } from './AgentChatPanel';
-

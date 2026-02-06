@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Request, status
+import json
+from fastapi import FastAPI, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any
+import httpx
 
 from agents.exceptions import InputGuardrailTripwireTriggered
 
@@ -42,6 +44,18 @@ class AnalysisResponse(BaseModel):
     session_name: str | None = None
 
 
+class ExtractionRequest(BaseModel):
+    transcript: str
+    socket_id: str | None = None
+
+
+class ExtractionResponse(BaseModel):
+    name: str
+    description: str
+    hypothesis: str
+    parameters: dict[str, Any]
+
+
 @app.post("/analyze", response_model=AnalysisResponse, status_code=status.HTTP_200_OK)
 async def analyze(request: AnalysisRequest) -> AnalysisResponse:
     query = request.query.strip()
@@ -61,6 +75,80 @@ async def analyze(request: AnalysisRequest) -> AnalysisResponse:
     output_text = str(final_output)
 
     return AnalysisResponse(query=query, output=output_text, session_name=request.session_name)
+
+
+@app.post("/extract-strategy", response_model=ExtractionResponse, status_code=status.HTTP_200_OK)
+async def extract_strategy(request: ExtractionRequest) -> ExtractionResponse:
+    transcript = request.transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transcript must not be empty.")
+
+    data = await _perform_extraction(transcript)
+    return ExtractionResponse(**data)
+
+
+@app.post("/extract-strategy-async", status_code=status.HTTP_202_ACCEPTED)
+async def extract_strategy_async(request: ExtractionRequest, background_tasks: BackgroundTasks):
+    transcript = request.transcript.strip()
+    socket_id = request.socket_id
+    
+    if not transcript:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transcript must not be empty.")
+
+    background_tasks.add_task(process_extraction_background, transcript, socket_id)
+    return {"message": "Extraction started in background", "status": "accepted"}
+
+
+async def _perform_extraction(transcript: str) -> dict[str, Any]:
+    prompt = f"Call extract_strategy_parameters with this transcript: {transcript}"
+    
+    # We disable guardrails for this technical extraction task to avoid false positives
+    result = await run_analysis(prompt, skip_mcp=True, enforce_guardrail=False)
+    
+    final_output = getattr(result, "final_output", result)
+    output_text = str(final_output).strip()
+    
+    # Extract JSON from potential conversational text
+    import re
+    json_match = re.search(r'(\{.*\})', output_text, re.DOTALL)
+    if json_match:
+        output_text = json_match.group(1)
+
+    try:
+        return json.loads(output_text)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse agent output as JSON: {output_text}") from exc
+
+
+async def process_extraction_background(transcript: str, socket_id: str | None):
+    try:
+        data = await _perform_extraction(transcript)
+        
+        # Notify Node.js server
+        server_url = "http://localhost:4000/api/lab/notify-extraction"
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "socketId": socket_id,
+                "data": data,
+                "status": "completed"
+            }
+            await client.post(server_url, json=payload)
+            print(f"[AGENT] Extraction complete for {socket_id}, notified server.")
+            
+    except Exception as e:
+        print(f"[AGENT] Background extraction failed: {e}")
+        # Notify error
+        if socket_id:
+            try:
+                server_url = "http://localhost:4000/api/lab/notify-extraction"
+                async with httpx.AsyncClient() as client:
+                    await client.post(server_url, json={
+                        "socketId": socket_id,
+                        "status": "error",
+                        "error": str(e)
+                    })
+            except:
+                pass
 
 
 @app.post("/v1/chat/completions")

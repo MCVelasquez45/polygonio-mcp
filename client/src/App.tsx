@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { Toaster } from 'sonner';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
@@ -536,6 +537,7 @@ function App() {
   const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSnapshotSymbolRef = useRef<string | null>(null);
   const [tradeMarkers, setTradeMarkers] = useState<SeriesMarker<UTCTimestamp>[]>([]);
+
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -2924,6 +2926,7 @@ function App() {
             )}
             {view === 'dashboard' && (
               <Dashboard
+                socket={socketRef.current}
                 onTickerSelect={(ticker) => {
                   setTicker(ticker);
                   setView('trading');
@@ -2952,7 +2955,8 @@ function App() {
         selectedTicker={displayTicker}
         context={aiContext}
       />
-    </div >
+      <Toaster richColors position="bottom-right" theme="dark" />
+    </div>
   );
 }
 

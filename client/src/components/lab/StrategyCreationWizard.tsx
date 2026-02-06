@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'custom';
 
-type WizardStep = 'type' | 'details' | 'parameters' | 'review';
+type WizardStep = 'method' | 'transcript' | 'type' | 'details' | 'parameters' | 'review';
+
+type CreationMethod = 'ai' | 'manual' | null;
 
 type StrategyTemplate = {
   id: StrategyType;
@@ -85,18 +87,28 @@ const STRATEGY_TEMPLATES: StrategyTemplate[] = [
 type Props = {
   onComplete?: (strategy: any) => void;
   onCancel?: () => void;
+  initialData?: any;
+  socketId?: string | null;
+  isProcessing?: boolean;
+  onExtractionStart?: () => void;
 };
 
-export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
-  const [step, setStep] = useState<WizardStep>('type');
-  const [selectedType, setSelectedType] = useState<StrategyType | null>(null);
+export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, onExtractionStart }: Props) {
+  const [step, setStep] = useState<WizardStep>(initialData ? 'details' : 'method');
+  const [creationMethod, setCreationMethod] = useState<CreationMethod>(initialData ? 'ai' : null);
+  const [selectedType, setSelectedType] = useState<StrategyType | null>(initialData ? 'custom' : null);
   const [strategyDetails, setStrategyDetails] = useState({
-    name: '',
-    description: '',
-    hypothesis: '',
+    name: initialData?.name || '',
+    description: initialData?.description || '',
+    hypothesis: initialData?.hypothesis || '',
   });
-  const [parameters, setParameters] = useState<Record<string, any>>({});
-  const [agentSuggestion, setAgentSuggestion] = useState<string | null>(null);
+  const [parameters, setParameters] = useState<Record<string, any>>(initialData?.parameters || {});
+  const [agentSuggestion, setAgentSuggestion] = useState<string | null>(initialData ? "✨ AI Extraction complete! Review the details below." : null);
+  const [transcript, setTranscript] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractionStarted, setExtractionStarted] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   const selectedTemplate = STRATEGY_TEMPLATES.find(t => t.id === selectedType);
 
@@ -124,8 +136,112 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
     return suggestions[type];
   };
 
+  useEffect(() => {
+    // Initialize speech recognition
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
+
+      recognitionRef.current.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        if (finalTranscript) {
+          setTranscript(prev => {
+            const lastChar = prev.trim().slice(-1);
+            const needsSpace = lastChar && !['.', '!', '?'].includes(lastChar);
+            return prev + (needsSpace ? ' ' : '') + finalTranscript;
+          });
+        }
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsRecording(false);
+      };
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      setAgentSuggestion("❌ Speech recognition is not supported in your browser.");
+      return;
+    }
+
+    if (isRecording) {
+      recognitionRef.current.stop();
+      setIsRecording(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsRecording(true);
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+      }
+    }
+  };
+
+  const handleExtractFromTranscript = async () => {
+    if (!transcript.trim()) return;
+
+    setIsExtracting(true);
+    onExtractionStart?.();
+
+    try {
+      // Use the async endpoint
+      const response = await fetch('http://localhost:5001/extract-strategy-async', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript,
+          socket_id: socketId
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to start extraction');
+
+      setExtractionStarted(true);
+      setAgentSuggestion("⚡ I've started the extraction in the background. You can close this wizard and I'll notify you when it's ready!");
+
+      setIsExtracting(false);
+    } catch (error) {
+      console.error('Error starting extraction:', error);
+      setAgentSuggestion("❌ Sorry, I had trouble starting the extraction. Please try again.");
+      setIsExtracting(false);
+    }
+  };
+
   const handleNext = () => {
-    const steps: WizardStep[] = ['type', 'details', 'parameters', 'review'];
+    if (step === 'method') {
+      if (creationMethod === 'ai') setStep('transcript');
+      else setStep('type');
+      return;
+    }
+
+    const steps_ai: WizardStep[] = ['method', 'transcript', 'details', 'parameters', 'review'];
+    const steps_manual: WizardStep[] = ['method', 'type', 'details', 'parameters', 'review'];
+    const steps = creationMethod === 'ai' ? steps_ai : steps_manual;
+
     const currentIndex = steps.indexOf(step);
     if (currentIndex < steps.length - 1) {
       setStep(steps[currentIndex + 1]);
@@ -133,7 +249,10 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
   };
 
   const handleBack = () => {
-    const steps: WizardStep[] = ['type', 'details', 'parameters', 'review'];
+    const steps_ai: WizardStep[] = ['method', 'transcript', 'details', 'parameters', 'review'];
+    const steps_manual: WizardStep[] = ['method', 'type', 'details', 'parameters', 'review'];
+    const steps = creationMethod === 'ai' ? steps_ai : steps_manual;
+
     const currentIndex = steps.indexOf(step);
     if (currentIndex > 0) {
       setStep(steps[currentIndex - 1]);
@@ -153,12 +272,21 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
   };
 
   const renderStepIndicator = () => {
-    const steps = [
-      { id: 'type', label: 'Type' },
+    const steps_ai = [
+      { id: 'method', label: 'Start' },
+      { id: 'transcript', label: 'AI Input' },
       { id: 'details', label: 'Details' },
-      { id: 'parameters', label: 'Parameters' },
+      { id: 'parameters', label: 'Params' },
       { id: 'review', label: 'Review' },
     ];
+    const steps_manual = [
+      { id: 'method', label: 'Start' },
+      { id: 'type', label: 'Type' },
+      { id: 'details', label: 'Details' },
+      { id: 'parameters', label: 'Params' },
+      { id: 'review', label: 'Review' },
+    ];
+    const steps = creationMethod === 'ai' ? steps_ai : steps_manual;
 
     return (
       <div className="step-indicator">
@@ -171,6 +299,131 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
       </div>
     );
   };
+
+  const renderMethodStep = () => (
+    <div className="wizard-content method-selection">
+      <h3>Set Your Starting Point</h3>
+      <p className="subtitle">How would you like to build your strategy today?</p>
+
+      <div className="method-grid">
+        <div
+          className={`method-card ${creationMethod === 'ai' ? 'selected' : ''}`}
+          onClick={() => setCreationMethod('ai')}
+        >
+          <div className="method-icon-wrapper ai">
+            <span className="method-icon">🤖</span>
+          </div>
+          <div className="method-info">
+            <h4>AI Strategy Assistant</h4>
+            <p>Describe your idea in plain English and let AI extract the core parameters for you.</p>
+            <span className="method-badge">Recommended</span>
+          </div>
+        </div>
+
+        <div
+          className={`method-card ${creationMethod === 'manual' ? 'selected' : ''}`}
+          onClick={() => setCreationMethod('manual')}
+        >
+          <div className="method-icon-wrapper manual">
+            <span className="method-icon">🔧</span>
+          </div>
+          <div className="method-info">
+            <h4>Start with Template</h4>
+            <p>Choose from a list of proven strategy frameworks and configure them manually.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderTranscriptStep = () => (
+    <div className="wizard-content transcript-step">
+      <div className="details-header-row">
+        <h3>AI Strategy Extraction</h3>
+        <div className="agent-badge">
+          <span className="agent-icon">🤖</span>
+          <span>Powered by Financial Agent</span>
+        </div>
+      </div>
+      <p className="subtitle">Explain your hypothesis, entry rules, and risk management.</p>
+
+      <div className="agent-transcript-section ai-redesign">
+        <div className="transcript-header-row">
+          <label>Your Strategy Hypothesis & Rules</label>
+          <div className="recording-status">
+            {isRecording && <span className="pulse-dot"></span>}
+            <span>{isRecording ? 'Listening...' : 'Ready to record'}</span>
+          </div>
+        </div>
+
+        <div className="transcript-input-wrapper">
+          <div className="ai-textarea-wrapper">
+            <textarea
+              value={transcript}
+              onChange={(e) => setTranscript(e.target.value)}
+              placeholder="e.g., 'I want a 5-minute opening range breakout strategy for SPY...'"
+              className="ai-transcript-area"
+              disabled={isRecording}
+            />
+
+            <div className="ai-controls-overlay">
+              {!isRecording && !transcript && (
+                <div className="voice-prompt">
+                  <span className="mic-icon-large">🎤</span>
+                  <p>Click the button below to dictate your strategy</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="voice-action-row">
+            <button
+              className={`mic-primary-btn ${isRecording ? 'active' : ''}`}
+              onClick={toggleRecording}
+            >
+              <span className="mic-icon-main">{isRecording ? '⏹' : '🎤'}</span>
+              {isRecording && <span className="mic-ring-animate"></span>}
+            </button>
+            <span className="action-hint">
+              {isRecording ? 'Click to stop and edit' : 'Click to start recording'}
+            </span>
+          </div>
+
+          {(isExtracting || isProcessing) ? (
+            <div className="ai-processing-view">
+              <div className="ai-loader-container">
+                <div className="brain-pulse">🧠</div>
+                <div className="scanning-line"></div>
+                <div className="loading-text">Agent is analyzing your strategy...</div>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="btn-agent-action fluid-action"
+              onClick={handleExtractFromTranscript}
+              disabled={isRecording || !transcript.trim()}
+            >
+              🚀 Build Strategy from Description
+            </button>
+          )}
+        </div>
+      </div>
+
+
+      {extractionStarted && (
+        <div className="extraction-status-toast">
+          <span className="spinner">⚡</span>
+          <span>Background processing active... You can safely close this.</span>
+        </div>
+      )}
+
+      {agentSuggestion && (
+        <div className="agent-feedback-inline">
+          <p>{agentSuggestion}</p>
+        </div>
+      )}
+    </div>
+  );
 
   const renderTypeStep = () => (
     <div className="wizard-content type-selection">
@@ -205,8 +458,48 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
 
   const renderDetailsStep = () => (
     <div className="wizard-content details-form">
-      <h3>Strategy Details</h3>
-      <p className="subtitle">Define your strategy name and hypothesis</p>
+      <div className="details-header-row">
+        <h3>Strategy Details</h3>
+        <div className="agent-badge">
+          <span className="agent-icon">🤖</span>
+          <span>Agent Assisted</span>
+        </div>
+      </div>
+      <p className="subtitle">Define your strategy or let the agent help you via transcript</p>
+
+      {creationMethod === 'ai' ? (
+        <div className="compact-transcript">
+          <div className="compact-transcript-header">
+            <span>Reference Transcript</span>
+            <button className="btn-text-only" onClick={() => setStep('transcript')}>Edit</button>
+          </div>
+          <div className="compact-transcript-content">
+            {transcript}
+          </div>
+        </div>
+      ) : (
+        <div className="agent-transcript-section">
+          <label>Voice Assistant / Transcript</label>
+          <div className="transcript-input-wrapper">
+            <textarea
+              value={transcript}
+              onChange={(e) => setTranscript(e.target.value)}
+              placeholder="Describe your strategy in plain English... e.g., 'I want a 5-minute opening range breakout strategy for SPY using 0DTE options...'"
+              rows={3}
+            />
+            <button
+              className={`btn-agent-action ${isExtracting ? 'loading' : ''}`}
+              onClick={handleExtractFromTranscript}
+              disabled={isExtracting || !transcript.trim()}
+            >
+              {isExtracting ? '⚡ Processing...' : '✨ Extract Parameters'}
+            </button>
+          </div>
+          <p className="form-hint">Paste a transcript or describe your idea to auto-populate the fields below.</p>
+        </div>
+      )}
+
+      <div className="form-divider"><span>OR FILL MANUALLY</span></div>
 
       <div className="form-group">
         <label>Strategy Name</label>
@@ -224,7 +517,7 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
           value={strategyDetails.description}
           onChange={(e) => setStrategyDetails({ ...strategyDetails, description: e.target.value })}
           placeholder="Brief description of what the strategy does..."
-          rows={3}
+          rows={2}
         />
       </div>
 
@@ -234,7 +527,7 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
           value={strategyDetails.hypothesis}
           onChange={(e) => setStrategyDetails({ ...strategyDetails, hypothesis: e.target.value })}
           placeholder="e.g., When VIX term structure shows contango > 5%, shorting VXX generates positive returns..."
-          rows={4}
+          rows={3}
         />
         <span className="form-hint">💡 A clear hypothesis helps validate your strategy during backtesting</span>
       </div>
@@ -330,6 +623,8 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
         {renderStepIndicator()}
 
         <div className="wizard-body">
+          {step === 'method' && renderMethodStep()}
+          {step === 'transcript' && renderTranscriptStep()}
           {step === 'type' && renderTypeStep()}
           {step === 'details' && renderDetailsStep()}
           {step === 'parameters' && renderParametersStep()}
@@ -339,20 +634,20 @@ export function StrategyCreationWizard({ onComplete, onCancel }: Props) {
         <div className="wizard-footer">
           <button
             className="btn-secondary"
-            onClick={step === 'type' ? onCancel : handleBack}
+            onClick={step === 'method' ? onCancel : handleBack}
           >
-            {step === 'type' ? 'Cancel' : '← Back'}
+            {step === 'method' ? 'Cancel' : '← Back'}
           </button>
 
-          {step !== 'review' ? (
+          {step !== 'review' && step !== 'transcript' ? (
             <button
               className="btn-primary"
               onClick={handleNext}
-              disabled={step === 'type' && !selectedType}
+              disabled={(step === 'method' && !creationMethod) || (step === 'type' && !selectedType)}
             >
               Next →
             </button>
-          ) : (
+          ) : step === 'transcript' ? null : (
             <button className="btn-primary create" onClick={handleComplete}>
               🚀 Create Strategy
             </button>
@@ -742,6 +1037,564 @@ const styles = `
   .btn-primary.create {
     background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
     box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+  }
+
+  .details-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .agent-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 0.25rem 0.75rem;
+    border-radius: 2rem;
+    color: #10b981;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .agent-transcript-section {
+    background: rgba(16, 185, 129, 0.05);
+    border: 1px solid rgba(16, 185, 129, 0.1);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .agent-transcript-section label {
+    display: block;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+    color: #10b981;
+    font-size: 0.9rem;
+  }
+
+  .transcript-input-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .transcript-input-wrapper textarea {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(16, 185, 129, 0.2);
+  }
+
+  .btn-agent-action {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    color: white;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-agent-action:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  }
+
+  .btn-agent-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-agent-action.loading {
+    animation: pulse 1.5s infinite;
+  }
+
+  @keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+  }
+
+  .form-divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    color: #4b5563;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin: 1.5rem 0;
+  }
+
+  .form-divider::before,
+  .form-divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .form-divider:not(:empty)::before {
+    margin-right: 1rem;
+  }
+
+  .form-divider:not(:empty)::after {
+    margin-left: 1rem;
+  }
+
+  /* Redesign Styles */
+  .method-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .method-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+    padding: 2rem 1.5rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .method-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-4px);
+  }
+
+  .method-card.selected {
+    background: rgba(16, 185, 129, 0.05);
+    border-color: #10b981;
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  }
+
+  .method-icon-wrapper {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .method-icon-wrapper.ai {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+  }
+
+  .method-icon-wrapper.manual {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+  }
+
+  .method-info h4 {
+    font-size: 1.25rem;
+    margin-bottom: 0.75rem;
+    color: white;
+  }
+
+  .method-info p {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    line-height: 1.5;
+  }
+
+  .method-badge {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: #10b981;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 0.2rem 0.6rem;
+    border-radius: 2rem;
+    text-transform: uppercase;
+  }
+
+  /* AI Input Redesign Styles */
+  .agent-transcript-section.ai-redesign {
+    background: rgba(16, 185, 129, 0.03);
+    border: 1px solid rgba(16, 185, 129, 0.1);
+    border-radius: 1.5rem;
+    padding: 2rem;
+    margin: 1rem 0;
+  }
+
+  .transcript-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .transcript-header-row label {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #10b981;
+  }
+
+  .recording-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: #9ca3af;
+    font-weight: 600;
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #ef4444;
+    border-radius: 50%;
+    animation: pulse-dot 1s infinite;
+  }
+
+  @keyframes pulse-dot {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.5); opacity: 0.5; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .ai-textarea-wrapper {
+    position: relative;
+    border-radius: 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(16, 185, 129, 0.15);
+    margin-bottom: 2rem;
+    transition: all 0.3s ease;
+  }
+
+  .ai-textarea-wrapper:focus-within {
+    border-color: #10b981;
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.1);
+  }
+
+  .ai-transcript-area {
+    width: 100%;
+    padding: 1.5rem;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: white;
+    font-family: 'Inter', sans-serif;
+    font-size: 1.1rem;
+    line-height: 1.7;
+    min-height: 250px;
+    resize: none;
+  }
+
+  .ai-transcript-area:disabled {
+    opacity: 0.8;
+    cursor: default;
+  }
+
+  .ai-controls-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    text-align: center;
+    width: 100%;
+  }
+
+  .voice-prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    color: #4b5563;
+  }
+
+  .mic-icon-large {
+    font-size: 3rem;
+    opacity: 0.2;
+  }
+
+  .voice-action-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .mic-primary-btn {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: #10b981;
+    border: none;
+    color: white;
+    font-size: 2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.3);
+  }
+
+  .mic-primary-btn:hover {
+    transform: scale(1.05);
+    background: #059669;
+  }
+
+  .mic-primary-btn.active {
+    background: #ef4444;
+    box-shadow: 0 8px 25px rgba(239, 68, 68, 0.4);
+    animation: mic-vibrate 0.1s infinite;
+  }
+
+  @keyframes mic-vibrate {
+    0% { transform: translate(0); }
+    25% { transform: translate(1px, 1px); }
+    50% { transform: translate(-1px, 0); }
+    75% { transform: translate(0, -1px); }
+    100% { transform: translate(0); }
+  }
+
+  .mic-ring-animate {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: rgba(239, 68, 68, 0.4);
+    border-radius: 50%;
+    animation: ring-pulse 2s infinite;
+    z-index: -1;
+  }
+
+  @keyframes ring-pulse {
+    0% { transform: scale(1); opacity: 0.7; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+
+  .action-hint {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    font-weight: 600;
+  }
+
+  .fluid-action {
+    width: 100%;
+    padding: 1.25rem !important;
+    font-size: 1.1rem !important;
+    border-radius: 1rem !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+  }
+
+  /* Custom Scrollbar for Wizard */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 5px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Compact Transcript styles */
+  .compact-transcript {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 2rem;
+    position: relative;
+  }
+
+  .compact-transcript-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+    color: #10b981;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .compact-transcript-content {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    line-height: 1.5;
+    max-height: 100px;
+    overflow-y: auto;
+    font-style: italic;
+  }
+
+  .btn-text-only {
+    background: none;
+    border: none;
+    color: #10b981;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+    text-transform: uppercase;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  }
+
+  .btn-text-only:hover {
+    opacity: 1;
+    text-decoration: underline;
+  }
+
+  .loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(10, 10, 15, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 1rem;
+    animation: fade-in 0.3s ease;
+  }
+
+  .ai-loader-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .brain-pulse {
+    font-size: 5rem;
+    animation: brain-glow 2s infinite ease-in-out;
+    filter: drop-shadow(0 0 15px rgba(16, 185, 129, 0.5));
+  }
+
+  @keyframes brain-glow {
+    0% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.1); opacity: 1; filter: drop-shadow(0 0 25px rgba(16, 185, 129, 0.8)); }
+    100% { transform: scale(1); opacity: 0.8; }
+  }
+
+  .scanning-line {
+    width: 200px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #10b981, transparent);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .scanning-line::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 200%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.8), transparent);
+    animation: scan-move 1.5s infinite linear;
+  }
+
+  @keyframes scan-move {
+    from { left: -100%; }
+    to { left: 100%; }
+  }
+
+  .loading-text {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: white;
+    margin-top: 1rem;
+    letter-spacing: 0.05em;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .extraction-status-toast {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid #10b981;
+    color: #10b981;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    font-weight: 600;
+    animation: pulse 2s infinite;
+  }
+
+  .ai-processing-view {
+    background: rgba(16, 185, 129, 0.05);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 0.75rem;
+    padding: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1rem;
+    min-height: 150px;
+  }
+
+  .ai-loader-container {
+    text-align: center;
+    width: 100%;
+  }
+
+  .brain-pulse {
+    font-size: 3rem;
+    animation: brain-pulse 2s infinite ease-in-out;
+  }
+
+  @keyframes brain-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.1); opacity: 1; }
+  }
+
+  .scanning-line {
+    height: 4px;
+    width: 100%;
+    margin: 1.5rem 0;
+    background: linear-gradient(90deg, transparent, #10b981, transparent);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .spinner {
+    display: inline-block;
+    animation: spin 2s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 `;
 
