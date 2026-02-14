@@ -21,6 +21,9 @@ export function PromotionGatePanel() {
     { id: '3', label: 'Max drawdown < 5%', status: 'passed', value: '3.2%' },
     { id: '4', label: 'Fill rate > 95%', status: 'passed', value: '97%' },
     { id: '5', label: 'Latency < 100ms', status: 'passed', value: '45ms' },
+    { id: '6', label: 'Margin utilization < 80%', status: 'passed', value: '48%' },
+    { id: '7', label: 'Successful contract rolls (0 failed)', status: 'passed', value: '3/3' },
+    { id: '8', label: 'No overnight position limit breaches', status: 'passed', value: '0 breaches' },
   ]);
 
   const [approvers, setApprovers] = useState<Approver[]>([

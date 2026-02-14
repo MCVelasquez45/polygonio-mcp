@@ -7,7 +7,7 @@ const router = express.Router();
 // Create a new Lab strategy
 router.post('/strategy/create', async (req, res) => {
   try {
-    const { name, description, strategyType, ownerId, modelConfig, screenerConfig, zonexiConfig } = req.body;
+    const { name, description, strategyType, ownerId, modelConfig, screenerConfig, zonexiConfig, futuresConfig } = req.body;
 
     // Validate required fields
     if (!name || !strategyType) {
@@ -26,6 +26,10 @@ router.post('/strategy/create', async (req, res) => {
       return res.status(400).json({ error: 'zonexiConfig required for zonexi strategies' });
     }
 
+    if (strategyType === 'futures' && !futuresConfig) {
+      return res.status(400).json({ error: 'futuresConfig required for futures strategies' });
+    }
+
     const strategy = new LabStrategyModel({
       name,
       description: description || '',
@@ -34,7 +38,8 @@ router.post('/strategy/create', async (req, res) => {
       status: 'development',
       modelConfig: strategyType === 'quant' ? modelConfig : undefined,
       screenerConfig: strategyType === 'screener' ? screenerConfig : undefined,
-      zonexiConfig: strategyType === 'zonexi' ? zonexiConfig : undefined
+      zonexiConfig: strategyType === 'zonexi' ? zonexiConfig : undefined,
+      futuresConfig: strategyType === 'futures' ? futuresConfig : undefined
     });
 
     await strategy.save();

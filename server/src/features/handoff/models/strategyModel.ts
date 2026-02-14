@@ -36,6 +36,18 @@ export interface ZonexiConfig {
   code: string;
 }
 
+export interface FuturesConfig {
+  contract: string;
+  exchange: string;
+  tickSize: number;
+  tickValue: number;
+  contractSize: number;
+  marginRequired: number;
+  tradingHours: string;
+  rollStrategy: 'volume' | 'calendar' | 'open_interest';
+  rollDaysBefore: number;
+}
+
 export interface StrategyBase extends Document {
   name: string;
   description: string;
@@ -48,7 +60,7 @@ export interface StrategyBase extends Document {
 // --- Lab Strategy (Development) ---
 
 export interface LabStrategy extends StrategyBase {
-  strategyType: 'quant' | 'screener' | 'zonexi';
+  strategyType: 'quant' | 'screener' | 'zonexi' | 'futures';
   status: 'development' | 'validated' | 'failed';
 
   // For quant strategies
@@ -59,6 +71,9 @@ export interface LabStrategy extends StrategyBase {
 
   // For zonexi strategies
   zonexiConfig?: ZonexiConfig;
+
+  // For futures strategies
+  futuresConfig?: FuturesConfig;
 
   backtestResults?: {
     period: { start: Date; end: Date };
@@ -77,7 +92,7 @@ const LabStrategySchema = new Schema({
   description: { type: String },
   version: { type: String, default: '1.0.0' },
   ownerId: { type: String, required: true },
-  strategyType: { type: String, enum: ['quant', 'screener', 'zonexi'], required: true },
+  strategyType: { type: String, enum: ['quant', 'screener', 'zonexi', 'futures'], required: true },
   status: { type: String, enum: ['development', 'validated', 'failed'], default: 'development' },
 
   // Quant Model Config (optional, required if strategyType = 'quant')
@@ -102,6 +117,19 @@ const LabStrategySchema = new Schema({
     code: { type: String }
   },
 
+  // Futures Config (optional, required if strategyType = 'futures')
+  futuresConfig: {
+    contract: { type: String },
+    exchange: { type: String },
+    tickSize: { type: Number },
+    tickValue: { type: Number },
+    contractSize: { type: Number },
+    marginRequired: { type: Number },
+    tradingHours: { type: String },
+    rollStrategy: { type: String, enum: ['volume', 'calendar', 'open_interest'] },
+    rollDaysBefore: { type: Number }
+  },
+
   backtestResults: {
     period: { start: Date, end: Date },
     metrics: {
@@ -118,7 +146,7 @@ const LabStrategySchema = new Schema({
 
 export interface EngineStrategy extends StrategyBase {
   labStrategyId: string; // Link back to Lab
-  strategyType: 'quant' | 'screener' | 'zonexi';
+  strategyType: 'quant' | 'screener' | 'zonexi' | 'futures';
   status: 'active' | 'paused' | 'stopped';
   runtimeConfig: {
     maxCapital: number;
@@ -141,7 +169,7 @@ const EngineStrategySchema = new Schema({
   version: { type: String },
   ownerId: { type: String, required: true },
   labStrategyId: { type: Schema.Types.ObjectId, ref: 'LabStrategy', required: true },
-  strategyType: { type: String, enum: ['quant', 'screener', 'zonexi'], required: true },
+  strategyType: { type: String, enum: ['quant', 'screener', 'zonexi', 'futures'], required: true },
   status: { type: String, enum: ['active', 'paused', 'stopped'], default: 'active' },
   runtimeConfig: {
     maxCapital: Number,

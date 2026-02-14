@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 
-type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'custom';
+type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'futures' | 'custom';
 
 type WizardStep = 'method' | 'transcript' | 'type' | 'details' | 'parameters' | 'review';
 
@@ -76,6 +76,21 @@ const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     },
   },
   {
+    id: 'futures',
+    name: 'Futures',
+    description: 'Futures contract trading strategies with roll management and margin tracking',
+    icon: '📜',
+    suggestedParameters: {
+      contract: 'ES',
+      lookback_period: 14,
+      entry_threshold: 0.5,
+      position_size_contracts: 2,
+      stop_loss_ticks: 8,
+      take_profit_ticks: 16,
+      roll_days_before_expiry: 5,
+    },
+  },
+  {
     id: 'custom',
     name: 'Custom',
     description: 'Start from scratch with a blank strategy template',
@@ -131,6 +146,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       volatility: 'VIX term structure shows contango of 6.2%. Short volatility strategies historically perform well in this regime.',
       '0dte': 'Current 0-DTE implied volatility is elevated. Consider targeting 30-delta options for better risk/reward.',
       spreads: 'With earnings season approaching, consider widening your spreads or reducing position sizes.',
+      futures: 'ES and NQ futures are showing strong trends. Consider using volume-based roll strategy and ensure margin requirements are factored into position sizing.',
       custom: 'I can help you build your custom strategy. What market conditions are you targeting?',
     };
     return suggestions[type];

@@ -8,15 +8,21 @@ type BacktestConfig = {
   commissionModel: 'fixed' | 'per_share' | 'zero';
   includeAfterHours: boolean;
   benchmark: string;
+  contractType?: string;
+  rollStrategy?: 'volume' | 'calendar' | 'open_interest';
+  marginPerContract?: number;
 };
 
 type Props = {
   strategyName: string;
+  strategyType?: string;
   onRun: (config: BacktestConfig) => void;
   onCancel: () => void;
 };
 
-export function BacktestConfigModal({ strategyName, onRun, onCancel }: Props) {
+export function BacktestConfigModal({ strategyName, strategyType, onRun, onCancel }: Props) {
+  const isFutures = strategyType === 'futures' || strategyType === 'Futures';
+
   const [config, setConfig] = useState<BacktestConfig>({
     startDate: '2025-01-01',
     endDate: '2025-12-31',
@@ -24,7 +30,12 @@ export function BacktestConfigModal({ strategyName, onRun, onCancel }: Props) {
     slippageModel: 'variable',
     commissionModel: 'per_share',
     includeAfterHours: false,
-    benchmark: 'SPY',
+    benchmark: isFutures ? 'ES' : 'SPY',
+    ...(isFutures ? {
+      contractType: 'ES',
+      rollStrategy: 'volume' as const,
+      marginPerContract: 15000,
+    } : {}),
   });
 
   const handleSubmit = () => {
@@ -108,10 +119,53 @@ export function BacktestConfigModal({ strategyName, onRun, onCancel }: Props) {
                   checked={config.includeAfterHours}
                   onChange={(e) => setConfig({ ...config, includeAfterHours: e.target.checked })}
                 />
-                Include After-Hours Data
+                {isFutures ? 'Include Globex Session Data' : 'Include After-Hours Data'}
               </label>
             </div>
           </div>
+
+          {isFutures && (
+            <div className="futures-config-section">
+              <h4 className="futures-section-title">Futures Configuration</h4>
+              <div className="config-grid">
+                <div className="form-group">
+                  <label>Contract</label>
+                  <select
+                    value={config.contractType ?? 'ES'}
+                    onChange={(e) => setConfig({ ...config, contractType: e.target.value })}
+                  >
+                    <option value="ES">E-mini S&P 500 (ES)</option>
+                    <option value="NQ">E-mini Nasdaq 100 (NQ)</option>
+                    <option value="CL">Crude Oil (CL)</option>
+                    <option value="GC">Gold (GC)</option>
+                    <option value="ZB">30-Year T-Bond (ZB)</option>
+                    <option value="RTY">E-mini Russell 2000 (RTY)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Roll Strategy</label>
+                  <select
+                    value={config.rollStrategy ?? 'volume'}
+                    onChange={(e) => setConfig({ ...config, rollStrategy: e.target.value as 'volume' | 'calendar' | 'open_interest' })}
+                  >
+                    <option value="volume">Volume-based</option>
+                    <option value="calendar">Calendar (fixed date)</option>
+                    <option value="open_interest">Open Interest</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Margin per Contract ($)</label>
+                  <input
+                    type="number"
+                    value={config.marginPerContract ?? 15000}
+                    onChange={(e) => setConfig({ ...config, marginPerContract: parseFloat(e.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="agent-insight">
             <div className="insight-header">
@@ -119,7 +173,9 @@ export function BacktestConfigModal({ strategyName, onRun, onCancel }: Props) {
               <span>Agent Advice</span>
             </div>
             <p>
-              For volatility strategies, I recommend using the 'Variable' slippage model to account for liquidity during high-vol events. Also, ensure your date range covers at least one major correction (e.g., Aug 2024 or Mar 2020) to validate drawdown resilience.
+              {isFutures
+                ? 'For futures strategies, ensure your backtest covers contract roll periods to validate roll logic. Use volume-based rolls for liquid contracts like ES/NQ, and account for margin requirements in position sizing. Include Globex session data to capture overnight moves.'
+                : 'For volatility strategies, I recommend using the \'Variable\' slippage model to account for liquidity during high-vol events. Also, ensure your date range covers at least one major correction (e.g., Aug 2024 or Mar 2020) to validate drawdown resilience.'}
             </p>
           </div>
         </div>
@@ -228,6 +284,20 @@ const styles = `
   
   .checkbox-group input {
     width: auto;
+  }
+
+  .futures-config-section {
+    margin-bottom: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #333;
+  }
+
+  .futures-section-title {
+    margin: 0 0 1rem;
+    font-size: 0.9rem;
+    color: #f59e0b;
+    font-weight: 600;
+    letter-spacing: 0.03em;
   }
 
   .agent-insight {

@@ -8,6 +8,8 @@ type Position = {
   currentPrice: number;
   pnl: number;
   timeOpen: string;
+  contractMonth?: string;
+  marginUsed?: number;
 };
 
 type Metric = {
@@ -31,12 +33,15 @@ export function PaperTradingDashboard() {
     { label: 'TODAY P&L', value: '+$1,842', subValue: '+1.84%', trend: 'positive' },
     { label: 'WEEK P&L', value: '+$4,523', subValue: '+4.52%', trend: 'positive' },
     { label: 'TOTAL P&L', value: '+$12,450', subValue: '+12.45%', trend: 'positive' },
+    { label: 'MARGIN USED', value: '$48,000', subValue: '48% utilization', trend: 'neutral' },
     { label: 'READINESS', value: '82/100', subValue: 'PROMOTION READY', trend: 'positive' },
   ]);
 
   const [positions, setPositions] = useState<Position[]>([
     { symbol: 'VXX', side: 'SHORT', qty: 150, entryPrice: 25.42, currentPrice: 25.18, pnl: 36, timeOpen: '2h 15m' },
     { symbol: 'SPY', side: 'LONG', qty: 10, entryPrice: 452.10, currentPrice: 453.20, pnl: 11, timeOpen: '2h 15m' },
+    { symbol: 'ESH6', side: 'LONG', qty: 2, entryPrice: 5985.25, currentPrice: 5992.50, pnl: 725, timeOpen: '4h 30m', contractMonth: 'MAR 2026', marginUsed: 30000 },
+    { symbol: 'NQH6', side: 'SHORT', qty: 1, entryPrice: 21250.00, currentPrice: 21215.00, pnl: 700, timeOpen: '1h 45m', contractMonth: 'MAR 2026', marginUsed: 18000 },
   ]);
 
   const [comparisons, setComparisons] = useState<ComparisonRow[]>([
@@ -82,6 +87,7 @@ export function PaperTradingDashboard() {
                 <th>Entry</th>
                 <th>Current</th>
                 <th>P&L</th>
+                <th>Contract</th>
                 <th>Time</th>
               </tr>
             </thead>
@@ -96,6 +102,7 @@ export function PaperTradingDashboard() {
                   <td className={p.pnl >= 0 ? 'positive' : 'negative'}>
                     {p.pnl >= 0 ? '+' : '-'}${Math.abs(p.pnl)}
                   </td>
+                  <td>{p.contractMonth ?? '-'}</td>
                   <td>{p.timeOpen}</td>
                 </tr>
               ))}
@@ -145,6 +152,14 @@ export function PaperTradingDashboard() {
           <div className="feed-item warning">
             <span className="time">09:15</span>
             <p>VIX approaching threshold - monitoring closely</p>
+          </div>
+          <div className="feed-item">
+            <span className="time">08:45</span>
+            <p>ESH6 contract roll scheduled in 12 days - volume crossover monitoring active</p>
+          </div>
+          <div className="feed-item">
+            <span className="time">08:30</span>
+            <p>Futures margin utilization at 48% - well within 80% limit</p>
           </div>
         </div>
       </div>
@@ -198,7 +213,7 @@ const styles = `
 
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 1rem;
     margin-bottom: 2rem;
   }
@@ -218,6 +233,7 @@ const styles = `
   
   .metric-value.positive { color: #10b981; }
   .metric-value.negative { color: #ef4444; }
+  .metric-value.neutral { color: #f59e0b; }
 
   .section { margin-bottom: 2rem; }
   .section h3 { font-size: 0.9rem; color: #9ca3af; margin-bottom: 1rem; letter-spacing: 0.05em; }

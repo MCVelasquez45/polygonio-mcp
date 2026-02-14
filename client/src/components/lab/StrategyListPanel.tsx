@@ -78,6 +78,14 @@ const MOCK_STRATEGIES: Strategy[] = [
     metrics: { sharpe: 0.92, return: -2.1, maxDrawdown: -8.5, winRate: 48 },
     lastUpdated: '2026-01-13T16:00:00Z',
   },
+  {
+    id: '6',
+    name: 'ES_TrendRider',
+    version: 'v1.0',
+    status: 'draft',
+    type: 'Futures',
+    lastUpdated: '2026-02-13T10:00:00Z',
+  },
 ];
 
 function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () => void }) {
