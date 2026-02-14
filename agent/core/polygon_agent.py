@@ -340,6 +340,17 @@ async def save_analysis_report(content: str, title: str = None, category: str = 
     )
 
     filepath.write_text(report_body, encoding="utf-8")
+
+    # Notify Nerve Center (WhatsApp)
+    notify_url = os.getenv("CHIP_NOTIFY_URL")
+    if notify_url:
+        try:
+            async with httpx.AsyncClient() as client:
+                message = f"📄 **ZoneXI: New Market Report**\nTitle: {title}\nCategory: {category}\n[Saved to local artifacts]"
+                await client.post(notify_url, json={"type": "info", "message": message})
+        except Exception as e:
+            print(f"Failed to notify Chip Command: {e}")
+
     return f"Report saved: {filepath}"
 
 
@@ -2016,6 +2027,7 @@ def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enf
     If no MCP server is provided (or MCP failed to start), the agent still works
     using the native Polygon REST API tools.
     """
+    _openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
     return Agent(
         name="Financial Analysis Agent",
         instructions=(
@@ -2111,7 +2123,7 @@ def create_financial_analysis_agent(server: MCPServerStdio | None = None, *, enf
             extract_strategy_parameters,
         ],
         input_guardrails=[InputGuardrail(guardrail_function=finance_guardrail)] if enforce_guardrail else [],
-        model=OpenAIResponsesModel(model="gpt-5", openai_client=AsyncOpenAI()),
+        model=OpenAIResponsesModel(model=_openai_model, openai_client=AsyncOpenAI()),
         model_settings=ModelSettings(truncation="auto"),
     )
 

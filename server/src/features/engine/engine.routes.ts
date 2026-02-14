@@ -1,4 +1,5 @@
 import express from 'express';
+import axios from 'axios';
 import { EngineStrategyModel } from '../handoff/models/strategyModel';
 import { screenerScheduler } from './services/screenerScheduler';
 
@@ -23,12 +24,25 @@ router.post('/hooks/screener-result', (req, res) => {
 
     // Broadcast each opportunity as a signal
     opportunities.forEach(opp => {
+      const opportunity = opp.top_opportunities?.[0]?.best_option ?? opp;
+      
       io.emit('screener_signal', {
         strategyId: 'agent-scan',
         strategyName,
-        opportunity: opp.top_opportunities?.[0]?.best_option ?? opp, // Handle nested structure if needed
+        opportunity,
         timestamp: new Date().toISOString()
       });
+
+      // Notify Nerve Center (WhatsApp)
+      const chipUrl = process.env.CHIP_COMMAND_URL;
+      if (chipUrl) {
+        const message = `🎯 **ZoneXI Signal: ${strategyName}**\nTicker: ${opportunity.ticker}\nAction: ${opportunity.side || 'BUY'}\nDetail: ${opportunity.details || 'New opportunity found'}\n[Open Dashboard]`;
+        
+        axios.post(`${chipUrl}/api/notify`, {
+          type: 'info',
+          message
+        }).catch(err => console.error('[Engine] Failed to notify Chip Command:', err.message));
+      }
     });
 
     res.json({ success: true, count: opportunities.length });

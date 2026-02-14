@@ -49,6 +49,8 @@ function generateEquityCurve(days: number = 365) {
 
 export function BacktestResultsPanel({ backtestId, onClose }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metrics>({
     totalReturn: 48.2,
     sharpeRatio: 1.42,
@@ -106,6 +108,26 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
     };
   }, []);
 
+  const runAiAnalysis = async () => {
+    if (!backtestId) return;
+    setIsAnalyzing(true);
+    try {
+      const response = await fetch(`http://localhost:4000/api/lab/strategy/${backtestId}/ai-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backtestResults: metrics })
+      });
+      if (!response.ok) throw new Error('AI analysis failed');
+      const data = await response.json();
+      setAiAnalysis(data.analysis);
+    } catch (error) {
+      console.error('AI Review error:', error);
+      alert('Failed to run AI analysis.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   return (
     <div className="backtest-results-panel">
       <div className="panel-header">
@@ -155,24 +177,35 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
         <div className="section-header">
           <span className="icon">🤖</span>
           <h3>Agent Analysis</h3>
+          <button 
+            className="btn-ai-action ml-auto" 
+            onClick={runAiAnalysis}
+            disabled={isAnalyzing}
+          >
+            {isAnalyzing ? '⚡ Analyzing...' : '✨ Run AI Review'}
+          </button>
         </div>
         <div className="analysis-content">
-          <div className="analysis-item positive">
-            <span className="bullet">✓</span>
-            <p>Strategy shows consistent alpha across multiple market regimes (Trending, Range-bound).</p>
-          </div>
-          <div className="analysis-item warning">
-            <span className="bullet">⚠</span>
-            <p>80% of profits generated in Q4 - suggests potential seasonality or overfitting to specific events.</p>
-          </div>
-          <div className="analysis-item warning">
-            <span className="bullet">⚠</span>
-            <p>Underperformance detected when VIX &gt; 30. Consider adding a volatility regime filter.</p>
-          </div>
-          <div className="analysis-item suggestion">
-            <span className="bullet">💡</span>
-            <p><strong>Suggestion:</strong> Optimizing the 'exit_threshold' parameter could improve the Sharpe ratio by ~0.2 based on sensitivity analysis.</p>
-          </div>
+          {aiAnalysis ? (
+            <div className="prose prose-invert max-w-none text-sm text-gray-300 whitespace-pre-wrap">
+              {aiAnalysis}
+            </div>
+          ) : (
+            <>
+              <div className="analysis-item positive">
+                <span className="bullet">✓</span>
+                <p>Strategy shows consistent alpha across multiple market regimes (Trending, Range-bound).</p>
+              </div>
+              <div className="analysis-item warning">
+                <span className="bullet">⚠</span>
+                <p>80% of profits generated in Q4 - suggests potential seasonality or overfitting to specific events.</p>
+              </div>
+              <div className="analysis-item suggestion">
+                <span className="bullet">💡</span>
+                <p><strong>Suggestion:</strong> Click 'Run AI Review' for a detailed, backtest-specific analysis from the financial agent.</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -182,6 +215,23 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
 }
 
 const styles = `
+  .btn-ai-action {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #10b981;
+    padding: 0.25rem 0.75rem;
+    border-radius: 2rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-ai-action:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.25);
+    transform: translateY(-1px);
+  }
+
   .backtest-results-panel {
     display: flex;
     flex-direction: column;

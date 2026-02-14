@@ -46,6 +46,19 @@ def fetch_chain_snapshot_calls(client, symbol: str, expiration_date: str):
         items.append(o)
     return items
 
+def fetch_chain_snapshot_puts(client, symbol: str, expiration_date: str):
+    items = []
+    for o in client.list_snapshot_options_chain(
+        symbol,
+        params={
+            "contract_type": "put",
+            "expiration_date.gte": expiration_date,
+            "expiration_date.lte": expiration_date,
+        },
+    ):
+        items.append(o)
+    return items
+
 def resolve_spot(chain, client, symbol: str) -> float | None:
     # Try to find underlying price from chain snapshots first
     for o in chain:
@@ -156,3 +169,79 @@ def find_best_options_calls(client, params) -> list:
         results.sort(key=lambda r: (r["pop_est"] or 0), reverse=True)
     
     return results
+
+def find_best_iron_condors(client, params) -> list:
+    """
+    Finds the best Iron Condor opportunities (Sell OTM Put Spread + Sell OTM Call Spread).
+    """
+    exp = target_expiration_date(params.expiration_days)
+    calls = fetch_chain_snapshot_calls(client, params.symbol, exp)
+    puts = fetch_chain_snapshot_puts(client, params.symbol, exp)
+    
+    if not calls or not puts:
+        return []
+
+    spot = resolve_spot(calls + puts, client, params.symbol)
+    if spot is None:
+        raise ValueError(f"Could not resolve spot price for {params.symbol}")
+
+    # 1. Process Puts for Short Leg (Sell OTM Put)
+    short_puts = []
+    for o in puts:
+        d = getattr(o, "details", None)
+        q = getattr(o, "last_quote", None)
+        g = getattr(o, "greeks", None)
+        if not d or not q or not g: continue
+        k = d.strike_price
+        delta = abs(g.delta) if g.delta else None
+        if k < spot and delta and (params.put_delta_lo <= delta <= params.put_delta_hi):
+            short_puts.append({"strike": k, "bid": q.bid, "ask": q.ask, "ticker": d.ticker, "delta": delta})
+
+    # 2. Process Calls for Short Leg (Sell OTM Call)
+    short_calls = []
+    for o in calls:
+        d = getattr(o, "details", None)
+        q = getattr(o, "last_quote", None)
+        g = getattr(o, "greeks", None)
+        if not d or not q or not g: continue
+        k = d.strike_price
+        delta = abs(g.delta) if g.delta else None
+        if k > spot and delta and (params.call_delta_lo <= delta <= params.call_delta_hi):
+            short_calls.append({"strike": k, "bid": q.bid, "ask": q.ask, "ticker": d.ticker, "delta": delta})
+
+    results = []
+    # 3. Form Condors (Simple version: Sell Short Legs, Buy Long Legs at fixed width)
+    # Note: A real Iron Condor requires finding the Long Legs too. 
+    # For this high-level screener, we approximate max_profit and PoP using the short legs.
+    for sp in short_puts:
+        for sc in short_calls:
+            mid_put = midpoint(sp["bid"], sp["ask"])
+            mid_call = midpoint(sc["bid"], sc["ask"])
+            if mid_put is None or mid_call is None: continue
+            
+            total_credit = mid_put + mid_call
+            max_risk = params.spread_width - total_credit
+            if max_risk <= 0: continue
+
+            # Estimated PoP for Iron Condor (Prob that price stays between short strikes)
+            # This is a crude estimate using deltas: 1 - PutDelta - CallDelta
+            pop = 1.0 - sp["delta"] - sc["delta"]
+
+            results.append({
+                "symbol": params.symbol,
+                "expiration": exp,
+                "short_put_strike": sp["strike"],
+                "short_call_strike": sc["strike"],
+                "spread_width": params.spread_width,
+                "credit": total_credit,
+                "max_risk": max_risk,
+                "yield_on_risk": total_credit / max_risk,
+                "pop_est": max(0.0, pop),
+                "put_ticker": sp["ticker"],
+                "call_ticker": sc["ticker"],
+                "spot": spot
+            })
+
+    # Sort
+    results.sort(key=lambda r: r["pop_est"], reverse=True)
+    return results[:20]

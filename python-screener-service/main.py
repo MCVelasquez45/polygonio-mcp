@@ -4,7 +4,7 @@ from typing import List, Optional, Literal
 from contextlib import asynccontextmanager
 import os
 import logging
-from screener import find_best_options_calls, make_client
+from screener import find_best_options_calls, find_best_iron_condors, make_client
 from backtest.engine import BacktestEngine, BacktestConfig, BacktestResult
 from backtest.screener_backtest import ScreenerBacktester, ScreenerBacktestConfig, ScreenerBacktestResult
 from dotenv import load_dotenv
@@ -55,6 +55,29 @@ class Opportunity(BaseModel):
     max_profit: float
     pop_est: float | None
 
+class ScreenIronCondorParams(BaseModel):
+    symbol: str = "SPY"
+    expiration_days: int = Field(default=0, ge=0)
+    spread_width: float = 5.0
+    put_delta_lo: float = 0.10
+    put_delta_hi: float = 0.25
+    call_delta_lo: float = 0.10
+    call_delta_hi: float = 0.25
+
+class IronCondorOpportunity(BaseModel):
+    symbol: str
+    expiration: str
+    short_put_strike: float
+    short_call_strike: float
+    spread_width: float
+    credit: float
+    max_risk: float
+    yield_on_risk: float
+    pop_est: float
+    put_ticker: str
+    call_ticker: str
+    spot: float
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "python-screener-service"}
@@ -69,6 +92,17 @@ def screen_0dte(params: ScreenParams):
         return results
     except Exception as e:
         logger.error(f"Screening error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/screen/iron-condor", response_model=List[IronCondorOpportunity])
+def screen_iron_condor(params: ScreenIronCondorParams):
+    logger.info(f"Screening Iron Condors for {params.symbol}")
+    try:
+        client = make_client()
+        results = find_best_iron_condors(client, params)
+        return results
+    except Exception as e:
+        logger.error(f"Condor screening error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/lab/backtest", response_model=BacktestResult)

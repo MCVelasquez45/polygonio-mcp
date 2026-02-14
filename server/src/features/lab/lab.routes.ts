@@ -1,4 +1,5 @@
 import express from 'express';
+import axios from 'axios';
 import { LabStrategyModel } from '../handoff/models/strategyModel';
 
 const router = express.Router();
@@ -107,6 +108,49 @@ router.delete('/strategy/:id', async (req, res) => {
     }
     res.json({ message: 'Strategy deleted', id: req.params.id });
   } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Analysis of Backtest Results
+router.post('/strategy/:id/ai-review', async (req, res) => {
+  try {
+    const { backtestResults } = req.body;
+    const strategy = await LabStrategyModel.findById(req.params.id);
+    
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+
+    const agentUrl = process.env.PYTHON_URL || 'http://localhost:5001';
+    
+    const prompt = `
+Please perform a detailed financial analysis of the following backtest results for the strategy "${strategy.name}".
+Identify strengths, weaknesses, and specific parameter optimizations to improve performance.
+
+STRATEGY DESCRIPTION:
+${strategy.description}
+
+BACKTEST RESULTS (JSON):
+${JSON.stringify(backtestResults || strategy.backtestResults, null, 2)}
+
+FORMAT:
+- Summary of performance
+- 3 key insights (positive or warning)
+- 2 specific parameter optimization suggestions
+`;
+
+    const response = await axios.post(`${agentUrl}/analyze`, {
+      query: prompt,
+      session_name: `review_${strategy._id}`
+    });
+
+    res.json({
+      analysis: response.data.output,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error('[LAB] AI Review failed:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

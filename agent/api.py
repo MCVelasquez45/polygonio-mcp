@@ -56,6 +56,15 @@ class ExtractionResponse(BaseModel):
     parameters: dict[str, Any]
 
 
+class CodeGenRequest(BaseModel):
+    description: str
+    template_type: str | None = "momentum"
+
+
+class CodeGenResponse(BaseModel):
+    code: str
+
+
 @app.post("/analyze", response_model=AnalysisResponse, status_code=status.HTTP_200_OK)
 async def analyze(request: AnalysisRequest) -> AnalysisResponse:
     query = request.query.strip()
@@ -97,6 +106,35 @@ async def extract_strategy_async(request: ExtractionRequest, background_tasks: B
 
     background_tasks.add_task(process_extraction_background, transcript, socket_id)
     return {"message": "Extraction started in background", "status": "accepted"}
+
+
+@app.post("/generate-strategy", response_model=CodeGenResponse, status_code=status.HTTP_200_OK)
+async def generate_strategy(request: CodeGenRequest) -> CodeGenResponse:
+    description = request.description.strip()
+    if not description:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Description must not be empty.")
+
+    prompt = f"Call generate_strategy_code with this description: {description}. Use the ZoneXI framework documentation to ensure it is valid Jesse code."
+    
+    # We disable guardrails for this technical generation task
+    result = await run_analysis(prompt, skip_mcp=True, enforce_guardrail=False)
+    
+    final_output = getattr(result, "final_output", result)
+    output_text = str(final_output).strip()
+    
+    # Extract code from potential markdown blocks
+    import re
+    code_match = re.search(r'```python\n(.*?)```', output_text, re.DOTALL)
+    if code_match:
+        output_text = code_match.group(1)
+    elif "class " in output_text and "Strategy" in output_text:
+        # Keep as is if it looks like code but lacks blocks
+        pass
+    else:
+        # Fallback: maybe it's just raw text with code inside
+        pass
+
+    return CodeGenResponse(code=output_text)
 
 
 async def _perform_extraction(transcript: str) -> dict[str, Any]:
