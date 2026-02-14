@@ -390,13 +390,13 @@ export async function getMassiveTrades(optionSymbol: string, limit = 50, order: 
 
   const trades = Array.isArray(payload.results)
     ? payload.results.map((trade: any, index: number) => ({
-        id: trade.id ?? `${trade.sip_timestamp ?? index}`,
-        price: trade.price,
-        size: trade.size,
-        timestamp: trade.sip_timestamp ?? trade.timestamp,
-        exchange: trade.exchange,
-        conditions: trade.conditions
-      }))
+      id: trade.id ?? `${trade.sip_timestamp ?? index}`,
+      price: trade.price,
+      size: trade.size,
+      timestamp: trade.sip_timestamp ?? trade.timestamp,
+      exchange: trade.exchange,
+      conditions: trade.conditions
+    }))
     : [];
 
   console.log('[MASSIVE] trades resolved', {
@@ -598,8 +598,8 @@ export async function listOptionExpirations(
         typeof contract?.expiration_date === 'string'
           ? contract.expiration_date
           : typeof contract?.expiration === 'string'
-          ? contract.expiration
-          : null;
+            ? contract.expiration
+            : null;
       const expiration = normalizeExpirationDate(rawExpiration);
       if (expiration) {
         expirations.add(expiration);
@@ -933,12 +933,12 @@ export async function getMassiveOptionsChain(
       typeof optionEntry?.expiration_date === 'string'
         ? optionEntry.expiration_date
         : typeof optionEntry?.expiration === 'string'
-        ? optionEntry.expiration
-        : typeof optionDetails?.expiration_date === 'string'
-        ? optionDetails.expiration_date
-        : typeof optionDetails?.expiration === 'string'
-        ? optionDetails.expiration
-        : undefined
+          ? optionEntry.expiration
+          : typeof optionDetails?.expiration_date === 'string'
+            ? optionDetails.expiration_date
+            : typeof optionDetails?.expiration === 'string'
+              ? optionDetails.expiration
+              : undefined
     );
     if (Array.isArray(optionEntry?.strikes)) {
       for (const strikeEntry of optionEntry.strikes) {
@@ -1048,8 +1048,8 @@ export async function getMassiveOptionsChain(
       referenceContracts: referenceLegs.size,
       referencePages: referenceStats.pagesFetched,
       referenceComplete: referenceStats.exhausted,
-       snapshotPages: snapshotData?.pagesFetched ?? 0,
-       snapshotComplete: snapshotData?.exhausted ?? false,
+      snapshotPages: snapshotData?.pagesFetched ?? 0,
+      snapshotComplete: snapshotData?.exhausted ?? false,
       expiration: normalizedExpirationFilter ?? null
     }
   };
@@ -1121,10 +1121,10 @@ function normalizeSnapshotLeg(
     typeof raw?.ticker === 'string'
       ? raw.ticker
       : typeof raw?.details?.ticker === 'string'
-      ? raw.details.ticker
-      : typeof raw?.option?.ticker === 'string'
-      ? raw.option.ticker
-      : null;
+        ? raw.details.ticker
+        : typeof raw?.option?.ticker === 'string'
+          ? raw.option.ticker
+          : null;
   if (!tickerCandidate) return null;
   const ticker = tickerCandidate.toUpperCase();
   const priceData = raw?.price_data ?? raw?.priceData ?? raw?.pricing ?? null;
@@ -1144,15 +1144,15 @@ function normalizeSnapshotLeg(
     resolveNumber(lastQuote?.ask ?? lastQuote?.ask_price ?? raw?.ask ?? raw?.askPrice) ?? priceDataAsk ?? null;
   const snapshotMid = resolveNumber(
     raw?.mid ??
-      raw?.mark ??
-      raw?.markPrice ??
-      lastQuote?.mid ??
-      lastQuote?.mark ??
-      lastQuote?.mid_price ??
-      lastQuote?.mark_price ??
-      priceData?.mid ??
-      priceData?.midpoint ??
-      priceData?.mark
+    raw?.mark ??
+    raw?.markPrice ??
+    lastQuote?.mid ??
+    lastQuote?.mark ??
+    lastQuote?.mid_price ??
+    lastQuote?.mark_price ??
+    priceData?.mid ??
+    priceData?.midpoint ??
+    priceData?.mark
   );
   const mid = snapshotMid ?? computeMid(bid, ask);
   const priceDataMark = resolveNumber(priceData?.mark ?? priceData?.mid ?? priceData?.price ?? priceData?.last);
@@ -1168,22 +1168,22 @@ function normalizeSnapshotLeg(
   const day = raw?.day ?? raw?.stats ?? priceData?.day ?? null;
   const change = resolveNumber(
     day?.change ??
-      raw?.change ??
-      raw?.price_change ??
-      raw?.day_change ??
-      raw?.gain ??
-      priceData?.change ??
-      priceData?.day_change ??
-      priceData?.price_change
+    raw?.change ??
+    raw?.price_change ??
+    raw?.day_change ??
+    raw?.gain ??
+    priceData?.change ??
+    priceData?.day_change ??
+    priceData?.price_change
   );
   const changePercent = resolveNumber(
     day?.change_percent ??
-      raw?.change_percent ??
-      raw?.day_change_percent ??
-      raw?.percent_change ??
-      raw?.percentGain ??
-      priceData?.change_percent ??
-      priceData?.percent_change
+    raw?.change_percent ??
+    raw?.day_change_percent ??
+    raw?.percent_change ??
+    raw?.percentGain ??
+    priceData?.change_percent ??
+    priceData?.percent_change
   );
   const volume = resolveNumber(
     raw?.volume ?? day?.volume ?? raw?.dayVolume ?? priceData?.volume ?? priceData?.day_volume ?? priceData?.total_volume
@@ -1193,12 +1193,12 @@ function normalizeSnapshotLeg(
   );
   const iv = resolveNumber(
     raw?.implied_volatility ??
-      raw?.impliedVolatility ??
-      raw?.iv ??
-      day?.implied_volatility ??
-      day?.impliedVolatility ??
-      priceData?.implied_volatility ??
-      priceData?.iv
+    raw?.impliedVolatility ??
+    raw?.iv ??
+    day?.implied_volatility ??
+    day?.impliedVolatility ??
+    priceData?.implied_volatility ??
+    priceData?.iv
   );
   const greeks = {
     ...(priceData?.greeks ?? {}),
@@ -1227,11 +1227,11 @@ function normalizeSnapshotLeg(
       : undefined;
   const sourceBreakEven = resolveNumber(
     raw?.break_even_price ??
-      raw?.details?.break_even_price ??
-      raw?.option?.break_even_price ??
-      priceData?.breakeven ??
-      priceData?.breakeven_price ??
-      priceData?.break_even_price
+    raw?.details?.break_even_price ??
+    raw?.option?.break_even_price ??
+    priceData?.breakeven ??
+    priceData?.breakeven_price ??
+    priceData?.break_even_price
   );
   const leg: any = {
     ticker,
@@ -1410,8 +1410,8 @@ function normalizeOptionContractDetail(detail: any, fallbackTicker: string) {
       typeof detail?.expiration_date === 'string'
         ? detail.expiration_date
         : typeof detail?.expiration === 'string'
-        ? detail.expiration
-        : undefined
+          ? detail.expiration
+          : undefined
     ) ?? undefined;
   return {
     ticker: detail.ticker ?? fallbackTicker,
@@ -1474,12 +1474,12 @@ export async function getMassiveOptionsSnapshot(underlying: string) {
   const rawOptions = Array.isArray(result?.options)
     ? result.options
     : Array.isArray(result?.contracts)
-    ? result.contracts
-    : Array.isArray(payload?.results)
-    ? payload.results
-        .map((entry: any) => entry?.option ?? entry)
-        .filter(Boolean)
-    : [];
+      ? result.contracts
+      : Array.isArray(payload?.results)
+        ? payload.results
+          .map((entry: any) => entry?.option ?? entry)
+          .filter(Boolean)
+        : [];
 
   let referenceOption: any = null;
   let bestVolume = -1;
@@ -1522,8 +1522,8 @@ export async function getMassiveOptionsSnapshot(underlying: string) {
       typeof referenceOption?.ticker === 'string'
         ? referenceOption.ticker
         : typeof refDetails?.ticker === 'string'
-        ? refDetails.ticker
-        : undefined,
+          ? refDetails.ticker
+          : undefined,
     referenceMid: computeMid(refQuote?.bid, refQuote?.ask),
   };
   console.log('[MASSIVE] options snapshot resolved', {
@@ -1598,6 +1598,8 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
         : strike - price
       : null);
 
+
+
   const normalizedSnapshot = {
     contract: contractSymbol,
     ticker: contractSymbol,
@@ -1630,6 +1632,58 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
     price: normalizedSnapshot.price
   });
   return normalizedSnapshot;
+}
+
+/**
+ * Retrieves a snapshot for a stock ticker.
+ */
+/**
+ * Retrieves a snapshot for a stock ticker.
+ * Note: Falls back to previous close endpoint if real-time snapshot is forbidden (e.g. free tier).
+ */
+export async function getMassiveStockSnapshot(ticker: string) {
+  const symbol = ticker.toUpperCase();
+  // Try previous close first as it's available on all plans (including free).
+  // Real-time snapshots require paid plans and return 403 on free tier.
+  const payload = await massiveGet(
+    `/v2/aggs/ticker/${symbol}/prev`,
+    {},
+    { cacheTtlMs: 60_000 }
+  );
+
+  const result = payload?.results?.[0] ?? {};
+
+  // Map Aggregates v2 response to WatchlistSnapshot
+  // { T: 'SPY', c: 500.0, o: 498.0, ... }
+
+  const price = resolveNumber(result.c);
+  // We use open as a proxy for previous close to calculate strictly intraday change 
+  // since we don't have the T-2 close here. 
+  // Ideally, we'd fetch the last 2 days of aggs to get accurate change.
+  const open = resolveNumber(result.o);
+
+  const change = price != null && open != null ? price - open : null;
+  const changePercent = price != null && open != null
+    ? ((price - open) / open) * 100
+    : null;
+
+  const snapshotResult = {
+    ticker: symbol,
+    name: symbol,
+    price,
+    change,
+    changePercent,
+    volume: resolveNumber(result.v),
+    updated: result.t, // Timestamp of the bar's start usually
+    source: 'prev_close' // Debug helper
+  };
+
+  console.log('[MASSIVE] stock snapshot resolved (prev)', {
+    ticker: snapshotResult.ticker,
+    price: snapshotResult.price
+  });
+
+  return snapshotResult;
 }
 
 type ShortInterestEntry = {

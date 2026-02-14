@@ -20,6 +20,7 @@ import {
   clampChainLimit,
   listOptionExchanges,
   listOptionConditions,
+  getMassiveStockSnapshot,
 } from '../../shared/data/massive';
 import { fetchWithCache } from './services/marketCache';
 import { getLatestSelection, saveSelection } from '../options/services/selectionStore';
@@ -256,8 +257,8 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
           typeof data?.metadata?.referenceContracts === 'number'
             ? data.metadata.referenceContracts
             : typeof data?.metadata?.limit === 'number'
-            ? data.metadata.limit
-            : clampedDesiredLimit;
+              ? data.metadata.limit
+              : clampedDesiredLimit;
         await saveChainSnapshot(underlyingSymbol, expirationFilter, data, { limit: snapshotCoverage });
       } catch (error) {
         console.warn('[MARKET] failed to persist chain snapshot', { underlyingSymbol, expirationFilter }, error);
@@ -488,7 +489,7 @@ router.get('/watchlist', async (req, res, next) => {
             type,
             { ticker: symbol },
             30_000,
-            () => (isOptionContract ? getMassiveOptionContractSnapshot(symbol) : getMassiveOptionsSnapshot(symbol)),
+            () => (isOptionContract ? getMassiveOptionContractSnapshot(symbol) : getMassiveStockSnapshot(symbol)),
             { ticker: symbol }
           );
           return {

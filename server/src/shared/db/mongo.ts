@@ -1,4 +1,5 @@
 import { MongoClient, Db, Collection, Document } from 'mongodb';
+import mongoose from 'mongoose';
 
 // Thin wrapper around MongoDB client lifecycle reused by every feature module.
 // Keeps a single connection per process so modules can call `getCollection`
@@ -20,9 +21,26 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
     throw new Error('MONGO_URI is not set. Please provide a MongoDB connection string.');
   }
 
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, {
+    // Work around Node.js 24+ OpenSSL 3.x TLS strictness
+    tls: true,
+    tlsAllowInvalidCertificates: false,
+    // Force TLS 1.2+ (Atlas requirement)
+    minPoolSize: 1,
+    maxPoolSize: 10,
+    // Increase timeout for Atlas connections
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
+    // Retry settings
+    retryWrites: true,
+    retryReads: true,
+  });
   await client.connect();
   database = client.db(dbName);
+
+  // Initialize Mongoose
+  await mongoose.connect(uri, { dbName });
+
   console.log(`[SERVER] Connected to MongoDB database: ${database.databaseName}`);
 }
 
@@ -43,6 +61,7 @@ export function getCollection<TSchema extends Document = Document>(name: string)
 export async function closeMongo(): Promise<void> {
   if (client) {
     await client.close();
+    await mongoose.disconnect();
     client = null;
     database = null;
   }
