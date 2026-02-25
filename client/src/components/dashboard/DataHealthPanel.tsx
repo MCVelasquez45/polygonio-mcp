@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { getApiBaseUrl } from '../../api/http';
+import { apiClient } from '../../api';
 
 type HealthMetric = {
   symbol: string;
@@ -43,7 +45,7 @@ function getQualityColor(score: number): string {
   return '#dc2626';
 }
 
-export function DataHealthPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 5000 }: Props) {
+export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs = 5000 }: Props) {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,9 +53,9 @@ export function DataHealthPanel({ apiBase = 'http://localhost:3000', refreshInte
 
   const fetchHealth = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/chart/health`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const { data } = await apiClient.get('/api/chart/health', {
+        baseURL: apiBase
+      });
       setMetrics(data.metrics ?? []);
       setError(null);
       setLastFetch(new Date());

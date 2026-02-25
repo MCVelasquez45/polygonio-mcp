@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { runAgentScan } from '../../api/agent';
+import { getApiBaseUrl } from '../../api/http';
 
 type ScannerSignal = {
   strategyId: string;
@@ -47,7 +48,7 @@ function formatTime(dateStr: string): string {
   });
 }
 
-export function ScannerResultsPanel({ socketUrl = 'http://localhost:3000', maxSignals = 20, onTickerSelect }: Props) {
+export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 20, onTickerSelect }: Props) {
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastSignalTime, setLastSignalTime] = useState<Date | null>(null);

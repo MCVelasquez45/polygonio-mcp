@@ -18,6 +18,8 @@ import { EngineRoomDashboard } from '../engine';
 import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
 import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
+import { getApiBaseUrl } from '../../api/http';
+import { futuresApi } from '../../api';
 
 type Props = {
   apiBase?: string;
@@ -25,13 +27,15 @@ type Props = {
   socket?: Socket | null;
 };
 
-export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, socket }: Props) {
+export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }: Props) {
   const [activePanel, setActivePanel] = useState('lab-strategies');
   const [lastActivePanel, setLastActivePanel] = useState('lab-strategies');
   const [showCreationWizard, setShowCreationWizard] = useState(false);
   const [showBacktestConfig, setShowBacktestConfig] = useState(false);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
+  const [selectedStrategy, setSelectedStrategy] = useState<any>(null);
   const [backtestResultsId, setBacktestResultsId] = useState<string | null>(null);
+  const [paperSessionId, setPaperSessionId] = useState<string | null>(null);
   const [backgroundExtraction, setBackgroundExtraction] = useState<{
     data?: any;
     status: 'idle' | 'processing' | 'completed' | 'error';
@@ -56,7 +60,8 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
   };
 
   const handleSelectStrategy = (strategy: any) => {
-    setSelectedStrategyId(strategy.id);
+    setSelectedStrategyId(strategy.id ?? strategy._id);
+    setSelectedStrategy(strategy);
     setActivePanel('lab-editor');
   };
 
@@ -118,10 +123,51 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
     setShowBacktestConfig(true);
   };
 
-  const handleStartBacktest = (config: any) => {
-    setShowBacktestConfig(false);
-    setBacktestResultsId('BT-20250116-001');
-    setActivePanel('lab-backtest-results');
+  const handleStartBacktest = async (config: any) => {
+    if (!selectedStrategyId) return;
+    try {
+      setShowBacktestConfig(false);
+      const strategyName = selectedStrategy?.name ?? 'FuturesStrategy';
+      const symbol =
+        selectedStrategy?.futuresConfig?.contract ??
+        config.contractType ??
+        selectedStrategy?.parameters?.contract ??
+        'ES';
+
+      const backtest = await futuresApi.runFuturesBacktest({
+        strategyId: selectedStrategyId,
+        strategyName,
+        symbol,
+        startDate: config.startDate,
+        endDate: config.endDate,
+        initialCapital: Number(config.initialCapital ?? 100000),
+        contracts: Number(config.position_size_contracts ?? 1),
+        rollPolicy: config.rollStrategy ?? 'volume',
+        rollDaysBefore: Number(config.roll_days_before_expiry ?? 5),
+        slippageBps: config.slippageModel === 'zero' ? 0 : config.slippageModel === 'fixed' ? 1 : 2.5,
+        feePerContract: config.commissionModel === 'zero' ? 0 : config.commissionModel === 'fixed' ? 1 : 2.5
+      });
+      setBacktestResultsId(backtest._id);
+
+      const paper = await futuresApi.startFuturesPaperSession({
+        strategyId: selectedStrategyId,
+        strategyName,
+        symbol,
+        contracts: Number(config.position_size_contracts ?? 1),
+        initialCapital: Number(config.initialCapital ?? 100000),
+        maxDailyLoss: 5000,
+        maxDrawdown: 0.08,
+        slippageBps: config.slippageModel === 'zero' ? 0 : config.slippageModel === 'fixed' ? 1 : 2.5,
+        feePerContract: config.commissionModel === 'zero' ? 0 : config.commissionModel === 'fixed' ? 1 : 2.5
+      });
+      setPaperSessionId(paper._id);
+
+      setActivePanel('lab-backtest-results');
+      toast.success('Futures backtest completed and paper session started.');
+    } catch (error: any) {
+      toast.error(`Backtest failed: ${error?.message ?? 'Unknown error'}`);
+      setShowBacktestConfig(false);
+    }
   };
 
   const getPanelLabel = () => {
@@ -164,15 +210,31 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
         return (
           <BacktestResultsPanel
             backtestId={backtestResultsId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            onDeployToPaper={() => setActivePanel('lab-paper')}
             onClose={() => setActivePanel('lab-editor')}
           />
         );
       case 'lab-paper':
-        return <PaperTradingDashboard />;
+        return (
+          <PaperTradingDashboard
+            sessionId={paperSessionId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            strategyName={selectedStrategy?.name}
+            onRequestPromotion={() => setActivePanel('lab-promotion')}
+          />
+        );
       case 'lab-promotion':
-        return <PromotionGatePanel />;
+        return (
+          <PromotionGatePanel
+            sessionId={paperSessionId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            symbol={selectedStrategy?.futuresConfig?.contract ?? 'ES'}
+            onPromote={() => setActivePanel('live')}
+          />
+        );
       case 'live':
-        return <EngineRoomDashboard />;
+        return <EngineRoomDashboard sessionId={paperSessionId || undefined} strategyId={selectedStrategyId || undefined} />;
       case 'monitoring-perf':
         return <PerformanceReviewDashboard />;
       case 'monitoring-ab':
@@ -272,7 +334,8 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
 
       {showBacktestConfig && (
         <BacktestConfigModal
-          strategyName="VolArbitrage_v2"
+          strategyName={selectedStrategy?.name ?? 'FuturesStrategy'}
+          strategyType={selectedStrategy?.type === 'futures' || selectedStrategy?.strategyType === 'futures' ? 'futures' : undefined}
           onRun={handleStartBacktest}
           onCancel={() => setShowBacktestConfig(false)}
         />

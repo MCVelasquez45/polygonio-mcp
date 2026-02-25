@@ -14,6 +14,7 @@ import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
 import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
+import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -61,6 +62,8 @@ app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
 app.use('/api/chart/health', chartHealthRouter);
 app.use('/api/engine', engineRouter);
+app.use('/api/lab/futures', futuresRouter);
+app.use('/api/engine/futures', futuresRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
@@ -78,6 +81,7 @@ const io = new SocketIOServer(httpServer, {
 app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
+initFuturesRuntime(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
@@ -97,6 +101,7 @@ async function start() {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
     await ensureMarketCacheIndexes();
+    await seedDefaultContractSpecs();
     startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);

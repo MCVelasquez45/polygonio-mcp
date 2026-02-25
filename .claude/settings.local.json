@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(/Users/sirrelesteinfeld_1/projects/polygonio-mcp/agent/.venv/bin/python:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)"
+    ]
+  }
+}

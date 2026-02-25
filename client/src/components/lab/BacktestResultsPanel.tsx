@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, LineStyle, LineSeries } from 'lightweight-charts';
+import { apiClient, futuresApi } from '../../api';
+import type { FuturesBacktestResult } from '../../types/futures';
 
 type Metrics = {
   totalReturn: number;
@@ -12,6 +14,8 @@ type Metrics = {
 
 type Props = {
   backtestId?: string;
+  strategyId?: string;
+  onDeployToPaper?: () => void;
   onClose?: () => void;
 };
 
@@ -47,10 +51,13 @@ function generateEquityCurve(days: number = 365) {
   return { strategy: data, benchmark: benchmarkData };
 }
 
-export function BacktestResultsPanel({ backtestId, onClose }: Props) {
+export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, onClose }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [backtest, setBacktest] = useState<FuturesBacktestResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metrics>({
     totalReturn: 48.2,
     sharpeRatio: 1.42,
@@ -59,6 +66,38 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
     trades: 142,
     profitFactor: 1.65
   });
+
+  useEffect(() => {
+    if (!backtestId) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    futuresApi
+      .getFuturesBacktest(backtestId)
+      .then(result => {
+        if (cancelled) return;
+        setBacktest(result);
+        setMetrics({
+          totalReturn: result.metrics.totalReturnPct * 100,
+          sharpeRatio: result.metrics.sharpeRatio,
+          maxDrawdown: -Math.abs(result.metrics.maxDrawdownPct * 100),
+          winRate: result.metrics.winRatePct * 100,
+          trades: result.metrics.tradeCount,
+          profitFactor: Math.max(0, 1 + result.metrics.totalReturnPct * 2)
+        });
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setLoadError(error?.message ?? 'Failed to load futures backtest');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backtestId]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -89,7 +128,21 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
       title: 'Benchmark (SPY)',
     });
 
-    const { strategy, benchmark } = generateEquityCurve();
+    const { strategy, benchmark } =
+      backtest?.equityCurve?.length
+        ? (() => {
+            const strategySeries = backtest.equityCurve.map(point => ({
+              time: point.timestamp.slice(0, 10),
+              value: point.equity
+            }));
+            const first = strategySeries[0]?.value ?? 100000;
+            const benchmarkSeries = strategySeries.map((point, index) => ({
+              time: point.time,
+              value: first * (1 + index * 0.0008)
+            }));
+            return { strategy: strategySeries, benchmark: benchmarkSeries };
+          })()
+        : generateEquityCurve();
     strategySeries.setData(strategy);
     benchmarkSeries.setData(benchmark);
 
@@ -106,20 +159,17 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, []);
+  }, [backtest]);
 
   const runAiAnalysis = async () => {
-    if (!backtestId) return;
+    const selectedStrategyId = strategyId ?? backtest?.strategyId;
+    if (!selectedStrategyId) return;
     setIsAnalyzing(true);
     try {
-      const response = await fetch(`http://localhost:4000/api/lab/strategy/${backtestId}/ai-review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backtestResults: metrics })
+      const response = await apiClient.post(`/api/lab/strategy/${selectedStrategyId}/ai-review`, {
+        backtestResults: backtest?.metrics ?? metrics
       });
-      if (!response.ok) throw new Error('AI analysis failed');
-      const data = await response.json();
-      setAiAnalysis(data.analysis);
+      setAiAnalysis(response.data?.analysis ?? null);
     } catch (error) {
       console.error('AI Review error:', error);
       alert('Failed to run AI analysis.');
@@ -133,18 +183,20 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
       <div className="panel-header">
         <div className="header-title">
           <h2>📊 Backtest Results</h2>
-          <span className="subtitle">ID: {backtestId || 'BT-20260116-001'}</span>
+          <span className="subtitle">ID: {backtest?._id || backtestId || 'BT-20260116-001'}</span>
         </div>
         <div className="header-actions">
           <button className="btn-secondary" onClick={onClose}>Close</button>
-          <button className="btn-primary">Deploy to Paper</button>
+          <button className="btn-primary" onClick={onDeployToPaper}>Deploy to Paper</button>
         </div>
       </div>
 
       <div className="metrics-grid">
         <div className="metric-card">
           <label>Total Return</label>
-          <span className="value positive">+{metrics.totalReturn}%</span>
+          <span className={`value ${metrics.totalReturn >= 0 ? 'positive' : 'negative'}`}>
+            {metrics.totalReturn >= 0 ? '+' : ''}{metrics.totalReturn.toFixed(2)}%
+          </span>
         </div>
         <div className="metric-card">
           <label>Sharpe Ratio</label>
@@ -167,6 +219,9 @@ export function BacktestResultsPanel({ backtestId, onClose }: Props) {
           <span className="value">{metrics.trades}</span>
         </div>
       </div>
+
+      {loading && <div className="analysis-item suggestion"><span className="bullet">…</span><p>Loading futures backtest artifacts...</p></div>}
+      {loadError && <div className="analysis-item warning"><span className="bullet">⚠</span><p>{loadError}</p></div>}
 
       <div className="chart-section">
         <h3>Equity Curve</h3>

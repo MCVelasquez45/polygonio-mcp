@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
 import { LabStrategyModel } from '../handoff/models/strategyModel';
+import { getContractSpec } from '../futures/services/contractSpecs.service';
 
 const router = express.Router();
 
@@ -30,6 +31,33 @@ router.post('/strategy/create', async (req, res) => {
       return res.status(400).json({ error: 'futuresConfig required for futures strategies' });
     }
 
+    let normalizedFuturesConfig: any = undefined;
+    if (strategyType === 'futures') {
+      const contract = String(futuresConfig?.contract ?? '').trim().toUpperCase();
+      if (!contract) {
+        return res.status(400).json({ error: 'futuresConfig.contract is required' });
+      }
+      const spec = await getContractSpec(contract);
+      if (!spec) {
+        return res.status(400).json({ error: `Unsupported futures contract '${contract}'` });
+      }
+
+      normalizedFuturesConfig = {
+        contract,
+        exchange: futuresConfig?.exchange ?? spec.exchange,
+        tickSize: Number(futuresConfig?.tickSize ?? spec.tickSize),
+        tickValue: Number(futuresConfig?.tickValue ?? spec.tickValue),
+        contractSize: Number(futuresConfig?.contractSize ?? spec.contractMultiplier),
+        marginRequired: Number(futuresConfig?.marginRequired ?? spec.defaultInitialMargin),
+        tradingHours: String(futuresConfig?.tradingHours ?? 'globex'),
+        rollStrategy:
+          futuresConfig?.rollStrategy === 'calendar' || futuresConfig?.rollStrategy === 'open_interest'
+            ? futuresConfig.rollStrategy
+            : 'volume',
+        rollDaysBefore: Number(futuresConfig?.rollDaysBefore ?? 5)
+      };
+    }
+
     const strategy = new LabStrategyModel({
       name,
       description: description || '',
@@ -39,7 +67,7 @@ router.post('/strategy/create', async (req, res) => {
       modelConfig: strategyType === 'quant' ? modelConfig : undefined,
       screenerConfig: strategyType === 'screener' ? screenerConfig : undefined,
       zonexiConfig: strategyType === 'zonexi' ? zonexiConfig : undefined,
-      futuresConfig: strategyType === 'futures' ? futuresConfig : undefined
+      futuresConfig: strategyType === 'futures' ? normalizedFuturesConfig : undefined
     });
 
     await strategy.save();

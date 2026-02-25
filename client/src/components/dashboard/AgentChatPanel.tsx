@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
+import { getAgentBaseUrl } from '../../api/agent';
 
 type Message = {
   id: string;
@@ -26,7 +27,7 @@ const QUICK_ACTIONS = [
   { label: 'NQ Futures', query: 'Get NQ daily data for the last 5 bars' },
 ];
 
-export function AgentChatPanel({ apiBase = 'http://localhost:5001', embedded = false, context = {}, className = '', onClose }: Props) {
+export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, context = {}, className = '', onClose }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

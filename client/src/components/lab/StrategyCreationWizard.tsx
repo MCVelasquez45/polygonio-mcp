@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { startAgentExtraction } from '../../api/agent';
 
 type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'futures' | 'custom';
 
@@ -224,17 +225,10 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     onExtractionStart?.();
 
     try {
-      // Use the async endpoint
-      const response = await fetch('http://localhost:5001/extract-strategy-async', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript,
-          socket_id: socketId
-        }),
+      await startAgentExtraction({
+        transcript,
+        socket_id: socketId
       });
-
-      if (!response.ok) throw new Error('Failed to start extraction');
 
       setExtractionStarted(true);
       setAgentSuggestion("⚡ I've started the extraction in the background. You can close this wizard and I'll notify you when it's ready!");
