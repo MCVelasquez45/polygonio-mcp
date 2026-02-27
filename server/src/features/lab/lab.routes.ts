@@ -198,6 +198,9 @@ FORMAT:
   }
 });
 
+// In-memory store for pending extractions so clients can poll if they miss the socket event.
+const pendingExtractions: Map<string, { data: any; status: string; error?: string; ts: number }> = new Map();
+
 // Webhook for AI Agent to notify extraction completion
 router.post('/notify-extraction', (req, res) => {
   const { socketId, data, status, error } = req.body;
@@ -208,16 +211,42 @@ router.post('/notify-extraction', (req, res) => {
     return res.status(500).json({ error: 'Socket.io not initialized on server' });
   }
 
+  // Persist the result so the client can poll for it
+  const extractionId = socketId ?? `broadcast_${Date.now()}`;
+  pendingExtractions.set(extractionId, { data, status, error, ts: Date.now() });
+
+  // Clean up entries older than 10 minutes
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [key, entry] of pendingExtractions) {
+    if (entry.ts < cutoff) pendingExtractions.delete(key);
+  }
+
   if (socketId) {
-    console.log(`[LAB] Notifying client ${socketId} about extraction ${status}`);
-    io.to(socketId).emit('strategy-extracted', { data, status, error });
+    const targetSocket = io.sockets.sockets.get(socketId);
+    if (targetSocket) {
+      console.log(`[LAB] Notifying client ${socketId} about extraction ${status}`);
+      targetSocket.emit('strategy-extracted', { data, status, error });
+    } else {
+      // Socket ID is stale — broadcast to all connected clients instead
+      console.warn(`[LAB] Socket ${socketId} not found (likely reconnected), broadcasting to all clients`);
+      io.emit('strategy-extracted', { data, status, error });
+    }
   } else {
-    // Broadcast if no socketId (rare case for manual transcript paste if we want)
     console.log('[LAB] Broadcasting extraction completion');
     io.emit('strategy-extracted', { data, status, error });
   }
 
   res.json({ ok: true });
+});
+
+// Poll endpoint for clients that missed the socket event
+router.get('/pending-extraction/:socketId', (req, res) => {
+  const entry = pendingExtractions.get(req.params.socketId);
+  if (!entry) {
+    return res.json({ found: false });
+  }
+  pendingExtractions.delete(req.params.socketId);
+  res.json({ found: true, ...entry });
 });
 
 export const labRouter = router;

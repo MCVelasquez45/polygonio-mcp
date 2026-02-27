@@ -251,6 +251,10 @@ async def _perform_extraction(transcript: str) -> dict[str, Any]:
     for list_field in ("entry_rules", "exit_rules", "risk_management"):
         if list_field not in data or not isinstance(data.get(list_field), list):
             data[list_field] = []
+        data[list_field] = [
+            " ".join(item.values()) if isinstance(item, dict) else str(item)
+            for item in data[list_field]
+        ]
     if "type" not in data or not isinstance(data.get("type"), str):
         data["type"] = "custom"
 
@@ -300,6 +304,10 @@ Transcript:
     for list_field in ("entry_rules", "exit_rules", "risk_management"):
         if list_field not in data or not isinstance(data.get(list_field), list):
             data[list_field] = []
+        data[list_field] = [
+            " ".join(item.values()) if isinstance(item, dict) else str(item)
+            for item in data[list_field]
+        ]
     if "type" not in data or not isinstance(data.get("type"), str):
         data["type"] = "custom"
 
