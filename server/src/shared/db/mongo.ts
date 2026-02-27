@@ -21,17 +21,14 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
     throw new Error('MONGO_URI is not set. Please provide a MongoDB connection string.');
   }
 
+  const isAtlas = uri.startsWith('mongodb+srv://');
   client = new MongoClient(uri, {
-    // Work around Node.js 24+ OpenSSL 3.x TLS strictness
-    tls: true,
-    tlsAllowInvalidCertificates: false,
-    // Force TLS 1.2+ (Atlas requirement)
+    // Only enable TLS for Atlas; local MongoDB typically doesn't use TLS.
+    ...(isAtlas ? { tls: true, tlsAllowInvalidCertificates: false } : {}),
     minPoolSize: 1,
     maxPoolSize: 10,
-    // Increase timeout for Atlas connections
     serverSelectionTimeoutMS: 30000,
     connectTimeoutMS: 30000,
-    // Retry settings
     retryWrites: true,
     retryReads: true,
   });
@@ -42,6 +39,15 @@ export async function initMongo(uri: string, dbName = 'market-copilot'): Promise
   await mongoose.connect(uri, { dbName });
 
   console.log(`[SERVER] Connected to MongoDB database: ${database.databaseName}`);
+}
+
+/**
+ * Returns true when the shared MongoDB connection is available.
+ * Feature modules can check this before attempting database operations
+ * so the server degrades gracefully when MONGO_OPTIONAL is enabled.
+ */
+export function isMongoReady(): boolean {
+  return database !== null;
 }
 
 /**

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import os
+import tempfile
 from fastapi import FastAPI, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any
 import httpx
+from openai import AsyncOpenAI
 
 from agents.exceptions import InputGuardrailTripwireTriggered
 
@@ -25,6 +30,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -54,6 +61,13 @@ class ExtractionResponse(BaseModel):
     description: str
     hypothesis: str
     parameters: dict[str, Any]
+
+
+class AudioTranscriptionRequest(BaseModel):
+    audio_base64: str
+    filename: str | None = None
+    mime_type: str | None = None
+    language: str | None = "en"
 
 
 class CodeGenRequest(BaseModel):
@@ -106,6 +120,65 @@ async def extract_strategy_async(request: ExtractionRequest, background_tasks: B
 
     background_tasks.add_task(process_extraction_background, transcript, socket_id)
     return {"message": "Extraction started in background", "status": "accepted"}
+
+
+@app.post("/transcribe-audio", status_code=status.HTTP_200_OK)
+async def transcribe_audio(request: AudioTranscriptionRequest):
+    if not request.audio_base64.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="audio_base64 must not be empty.")
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENAI_API_KEY is not configured on the agent service.",
+        )
+
+    try:
+        audio_bytes = base64.b64decode(request.audio_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 audio payload.") from exc
+
+    if not audio_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Decoded audio payload is empty.")
+
+    filename = (request.filename or "audio-upload.webm").strip() or "audio-upload.webm"
+    _, extension = os.path.splitext(filename)
+    suffix = extension if extension else ".webm"
+    model_name = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip() or "gpt-4o-mini-transcribe"
+
+    temp_file_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_file.flush()
+            temp_file_path = temp_file.name
+
+        client = AsyncOpenAI(api_key=api_key)
+        with open(temp_file_path, "rb") as audio_file:
+            transcription = await client.audio.transcriptions.create(
+                model=model_name,
+                file=audio_file,
+                language=request.language or "en",
+                response_format="text",
+            )
+
+        transcript_text = transcription if isinstance(transcription, str) else str(transcription)
+        transcript_text = transcript_text.strip()
+        if not transcript_text:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Transcription service returned empty text.")
+
+        return {"transcript": transcript_text}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Audio transcription failed: {exc}") from exc
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                pass
 
 
 @app.post("/generate-strategy", response_model=CodeGenResponse, status_code=status.HTTP_200_OK)

@@ -1,5 +1,5 @@
 import { Collection } from 'mongodb';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 
 // Stores option chain snapshots per underlying/expiration so requests are fast.
 
@@ -46,6 +46,7 @@ function getSnapshotsCollection() {
 // TTL indexes keep documents fresh; background job not required.
 async function ensureSnapshotIndexes() {
   if (indexesEnsured) return;
+  if (!isMongoReady()) return;
   const col = getSnapshotsCollection();
   await col.createIndex({ underlying: 1, expiration: 1 }, { unique: true });
   await col.createIndex({ updatedAt: 1 }, { expireAfterSeconds: TTL_SECONDS });

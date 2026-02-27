@@ -22,6 +22,7 @@ type Strategy = {
 type Props = {
   onSelectStrategy?: (strategy: Strategy) => void;
   onCreateNew?: () => void;
+  refreshKey?: number;
 };
 
 const STATUS_CONFIG = {
@@ -102,7 +103,7 @@ function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () 
   );
 }
 
-export function StrategyListPanel({ onSelectStrategy, onCreateNew }: Props) {
+export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 0 }: Props) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'pipeline' | 'list'>('pipeline');
@@ -111,6 +112,7 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew }: Props) {
   useEffect(() => {
     const fetchStrategies = async () => {
       try {
+        setLoading(true);
         const response = await apiClient.get('/api/lab/strategies');
         const data = Array.isArray(response.data) ? response.data : [];
         const mapped: Strategy[] = data.map((item: any) => ({
@@ -141,7 +143,7 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew }: Props) {
     };
 
     fetchStrategies();
-  }, []);
+  }, [refreshKey]);
 
   const pipelineStages = ['draft', 'backtesting', 'paper_trading', 'live'];
 

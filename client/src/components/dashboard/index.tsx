@@ -19,7 +19,7 @@ import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
 import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import { getApiBaseUrl } from '../../api/http';
-import { futuresApi } from '../../api';
+import { apiClient, futuresApi } from '../../api';
 
 type Props = {
   apiBase?: string;
@@ -42,6 +42,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     error?: string;
   }>({ status: 'idle' });
   const [wizardInitialData, setWizardInitialData] = useState<any>(null);
+  const [strategyListRefreshKey, setStrategyListRefreshKey] = useState(0);
 
   const handlePanelChange = (panelId: string) => {
     if (panelId !== 'chat') {
@@ -54,9 +55,64 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     setShowCreationWizard(true);
   };
 
-  const handleWizardComplete = (strategy: any) => {
-    console.log('Strategy created:', strategy);
-    setShowCreationWizard(false);
+  const handleWizardComplete = async (strategy: any) => {
+    const strategyType = strategy?.type === 'futures' ? 'futures' : 'screener';
+    const strategyName = typeof strategy?.name === 'string' && strategy.name.trim()
+      ? strategy.name.trim()
+      : 'Untitled Strategy';
+    const strategyDescription = typeof strategy?.description === 'string' ? strategy.description : '';
+    const hypothesis = typeof strategy?.hypothesis === 'string' ? strategy.hypothesis : '';
+    const transcript = typeof strategy?.transcript === 'string' ? strategy.transcript : '';
+    const strategyParams =
+      strategy?.parameters && typeof strategy.parameters === 'object' && !Array.isArray(strategy.parameters)
+        ? strategy.parameters
+        : {};
+
+    const payload: any = {
+      name: strategyName,
+      description: strategyDescription,
+      strategyType,
+      ownerId: 'lab_user',
+    };
+
+    if (strategyType === 'futures') {
+      payload.futuresConfig = {
+        contract: String(strategyParams.contract ?? 'ES'),
+      };
+    } else {
+      payload.screenerConfig = {
+        screener_type: 'transcript_strategy',
+        endpoint: 'manual://strategy-wizard',
+        params: {
+          source: 'strategy_creation_wizard',
+          strategy_template_type: strategy?.type ?? 'custom',
+          hypothesis,
+          transcript: transcript || undefined,
+          ...strategyParams
+        },
+        schedule: 'manual'
+      };
+    }
+
+    try {
+      const response = await apiClient.post('/api/lab/strategy/create', payload);
+      const created = response.data;
+      setShowCreationWizard(false);
+      setWizardInitialData(null);
+      setStrategyListRefreshKey(prev => prev + 1);
+      toast.success('Strategy created in Room A.');
+      if (created?._id || created?.id) {
+        setSelectedStrategyId(String(created._id ?? created.id));
+      }
+    } catch (error: any) {
+      console.error('Failed to create strategy:', error);
+      const detail =
+        error?.response?.data?.error ||
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Unknown error';
+      toast.error(`Failed to create strategy: ${detail}`);
+    }
   };
 
   const handleSelectStrategy = (strategy: any) => {
@@ -196,6 +252,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           <StrategyListPanel
             onCreateNew={handleCreateStrategy}
             onSelectStrategy={handleSelectStrategy}
+            refreshKey={strategyListRefreshKey}
           />
         );
       case 'lab-editor':
@@ -250,7 +307,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
       case 'chat':
         return <AgentChatPanel apiBase={apiBase} context={{ source: lastActivePanel }} />;
       default:
-        return <StrategyListPanel onCreateNew={handleCreateStrategy} />;
+        return <StrategyListPanel onCreateNew={handleCreateStrategy} refreshKey={strategyListRefreshKey} />;
     }
   };
 

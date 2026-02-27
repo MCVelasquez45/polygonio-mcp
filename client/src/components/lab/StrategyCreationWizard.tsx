@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
-import { startAgentExtraction } from '../../api/agent';
+import { useState, useRef, useEffect, type ChangeEvent } from 'react';
+import { extractStrategy, startAgentExtraction, transcribeAudioUpload } from '../../api/agent';
 
 type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'futures' | 'custom';
 
 type WizardStep = 'method' | 'transcript' | 'type' | 'details' | 'parameters' | 'review';
 
 type CreationMethod = 'ai' | 'manual' | null;
+type RecordingMode = 'speech' | 'local';
 
 type StrategyTemplate = {
   id: StrategyType;
@@ -124,16 +125,52 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionStarted, setExtractionStarted] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>('speech');
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const audioUploadRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const localRecordingChunksRef = useRef<BlobPart[]>([]);
+  const userStoppedRef = useRef(false);
+  const speechSupportedRef = useRef(false);
 
   const selectedTemplate = STRATEGY_TEMPLATES.find(t => t.id === selectedType);
+
+  const applyExtractedData = (data: any) => {
+    if (!data || typeof data !== 'object') return;
+
+    const extractedName = typeof data.name === 'string' ? data.name : '';
+    const extractedDescription = typeof data.description === 'string' ? data.description : '';
+    const extractedHypothesis = typeof data.hypothesis === 'string' ? data.hypothesis : '';
+    const extractedParameters =
+      data.parameters && typeof data.parameters === 'object' && !Array.isArray(data.parameters) ? data.parameters : {};
+
+    setCreationMethod('ai');
+    setSelectedType((data.type as StrategyType) || 'custom');
+    setStrategyDetails({
+      name: extractedName,
+      description: extractedDescription,
+      hypothesis: extractedHypothesis,
+    });
+    setParameters(extractedParameters);
+    setStep('details');
+    setAgentSuggestion('✨ AI extraction complete. Review and refine before creating the strategy.');
+    setExtractionStarted(false);
+  };
+
+  useEffect(() => {
+    if (!initialData) return;
+    applyExtractedData(initialData);
+  }, [initialData]);
 
   const handleTypeSelect = (type: StrategyType) => {
     setSelectedType(type);
     const template = STRATEGY_TEMPLATES.find(t => t.id === type);
     if (template) {
       setParameters(template.suggestedParameters);
-      // Simulate agent suggestion
       setTimeout(() => {
         setAgentSuggestion(getAgentSuggestion(type));
       }, 500);
@@ -154,66 +191,240 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   };
 
   useEffect(() => {
-    // Initialize speech recognition
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-
-      recognitionRef.current.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-
-        if (finalTranscript) {
-          setTranscript(prev => {
-            const lastChar = prev.trim().slice(-1);
-            const needsSpace = lastChar && !['.', '!', '?'].includes(lastChar);
-            return prev + (needsSpace ? ' ' : '') + finalTranscript;
-          });
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        setIsRecording(false);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsRecording(false);
-      };
+    if (!SpeechRecognition) {
+      speechSupportedRef.current = false;
+      return;
     }
 
+    speechSupportedRef.current = true;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+
+      if (finalTranscript) {
+        setTranscript(prev => {
+          const trimmed = prev.trim();
+          const lastChar = trimmed.slice(-1);
+          const needsSpace = trimmed.length > 0 && !['.', '!', '?'].includes(lastChar);
+          return trimmed + (needsSpace ? '. ' : ' ') + finalTranscript;
+        });
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
+
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        setRecordingError('Microphone access denied. Please allow microphone permissions in your browser settings.');
+        userStoppedRef.current = true;
+        setIsRecording(false);
+      } else if (event.error === 'no-speech') {
+        // No speech detected - don't stop, just let it continue
+      } else if (event.error === 'network') {
+        setRecordingMode('local');
+        setRecordingError('Browser speech service network error. Switched to local recording mode. Click the mic again to record and transcribe through the app.');
+        userStoppedRef.current = true;
+        try { recognition.stop(); } catch { /* ignore */ }
+        setIsRecording(false);
+      } else if (event.error === 'aborted') {
+        // Ignore - this fires when we call .stop()
+      } else {
+        setRecordingError(`Speech recognition error: ${event.error}. Try again or type your strategy instead.`);
+        userStoppedRef.current = true;
+        setIsRecording(false);
+      }
+    };
+
+    recognition.onend = () => {
+      // Browser auto-stops recognition even with continuous=true (e.g., after silence).
+      // If the user didn't explicitly stop, restart it automatically.
+      if (!userStoppedRef.current) {
+        try {
+          recognition.start();
+        } catch {
+          // If restart fails, give up gracefully
+          setIsRecording(false);
+        }
+      } else {
+        setIsRecording(false);
+      }
+    };
+
+    recognitionRef.current = recognition;
+
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+      userStoppedRef.current = true;
+      try { recognition.stop(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
       }
     };
   }, []);
 
-  const toggleRecording = () => {
-    if (!recognitionRef.current) {
-      setAgentSuggestion("❌ Speech recognition is not supported in your browser.");
+  const stopLocalStream = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+  };
+
+  const finalizeLocalRecording = async () => {
+    const chunks = localRecordingChunksRef.current;
+    localRecordingChunksRef.current = [];
+    if (!chunks.length) {
+      setRecordingError('No audio captured. Please try again.');
       return;
     }
 
+    setIsTranscribingAudio(true);
+    try {
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const file = new File([blob], `strategy-recording-${Date.now()}.webm`, { type: blob.type || 'audio/webm' });
+      const { transcript: transcribedText } = await transcribeAudioUpload(file);
+      if (!transcribedText?.trim()) {
+        throw new Error('No transcript returned from audio transcription.');
+      }
+      setTranscript(prev => (prev.trim() ? `${prev.trim()}\n${transcribedText.trim()}` : transcribedText.trim()));
+      setAgentSuggestion('🎧 Local recording transcribed. Review/edit the text, then run extraction.');
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Audio transcription failed.';
+      setRecordingError(String(detail));
+    } finally {
+      setIsTranscribingAudio(false);
+      stopLocalStream();
+      mediaRecorderRef.current = null;
+    }
+  };
+
+  const startLocalRecording = async () => {
+    setRecordingError(null);
+    setAudioUploadError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const recorder = new MediaRecorder(stream);
+      localRecordingChunksRef.current = [];
+
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) {
+          localRecordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setRecordingError('Recording failed. Please try again.');
+        setIsRecording(false);
+        stopLocalStream();
+        mediaRecorderRef.current = null;
+      };
+
+      recorder.onstop = () => {
+        setIsRecording(false);
+        void finalizeLocalRecording();
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecordingMode('local');
+      setIsRecording(true);
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setRecordingError('Microphone access denied. Please allow microphone access and try again.');
+      } else if (err?.name === 'NotFoundError') {
+        setRecordingError('No microphone found. Please connect a microphone and try again.');
+      } else {
+        setRecordingError('Could not start local audio recording. Please check your microphone settings.');
+      }
+    }
+  };
+
+  const toggleRecording = async () => {
+    setRecordingError(null);
+    setAudioUploadError(null);
+
     if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      try {
-        recognitionRef.current.start();
+      if (recordingMode === 'local') {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        } else {
+          setIsRecording(false);
+          stopLocalStream();
+        }
+      } else {
+        userStoppedRef.current = true;
+        try { recognitionRef.current?.stop(); } catch { /* ignore */ }
+        setIsRecording(false);
+      }
+      return;
+    }
+
+    if (recordingMode === 'local' || !speechSupportedRef.current) {
+      if (!speechSupportedRef.current) {
+        setRecordingError('Live browser speech recognition is unavailable. Using local recording + server transcription.');
+      }
+      await startLocalRecording();
+      return;
+    }
+
+    // Request microphone permission first
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Release the stream immediately - we just needed to trigger the permission prompt
+      stream.getTracks().forEach(track => track.stop());
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setRecordingError('Microphone access denied. Please allow microphone access and try again.');
+      } else if (err.name === 'NotFoundError') {
+        setRecordingError('No microphone found. Please connect a microphone and try again.');
+      } else {
+        setRecordingError('Could not access microphone. Please check your audio settings.');
+      }
+      return;
+    }
+
+    // Start speech recognition
+    try {
+      userStoppedRef.current = false;
+      recognitionRef.current?.start();
+      setRecordingMode('speech');
+      setIsRecording(true);
+    } catch (error: any) {
+      if (error?.message?.includes('already started')) {
+        // Already running - just update the state
         setIsRecording(true);
-      } catch (error) {
+      } else {
         console.error('Failed to start recording:', error);
+        setRecordingError('Failed to start speech recognition. Please try again or type your strategy directly.');
       }
     }
   };
@@ -221,24 +432,74 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const handleExtractFromTranscript = async () => {
     if (!transcript.trim()) return;
 
+    setAudioUploadError(null);
     setIsExtracting(true);
-    onExtractionStart?.();
 
     try {
-      await startAgentExtraction({
-        transcript,
+      const extracted = await extractStrategy({
+        transcript: transcript.trim(),
         socket_id: socketId
       });
-
-      setExtractionStarted(true);
-      setAgentSuggestion("⚡ I've started the extraction in the background. You can close this wizard and I'll notify you when it's ready!");
-
+      applyExtractedData(extracted);
       setIsExtracting(false);
     } catch (error) {
-      console.error('Error starting extraction:', error);
-      setAgentSuggestion("❌ Sorry, I had trouble starting the extraction. Please try again.");
-      setIsExtracting(false);
+      console.error('Error running synchronous extraction:', error);
+      if (socketId) {
+        try {
+          onExtractionStart?.();
+          await startAgentExtraction({
+            transcript: transcript.trim(),
+            socket_id: socketId
+          });
+          setExtractionStarted(true);
+          setAgentSuggestion("⚡ I started background extraction. You can close this wizard and review when the result is ready.");
+        } catch (backgroundError) {
+          console.error('Error starting extraction:', backgroundError);
+          setAgentSuggestion("❌ Sorry, I had trouble starting the extraction. Please try again.");
+        } finally {
+          setIsExtracting(false);
+        }
+      } else {
+        setAgentSuggestion("❌ Sorry, I had trouble extracting from that transcript. Please try again.");
+        setIsExtracting(false);
+      }
     }
+  };
+
+  const handleAudioFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAudioUploadError(null);
+    setIsTranscribingAudio(true);
+
+    try {
+      const { transcript: transcribedText } = await transcribeAudioUpload(file);
+      if (!transcribedText?.trim()) {
+        throw new Error('No transcript returned from audio transcription.');
+      }
+
+      setTranscript(prev => (prev.trim() ? `${prev.trim()}\n${transcribedText.trim()}` : transcribedText.trim()));
+      setAgentSuggestion('🎧 Audio transcription complete. Review/edit the text, then run extraction.');
+    } catch (error: any) {
+      console.error('Audio transcription failed:', error);
+      const detail =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Audio transcription failed.';
+      setAudioUploadError(String(detail));
+    } finally {
+      if (audioUploadRef.current) {
+        audioUploadRef.current.value = '';
+      }
+      setIsTranscribingAudio(false);
+    }
+  };
+
+  const openAudioPicker = () => {
+    setAudioUploadError(null);
+    audioUploadRef.current?.click();
   };
 
   const handleNext = () => {
@@ -274,6 +535,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       type: selectedType,
       ...strategyDetails,
       parameters,
+      transcript: transcript.trim() || undefined,
       status: 'draft',
       version: 'v1.0',
       createdAt: new Date().toISOString(),
@@ -358,13 +620,21 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       <p className="subtitle">Explain your hypothesis, entry rules, and risk management.</p>
 
       <div className="agent-transcript-section ai-redesign">
-        <div className="transcript-header-row">
-          <label>Your Strategy Hypothesis & Rules</label>
-          <div className="recording-status">
-            {isRecording && <span className="pulse-dot"></span>}
-            <span>{isRecording ? 'Listening...' : 'Ready to record'}</span>
+          <div className="transcript-header-row">
+            <label>Your Strategy Hypothesis & Rules</label>
+            <div className="recording-status">
+              {isRecording && <span className="pulse-dot"></span>}
+              <span>
+                {isRecording
+                  ? recordingMode === 'local'
+                    ? 'Recording locally...'
+                    : 'Listening...'
+                  : recordingMode === 'local'
+                    ? 'Local recording mode'
+                    : 'Ready to record'}
+              </span>
+            </div>
           </div>
-        </div>
 
         <div className="transcript-input-wrapper">
           <div className="ai-textarea-wrapper">
@@ -395,9 +665,47 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
               {isRecording && <span className="mic-ring-animate"></span>}
             </button>
             <span className="action-hint">
-              {isRecording ? 'Click to stop and edit' : 'Click to start recording'}
+              {isRecording
+                ? recordingMode === 'local'
+                  ? 'Click to stop, then auto-transcribe'
+                  : 'Click to stop and edit'
+                : recordingMode === 'local'
+                  ? 'Local mode: click to record'
+                  : 'Click to start recording'}
             </span>
           </div>
+
+          <div className="audio-upload-row">
+            <input
+              ref={audioUploadRef}
+              type="file"
+              accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg"
+              onChange={handleAudioFileSelected}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="btn-audio-upload"
+              onClick={openAudioPicker}
+              disabled={isRecording || isTranscribingAudio || isExtracting || Boolean(isProcessing)}
+            >
+              {isTranscribingAudio ? '⏳ Transcribing audio...' : '📎 Upload Audio File'}
+            </button>
+            <span className="action-hint">Upload meeting audio and auto-convert it to text</span>
+          </div>
+
+          {recordingError && (
+            <div className="recording-error-msg">
+              <span>{recordingError}</span>
+              <button className="dismiss-error-btn" onClick={() => setRecordingError(null)}>Dismiss</button>
+            </div>
+          )}
+
+          {audioUploadError && (
+            <div className="recording-error-msg">
+              <span>{audioUploadError}</span>
+              <button className="dismiss-error-btn" onClick={() => setAudioUploadError(null)}>Dismiss</button>
+            </div>
+          )}
 
           {(isExtracting || isProcessing) ? (
             <div className="ai-processing-view">
@@ -1342,6 +1650,14 @@ const styles = `
     margin-bottom: 2.5rem;
   }
 
+  .audio-upload-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 1.5rem;
+  }
+
   .mic-primary-btn {
     width: 80px;
     height: 80px;
@@ -1397,6 +1713,27 @@ const styles = `
     font-size: 0.9rem;
     color: #9ca3af;
     font-weight: 600;
+  }
+
+  .btn-audio-upload {
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.12);
+    color: #d1fae5;
+    padding: 0.7rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .btn-audio-upload:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+
+  .btn-audio-upload:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .fluid-action {
@@ -1547,6 +1884,36 @@ const styles = `
     from { opacity: 0; }
     to { opacity: 1; }
   }
+  .recording-error-msg {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .dismiss-error-btn {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .dismiss-error-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
   .extraction-status-toast {
     background: rgba(16, 185, 129, 0.1);
     border: 1px solid #10b981;

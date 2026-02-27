@@ -96,7 +96,9 @@ io.on('connection', socket => {
 
 async function start() {
   const mongoConfig = resolveMongoConfig();
-  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? '').toLowerCase() === 'true';
+  // Default to allowing server to start without Mongo so core functionality
+  // (webhooks, socket.io, strategy extraction) is never blocked by DB issues.
+  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? 'true').toLowerCase() !== 'false';
   try {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);

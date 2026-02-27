@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Collection } from 'mongodb';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 
 // Mongo-backed cache for rate-limited Massive endpoints. Each cache entry is
 // keyed by a deterministic hash of the request parameters so different callers
@@ -56,6 +56,7 @@ function createParamsHash(value: Record<string, any>): string {
 // Lazily creates the TTL + unique indexes that keep the cache bounded.
 export async function ensureMarketCacheIndexes(): Promise<void> {
   if (indexesEnsured) return;
+  if (!isMongoReady()) return;
   const collection = marketCacheCollection();
   await collection.createIndex({ key: 1 }, { unique: true });
   await collection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -75,6 +76,12 @@ export async function fetchWithCache<T>(
   fetcher: () => Promise<T>,
   options?: { ticker?: string }
 ): Promise<CacheFetchResult<T>> {
+  // When MongoDB is not available, bypass the cache and call the fetcher directly.
+  if (!isMongoReady()) {
+    const data = await fetcher();
+    return { data, fetchedAt: new Date(), fromCache: false };
+  }
+
   await ensureMarketCacheIndexes();
   const now = new Date();
   const normalizedParams = normalizeValue(params);

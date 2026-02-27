@@ -2,7 +2,7 @@
   "name": "market-gateway",
   "private": true,
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only ./src/index.ts",
+    "dev": "NODE_OPTIONS=--openssl-legacy-provider ts-node-dev --respawn --transpile-only ./src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
