@@ -43,6 +43,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   }>({ status: 'idle' });
   const [wizardInitialData, setWizardInitialData] = useState<any>(null);
   const [strategyListRefreshKey, setStrategyListRefreshKey] = useState(0);
+  const [isCreatingStrategy, setIsCreatingStrategy] = useState(false);
 
   const handlePanelChange = (panelId: string) => {
     if (panelId !== 'chat') {
@@ -56,6 +57,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   };
 
   const handleWizardComplete = async (strategy: any) => {
+    if (isCreatingStrategy) return;
+    setIsCreatingStrategy(true);
     const strategyType = strategy?.type === 'futures' ? 'futures' : 'screener';
     const strategyName = typeof strategy?.name === 'string' && strategy.name.trim()
       ? strategy.name.trim()
@@ -66,6 +69,10 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     const strategyParams =
       strategy?.parameters && typeof strategy.parameters === 'object' && !Array.isArray(strategy.parameters)
         ? strategy.parameters
+        : {};
+    const paramDefs =
+      strategy?.parameterDefinitions && typeof strategy.parameterDefinitions === 'object'
+        ? strategy.parameterDefinitions
         : {};
 
     const payload: any = {
@@ -88,6 +95,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           strategy_template_type: strategy?.type ?? 'custom',
           hypothesis,
           transcript: transcript || undefined,
+          parameter_definitions: Object.keys(paramDefs).length > 0 ? paramDefs : undefined,
           ...strategyParams
         },
         schedule: 'manual'
@@ -112,6 +120,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         error?.message ||
         'Unknown error';
       toast.error(`Failed to create strategy: ${detail}`);
+    } finally {
+      setIsCreatingStrategy(false);
     }
   };
 
@@ -380,6 +390,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           initialData={wizardInitialData}
           socketId={socket?.id}
           isProcessing={backgroundExtraction.status === 'processing'}
+          isSubmitting={isCreatingStrategy}
           onExtractionStart={handleExtractionStart}
           onComplete={handleWizardComplete}
           onCancel={() => {

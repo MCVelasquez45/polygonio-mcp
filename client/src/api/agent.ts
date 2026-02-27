@@ -69,3 +69,82 @@ export async function transcribeAudioUpload(file: File, language = 'en'): Promis
   const response = await axios.post<{ transcript: string }>(`${AGENT_BASE_URL}/transcribe-audio`, payload);
   return response.data;
 }
+
+// ---------------------------------------------------------------------------
+// SIFT — Structured Information extraction From Transcripts
+// ---------------------------------------------------------------------------
+
+export type SiftField = {
+  id: string;
+  type: string;
+  prompt: string;
+};
+
+export type SiftExtractRequest = {
+  transcript: string;
+  fields: SiftField[];
+  phase_name?: string;
+  context?: string;
+  provider?: string;
+  model?: string;
+};
+
+export type SiftExtractResponse = {
+  data: Record<string, unknown>;
+  provider: string;
+  model: string;
+};
+
+export type SiftTemplateExtractRequest = {
+  transcript: string;
+  template?: string;
+  provider?: string;
+  model?: string;
+};
+
+export type SiftTemplateExtractResponse = {
+  data: Record<string, unknown>;
+  template: string;
+  provider: string;
+  model: string;
+};
+
+export type SiftTemplateInfo = {
+  fields: SiftField[];
+  field_count: number;
+};
+
+/** Stateless extraction with custom fields. */
+export async function siftExtract(payload: SiftExtractRequest): Promise<SiftExtractResponse> {
+  const response = await axios.post<SiftExtractResponse>(`${AGENT_BASE_URL}/sift/extract`, payload);
+  return response.data;
+}
+
+/** Extract using a built-in template (e.g. "trading-strategy", "meeting-notes"). */
+export async function siftExtractTemplate(
+  payload: SiftTemplateExtractRequest
+): Promise<SiftTemplateExtractResponse> {
+  const response = await axios.post<SiftTemplateExtractResponse>(
+    `${AGENT_BASE_URL}/sift/extract-template`,
+    payload
+  );
+  return response.data;
+}
+
+/** List all available SIFT extraction templates. */
+export async function siftListTemplates(): Promise<Record<string, SiftTemplateInfo>> {
+  const response = await axios.get<{ templates: Record<string, SiftTemplateInfo> }>(
+    `${AGENT_BASE_URL}/sift/templates`
+  );
+  return response.data.templates;
+}
+
+/** List available AI providers and their status. */
+export async function siftListProviders(): Promise<
+  Array<{ name: string; available: boolean; model: string | null }>
+> {
+  const response = await axios.get<{
+    providers: Array<{ name: string; available: boolean; model: string | null }>;
+  }>(`${AGENT_BASE_URL}/sift/providers`);
+  return response.data.providers;
+}

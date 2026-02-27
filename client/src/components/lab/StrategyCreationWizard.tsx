@@ -107,10 +107,34 @@ type Props = {
   initialData?: any;
   socketId?: string | null;
   isProcessing?: boolean;
+  isSubmitting?: boolean;
   onExtractionStart?: () => void;
 };
 
-export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, onExtractionStart }: Props) {
+/** Recursively flatten nested objects into dot-notation keys with primitive values. */
+function flattenParameters(obj: Record<string, any>, prefix = ''): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      Object.assign(result, flattenParameters(value, fullKey));
+    } else {
+      result[fullKey] = value;
+    }
+  }
+  return result;
+}
+
+/** Convert any value to a display string, handling objects/arrays gracefully. */
+function displayValue(value: any): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+  }
+  return String(value);
+}
+
+export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, isSubmitting, onExtractionStart }: Props) {
   const [step, setStep] = useState<WizardStep>(initialData ? 'details' : 'method');
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(initialData ? 'ai' : null);
   const [selectedType, setSelectedType] = useState<StrategyType | null>(initialData ? 'custom' : null);
@@ -120,6 +144,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     hypothesis: initialData?.hypothesis || '',
   });
   const [parameters, setParameters] = useState<Record<string, any>>(initialData?.parameters || {});
+  const [parameterDefinitions, setParameterDefinitions] = useState<Record<string, string>>(initialData?.parameter_definitions || {});
   const [agentSuggestion, setAgentSuggestion] = useState<string | null>(initialData ? "✨ AI Extraction complete! Review the details below." : null);
   const [transcript, setTranscript] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
@@ -145,8 +170,15 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     const extractedName = typeof data.name === 'string' ? data.name : '';
     const extractedDescription = typeof data.description === 'string' ? data.description : '';
     const extractedHypothesis = typeof data.hypothesis === 'string' ? data.hypothesis : '';
-    const extractedParameters =
+    const rawParameters =
       data.parameters && typeof data.parameters === 'object' && !Array.isArray(data.parameters) ? data.parameters : {};
+    const extractedDefinitions =
+      data.parameter_definitions && typeof data.parameter_definitions === 'object' && !Array.isArray(data.parameter_definitions)
+        ? data.parameter_definitions
+        : {};
+
+    // Flatten nested objects so the UI can render every field as a simple input
+    const flatParams = flattenParameters(rawParameters);
 
     setCreationMethod('ai');
     setSelectedType((data.type as StrategyType) || 'custom');
@@ -155,7 +187,8 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       description: extractedDescription,
       hypothesis: extractedHypothesis,
     });
-    setParameters(extractedParameters);
+    setParameters(flatParams);
+    setParameterDefinitions(extractedDefinitions);
     setStep('details');
     setAgentSuggestion('✨ AI extraction complete. Review and refine before creating the strategy.');
     setExtractionStarted(false);
@@ -532,9 +565,10 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
 
   const handleComplete = () => {
     const strategy = {
-      type: selectedType,
+      type: selectedType ?? 'custom',
       ...strategyDetails,
-      parameters,
+      parameters: flattenParameters(parameters),
+      parameterDefinitions: parameterDefinitions,
       transcript: transcript.trim() || undefined,
       status: 'draft',
       version: 'v1.0',
@@ -858,21 +892,50 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       <p className="subtitle">Configure initial parameters (can be optimized later)</p>
 
       <div className="parameters-grid">
-        {Object.entries(parameters).map(([key, value]) => (
-          <div key={key} className="form-group">
-            <label>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</label>
-            <input
-              type={typeof value === 'number' ? 'number' : 'text'}
-              value={value}
-              onChange={(e) => setParameters({
-                ...parameters,
-                [key]: typeof value === 'number' ? parseFloat(e.target.value) : e.target.value
-              })}
-              step={typeof value === 'number' && value < 1 ? 0.01 : 1}
-            />
-          </div>
-        ))}
+        {Object.entries(parameters).map(([key, value]) => {
+          const displayed = displayValue(value);
+          const definition = parameterDefinitions[key] ?? parameterDefinitions[key.replace(/\./g, '_')];
+          return (
+            <div key={key} className="form-group">
+              <label>{key.replace(/_/g, ' ').replace(/\./g, ' > ').replace(/\b\w/g, l => l.toUpperCase())}</label>
+              {typeof value === 'boolean' ? (
+                <select
+                  value={String(value)}
+                  onChange={(e) => setParameters({ ...parameters, [key]: e.target.value === 'true' })}
+                >
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              ) : (
+                <input
+                  type={typeof value === 'number' ? 'number' : 'text'}
+                  value={displayed}
+                  onChange={(e) => setParameters({
+                    ...parameters,
+                    [key]: typeof value === 'number' ? parseFloat(e.target.value) || 0 : e.target.value
+                  })}
+                  step={typeof value === 'number' && Math.abs(value) < 1 ? 0.01 : 1}
+                />
+              )}
+              {definition && <span className="form-hint">{definition}</span>}
+            </div>
+          );
+        })}
       </div>
+
+      {Object.keys(parameters).length === 0 && (
+        <div className="empty-params-hint">
+          <p>No parameters extracted yet. Go back to the AI Input step and run extraction, or add parameters manually below.</p>
+          <button
+            className="btn-agent-action"
+            onClick={() => {
+              setParameters({ custom_param_1: '' });
+            }}
+          >
+            + Add Parameter
+          </button>
+        </div>
+      )}
 
       <div className="agent-suggestion">
         <div className="suggestion-header">
@@ -884,51 +947,65 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     </div>
   );
 
-  const renderReviewStep = () => (
-    <div className="wizard-content review-summary">
-      <h3>Review & Create</h3>
-      <p className="subtitle">Confirm your strategy configuration</p>
+  const renderReviewStep = () => {
+    const reviewType = selectedType ?? 'custom';
+    const reviewTemplate = selectedTemplate ?? STRATEGY_TEMPLATES.find(t => t.id === 'custom');
 
-      <div className="review-section">
-        <h4>Strategy Type</h4>
-        <div className="review-value">
-          <span className="review-icon">{selectedTemplate?.icon}</span>
-          <span>{selectedTemplate?.name}</span>
+    return (
+      <div className="wizard-content review-summary">
+        <h3>Review & Create</h3>
+        <p className="subtitle">Confirm your strategy configuration</p>
+
+        <div className="review-section">
+          <h4>Strategy Type</h4>
+          <div className="review-value">
+            <span className="review-icon">{reviewTemplate?.icon ?? '🔧'}</span>
+            <span>{reviewTemplate?.name ?? reviewType}</span>
+          </div>
+        </div>
+
+        <div className="review-section">
+          <h4>Details</h4>
+          <div className="review-details">
+            <div><strong>Name:</strong> {strategyDetails.name || 'Unnamed Strategy'}</div>
+            <div><strong>Description:</strong> {strategyDetails.description || 'No description'}</div>
+            <div><strong>Hypothesis:</strong> {strategyDetails.hypothesis || 'No hypothesis defined'}</div>
+          </div>
+        </div>
+
+        <div className="review-section">
+          <h4>Parameters ({Object.keys(parameters).length})</h4>
+          <div className="parameters-review">
+            {Object.entries(parameters).map(([key, value]) => {
+              const definition = parameterDefinitions[key] ?? parameterDefinitions[key.replace(/\./g, '_')];
+              return (
+                <div key={key} className="param-item">
+                  <div className="param-item-content">
+                    <span className="param-key">{key.replace(/_/g, ' ').replace(/\./g, ' > ')}</span>
+                    <span className="param-value">{displayValue(value)}</span>
+                  </div>
+                  {definition && <span className="param-definition">{definition}</span>}
+                </div>
+              );
+            })}
+          </div>
+          {Object.keys(parameters).length === 0 && (
+            <p className="form-hint">No parameters configured. You can add them later in the Strategy Editor.</p>
+          )}
+        </div>
+
+        <div className="next-steps">
+          <h4>What&apos;s Next?</h4>
+          <ul>
+            <li>📝 Strategy will be created in <strong>Draft</strong> status</li>
+            <li>💻 Open in Strategy Editor to write or refine code</li>
+            <li>🔬 Run backtests to validate your hypothesis</li>
+            <li>📊 Paper trade before going live</li>
+          </ul>
         </div>
       </div>
-
-      <div className="review-section">
-        <h4>Details</h4>
-        <div className="review-details">
-          <div><strong>Name:</strong> {strategyDetails.name || 'Unnamed Strategy'}</div>
-          <div><strong>Description:</strong> {strategyDetails.description || 'No description'}</div>
-          <div><strong>Hypothesis:</strong> {strategyDetails.hypothesis || 'No hypothesis defined'}</div>
-        </div>
-      </div>
-
-      <div className="review-section">
-        <h4>Parameters</h4>
-        <div className="parameters-review">
-          {Object.entries(parameters).map(([key, value]) => (
-            <div key={key} className="param-item">
-              <span className="param-key">{key.replace(/_/g, ' ')}</span>
-              <span className="param-value">{value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="next-steps">
-        <h4>What's Next?</h4>
-        <ul>
-          <li>📝 Strategy will be created in <strong>Draft</strong> status</li>
-          <li>💻 Open in Strategy Editor to write or refine code</li>
-          <li>🔬 Run backtests to validate your hypothesis</li>
-          <li>📊 Paper trade before going live</li>
-        </ul>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="strategy-wizard-overlay">
@@ -966,8 +1043,8 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
               Next →
             </button>
           ) : step === 'transcript' ? null : (
-            <button className="btn-primary create" onClick={handleComplete}>
-              🚀 Create Strategy
+            <button className="btn-primary create" onClick={handleComplete} disabled={isSubmitting}>
+              {isSubmitting ? 'Creating...' : '🚀 Create Strategy'}
             </button>
           )}
         </div>
@@ -1263,12 +1340,10 @@ const styles = `
     gap: 0.5rem;
   }
 
-  .param-item {
+  .param-item-content {
     display: flex;
     justify-content: space-between;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 0.375rem;
+    width: 100%;
   }
 
   .param-key {
@@ -1281,6 +1356,53 @@ const styles = `
     color: #e5e5e5;
     font-weight: 500;
     font-size: 0.85rem;
+    max-width: 60%;
+    text-align: right;
+    word-break: break-word;
+  }
+
+  .param-definition {
+    display: block;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.25rem;
+    line-height: 1.4;
+    font-style: italic;
+  }
+
+  .param-item {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0.375rem;
+  }
+
+  .empty-params-hint {
+    text-align: center;
+    padding: 2rem;
+    color: #6b7280;
+    font-size: 0.9rem;
+  }
+
+  .empty-params-hint p {
+    margin: 0 0 1rem;
+  }
+
+  .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    color: #e5e5e5;
+    font-size: 0.9rem;
+    transition: border-color 0.15s ease;
+  }
+
+  .form-group select:focus {
+    outline: none;
+    border-color: #10b981;
   }
 
   .next-steps {

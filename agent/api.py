@@ -17,10 +17,12 @@ from openai import AsyncOpenAI
 from agents.exceptions import InputGuardrailTripwireTriggered
 
 from core.polygon_agent import run_analysis
+from core.sift_router import router as sift_router
 from instrumentation import setup_telemetry
 
 app = FastAPI(title="Polygon Market Analysis API", version="1.0.0")
 setup_telemetry(app)
+app.include_router(sift_router)
 
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
@@ -61,6 +63,7 @@ class ExtractionResponse(BaseModel):
     description: str
     hypothesis: str
     parameters: dict[str, Any]
+    parameter_definitions: dict[str, str] = {}
 
 
 class AudioTranscriptionRequest(BaseModel):
@@ -211,24 +214,77 @@ async def generate_strategy(request: CodeGenRequest) -> CodeGenResponse:
 
 
 async def _perform_extraction(transcript: str) -> dict[str, Any]:
-    prompt = f"Call extract_strategy_parameters with this transcript: {transcript}"
-    
-    # We disable guardrails for this technical extraction task to avoid false positives
+    """Extract a structured trading strategy using SIFT's extraction engine."""
+    import asyncio
+    from core.sift_router import TEMPLATES, _configure_provider, _run_extraction
+
+    _configure_provider(None, None)  # uses SIFT_PROVIDER env or defaults to anthropic
+    fields = TEMPLATES["trading-strategy"]
+
+    try:
+        data = await asyncio.to_thread(
+            _run_extraction, transcript, fields, "trading-strategy", ""
+        )
+    except Exception as exc:
+        print(f"[AGENT] SIFT extraction failed, falling back to LLM: {exc}")
+        return await _perform_extraction_llm_fallback(transcript)
+
+    # Flatten parameters if SIFT returned nested maps
+    params = data.get("parameters")
+    if isinstance(params, dict):
+        flat: dict[str, Any] = {}
+        for k, v in params.items():
+            if isinstance(v, dict):
+                for nk, nv in v.items():
+                    flat[f"{k}_{nk}"] = nv
+            else:
+                flat[k] = v
+        data["parameters"] = flat
+
+    if "parameter_definitions" not in data or not isinstance(data.get("parameter_definitions"), dict):
+        data["parameter_definitions"] = {}
+
+    return data
+
+
+async def _perform_extraction_llm_fallback(transcript: str) -> dict[str, Any]:
+    """Fallback extraction using the raw LLM agent when SIFT is unavailable."""
+    prompt = f"""Extract a structured trading strategy from the following transcript.
+
+Return ONLY valid JSON with these keys:
+- "name": short strategy name (string)
+- "description": one-paragraph description of the strategy (string)
+- "hypothesis": the core trading hypothesis being tested (string)
+- "type": one of "momentum", "mean_reversion", "volatility", "0dte", "spreads", "futures", or "custom" (string)
+- "parameters": flat key-value object where every value is a string, number, or boolean — NOT nested objects. Use snake_case keys.
+- "parameter_definitions": object mapping each parameter key to a plain-English definition.
+
+IMPORTANT:
+- All parameter values must be primitives (string, number, boolean). Do NOT nest objects.
+- For complex rules, break them into separate flat parameters with descriptive names.
+
+Transcript:
+{transcript}"""
+
+    import re
+
     result = await run_analysis(prompt, skip_mcp=True, enforce_guardrail=False)
-    
     final_output = getattr(result, "final_output", result)
     output_text = str(final_output).strip()
-    
-    # Extract JSON from potential conversational text
-    import re
+
     json_match = re.search(r'(\{.*\})', output_text, re.DOTALL)
     if json_match:
         output_text = json_match.group(1)
 
     try:
-        return json.loads(output_text)
+        data = json.loads(output_text)
     except Exception as exc:
         raise ValueError(f"Failed to parse agent output as JSON: {output_text}") from exc
+
+    if "parameter_definitions" not in data:
+        data["parameter_definitions"] = {}
+
+    return data
 
 
 async def process_extraction_background(transcript: str, socket_id: str | None):
