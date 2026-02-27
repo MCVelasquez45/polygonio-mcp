@@ -22,7 +22,8 @@
       "Bash(# Check if there''s a .pth file or sitecustomize that adds 3.14 paths find /Users/sirrelesteinfeld_1/.pyenv/versions/3.13.0/lib/python3.13/site-packages -name \"\"*.pth\"\")",
       "Bash(curl:*)",
       "Bash(# Check all env vars for Anthropic key env | grep ANTHROPIC)",
-      "Bash(mongosh:*)"
+      "Bash(mongosh:*)",
+      "Bash(npx vite build:*)"
     ]
   }
 }

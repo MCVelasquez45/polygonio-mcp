@@ -75,6 +75,10 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         ? strategy.parameterDefinitions
         : {};
 
+    const entryRules = Array.isArray(strategy?.entryRules) ? strategy.entryRules.filter((r: string) => r?.trim()) : [];
+    const exitRules = Array.isArray(strategy?.exitRules) ? strategy.exitRules.filter((r: string) => r?.trim()) : [];
+    const riskManagement = Array.isArray(strategy?.riskManagement) ? strategy.riskManagement.filter((r: string) => r?.trim()) : [];
+
     const payload: any = {
       name: strategyName,
       description: strategyDescription,
@@ -96,6 +100,9 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           hypothesis,
           transcript: transcript || undefined,
           parameter_definitions: Object.keys(paramDefs).length > 0 ? paramDefs : undefined,
+          entry_rules: entryRules.length > 0 ? entryRules : undefined,
+          exit_rules: exitRules.length > 0 ? exitRules : undefined,
+          risk_management: riskManagement.length > 0 ? riskManagement : undefined,
           ...strategyParams
         },
         schedule: 'manual'
@@ -270,7 +277,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           <StrategyEditorPanel
             strategyId={selectedStrategyId || undefined}
             onRunBacktest={handleRunBacktest}
-            onSave={(code) => console.log('Save code', code)}
+            onSave={() => setStrategyListRefreshKey(prev => prev + 1)}
+            onBack={() => setActivePanel('lab-strategies')}
           />
         );
       case 'lab-backtest-results':

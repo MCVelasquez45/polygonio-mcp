@@ -107,14 +107,24 @@ router.get('/strategy/:id', async (req, res) => {
   }
 });
 
-// Update strategy (e.g., add backtest results)
+// Update strategy — supports full field updates
 router.patch('/strategy/:id', async (req, res) => {
   try {
-    const { status, backtestResults } = req.body;
+    const {
+      name, description, status, backtestResults,
+      screenerConfig, modelConfig, zonexiConfig, futuresConfig,
+    } = req.body;
+
     const update: any = {};
 
+    if (typeof name === 'string') update.name = name;
+    if (typeof description === 'string') update.description = description;
     if (status) update.status = status;
     if (backtestResults) update.backtestResults = backtestResults;
+    if (screenerConfig) update.screenerConfig = screenerConfig;
+    if (modelConfig) update.modelConfig = modelConfig;
+    if (zonexiConfig) update.zonexiConfig = zonexiConfig;
+    if (futuresConfig) update.futuresConfig = futuresConfig;
 
     const strategy = await LabStrategyModel.findByIdAndUpdate(
       req.params.id,

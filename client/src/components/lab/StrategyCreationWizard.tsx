@@ -145,6 +145,9 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   });
   const [parameters, setParameters] = useState<Record<string, any>>(initialData?.parameters || {});
   const [parameterDefinitions, setParameterDefinitions] = useState<Record<string, string>>(initialData?.parameter_definitions || {});
+  const [entryRules, setEntryRules] = useState<string[]>(initialData?.entry_rules || []);
+  const [exitRules, setExitRules] = useState<string[]>(initialData?.exit_rules || []);
+  const [riskManagement, setRiskManagement] = useState<string[]>(initialData?.risk_management || []);
   const [agentSuggestion, setAgentSuggestion] = useState<string | null>(initialData ? "✨ AI Extraction complete! Review the details below." : null);
   const [transcript, setTranscript] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
@@ -189,6 +192,9 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     });
     setParameters(flatParams);
     setParameterDefinitions(extractedDefinitions);
+    setEntryRules(Array.isArray(data.entry_rules) ? data.entry_rules : []);
+    setExitRules(Array.isArray(data.exit_rules) ? data.exit_rules : []);
+    setRiskManagement(Array.isArray(data.risk_management) ? data.risk_management : []);
     setStep('details');
     setAgentSuggestion('✨ AI extraction complete. Review and refine before creating the strategy.');
     setExtractionStarted(false);
@@ -569,6 +575,9 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       ...strategyDetails,
       parameters: flattenParameters(parameters),
       parameterDefinitions: parameterDefinitions,
+      entryRules,
+      exitRules,
+      riskManagement,
       transcript: transcript.trim() || undefined,
       status: 'draft',
       version: 'v1.0',
