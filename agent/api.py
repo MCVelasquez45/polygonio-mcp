@@ -62,8 +62,12 @@ class ExtractionResponse(BaseModel):
     name: str
     description: str
     hypothesis: str
+    type: str = "custom"
     parameters: dict[str, Any]
     parameter_definitions: dict[str, str] = {}
+    entry_rules: list[str] = []
+    exit_rules: list[str] = []
+    risk_management: list[str] = []
 
 
 class AudioTranscriptionRequest(BaseModel):
@@ -244,6 +248,12 @@ async def _perform_extraction(transcript: str) -> dict[str, Any]:
     if "parameter_definitions" not in data or not isinstance(data.get("parameter_definitions"), dict):
         data["parameter_definitions"] = {}
 
+    for list_field in ("entry_rules", "exit_rules", "risk_management"):
+        if list_field not in data or not isinstance(data.get(list_field), list):
+            data[list_field] = []
+    if "type" not in data or not isinstance(data.get("type"), str):
+        data["type"] = "custom"
+
     return data
 
 
@@ -258,10 +268,14 @@ Return ONLY valid JSON with these keys:
 - "type": one of "momentum", "mean_reversion", "volatility", "0dte", "spreads", "futures", or "custom" (string)
 - "parameters": flat key-value object where every value is a string, number, or boolean — NOT nested objects. Use snake_case keys.
 - "parameter_definitions": object mapping each parameter key to a plain-English definition.
+- "entry_rules": array of strings, each describing a condition that must be true before placing a trade.
+- "exit_rules": array of strings, each describing an exit rule, stop-loss condition, or profit-taking trigger.
+- "risk_management": array of strings, each describing a risk management rule (position sizing, max daily loss, drawdown limits, etc.).
 
 IMPORTANT:
 - All parameter values must be primitives (string, number, boolean). Do NOT nest objects.
 - For complex rules, break them into separate flat parameters with descriptive names.
+- entry_rules, exit_rules, and risk_management must be arrays of plain-English rule strings.
 
 Transcript:
 {transcript}"""
@@ -283,6 +297,11 @@ Transcript:
 
     if "parameter_definitions" not in data:
         data["parameter_definitions"] = {}
+    for list_field in ("entry_rules", "exit_rules", "risk_management"):
+        if list_field not in data or not isinstance(data.get(list_field), list):
+            data[list_field] = []
+    if "type" not in data or not isinstance(data.get("type"), str):
+        data["type"] = "custom"
 
     return data
 
