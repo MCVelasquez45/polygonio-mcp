@@ -138,8 +138,8 @@ function parseCreditSpreadConfig(
   const atrRatioMax = Math.max(1.0, rawAtrRatio);
 
   return {
-    deltaTarget: Number(params.option_delta_target) || 0.10,
-    spreadWidthPct: Number(params.spread_width_pct) || 0.001, // default ~$5 on SPX ~$5500
+    deltaTarget: Number(params.option_delta_target) || 0.12,
+    spreadWidthPct: Number(params.spread_width_pct) || 0.003, // default ~$16.50 on ES ~$5500 (realistic $15-25 wide 0-DTE verticals)
     maxLossMultiple,
     atrFilterMultiple: atrRatioMax,
     vixChangePctMax,
@@ -228,14 +228,19 @@ function deltaToOtmDistance(deltaTarget: number, dailyVolPct: number): number {
 /**
  * Estimate credit collected for a credit spread as a fraction of spread width.
  * Higher delta → more premium, higher vol → more premium.
+ *
+ * Calibrated against real 0-DTE SPX vertical pricing:
+ * - 10-delta $5-wide: ~$0.50-$1.50 (10-30% of width)
+ * - 15-delta $15-wide: ~$3.00-$5.00 (20-33% of width)
+ * - 20-delta $25-wide: ~$7.00-$12.00 (28-48% of width)
  */
 function estimateCreditFraction(deltaTarget: number, dailyVolPct: number): number {
   // Empirical: credit ≈ delta * scaleFactor, adjusted for vol
-  // At normal vol (VIX ~15, daily vol ~1%), 10-delta spread → ~25% of width
+  // At normal vol (VIX ~15, daily vol ~1%), 12-delta spread → ~30% of width
   const volAdjust = Math.max(0.8, Math.min(1.5, dailyVolPct / 0.01));
   const baseFraction = deltaTarget * 2.5 * volAdjust;
-  // Clamp between 5% and 60% of spread width
-  return Math.max(0.05, Math.min(0.60, baseFraction));
+  // Clamp between 8% and 55% of spread width
+  return Math.max(0.08, Math.min(0.55, baseFraction));
 }
 
 type CreditSpreadTrade = {
@@ -639,19 +644,24 @@ const DEFAULT_STRESS_SCENARIOS: StressScenario[] = [
     overrides: { vixChangePctMax: 7.5 },
   },
   {
-    name: 'Afternoon Frac 0.50',
-    description: 'Afternoon captures 50% of daily range instead of 35%',
-    overrides: { afternoonFraction: 0.50 },
+    name: 'Higher Delta (0.15)',
+    description: 'Delta target 0.15 — more premium collected but strikes closer to money',
+    overrides: { deltaTarget: 0.15 },
   },
   {
-    name: 'Afternoon Frac 0.65',
-    description: 'Afternoon captures 65% of daily range — late-day reversal regime',
-    overrides: { afternoonFraction: 0.65 },
+    name: 'Higher Delta (0.20)',
+    description: 'Delta target 0.20 — aggressive premium, significantly higher breach risk',
+    overrides: { deltaTarget: 0.20 },
+  },
+  {
+    name: 'Wider Spreads (0.5%)',
+    description: 'Spread width at 0.5% of underlying — tests credit-to-fee ratio improvement',
+    overrides: { spreadWidthPct: 0.005 },
   },
   {
     name: 'Wide Spreads + High Vol',
-    description: 'Spread width doubled + 2x volatility — slippage-heavy regime',
-    overrides: { spreadWidthPct: 0.002, volMultiplier: 2.0 },
+    description: 'Spread width 0.5% + 2x volatility — worst-case slippage regime',
+    overrides: { spreadWidthPct: 0.005, volMultiplier: 2.0 },
   },
   {
     name: 'Tight Stops (1.0x credit)',
