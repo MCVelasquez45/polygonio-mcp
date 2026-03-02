@@ -45,7 +45,7 @@ export type FuturesBacktestResult = {
   strategyId: string;
   strategyName: string;
   symbol: string;
-  provider: 'databento' | 'synthetic' | 'quandl';
+  provider: 'databento' | 'synthetic' | 'quandl' | 'polygon';
   config: FuturesBacktestConfig;
   diagnostics: {
     usedFallbackData: boolean;
@@ -59,6 +59,7 @@ export type FuturesBacktestResult = {
     winRatePct: number;
     totalPnl: number;
     tradeCount: number;
+    profitFactor?: number;
   };
   equityCurve: Array<{ timestamp: string; equity: number }>;
   tradeLedger: Array<{
@@ -151,6 +152,56 @@ export type FuturesEngineState = {
       riskUtilizationPct: number;
     };
   }>;
+};
+
+export type AiSuggestion = {
+  field: string;
+  currentValue: unknown;
+  suggestedValue: unknown;
+  reasoning: string;
+  action?: 'add' | 'modify' | 'remove';
+};
+
+export type StrategyVersion = {
+  _id: string;
+  strategyId: string;
+  versionNumber: number;
+  versionLabel: string;
+  snapshot: Record<string, unknown>;
+  backtestId?: string;
+  backtestMetrics?: {
+    totalReturnPct: number;
+    sharpeRatio: number;
+    maxDrawdownPct: number;
+    winRatePct: number;
+    totalPnl: number;
+    tradeCount: number;
+    profitFactor?: number;
+  };
+  aiReview?: {
+    analysis: string;
+    suggestions?: AiSuggestion[];
+  };
+  createdAt: string;
+};
+
+export type StressTestScenarioResult = {
+  scenario: string;
+  description: string;
+  metrics: {
+    totalReturnPct: number;
+    sharpeRatio: number;
+    maxDrawdownPct: number;
+    winRatePct: number;
+    totalPnl: number;
+    tradeCount: number;
+    profitFactor: number;
+  };
+  overrides: Record<string, unknown>;
+};
+
+export type StressTestResponse = {
+  scenarios: StressTestScenarioResult[];
 };
 
 export type FuturesHealthMetrics = {

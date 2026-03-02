@@ -5,6 +5,17 @@ import {
   FuturesPromotionReportModel
 } from '../models/futuresModels';
 import { getContractSpec } from './contractSpecs.service';
+import { fetchFuturesDailyBars, type FuturesBar } from './databentoGateway.service';
+import {
+  evaluateRuleBasedSignal,
+  hasMatchableRules,
+  computeSMA,
+  computeEMA,
+  computeRSI,
+  computeATR,
+  type SignalContext,
+  type StrategyRules,
+} from './signalEngine.service';
 
 type StartSessionInput = {
   strategyId: string;
@@ -17,6 +28,12 @@ type StartSessionInput = {
   slippageBps: number;
   feePerContract: number;
   mode?: 'lab-paper' | 'engine-paper';
+  strategyRules?: {
+    entry_rules: string[];
+    exit_rules: string[];
+    risk_management: string[];
+    parameters: Record<string, unknown>;
+  };
 };
 
 type RuntimeSessionState = {
@@ -25,6 +42,12 @@ type RuntimeSessionState = {
   timer: NodeJS.Timeout;
   mode: 'lab-paper' | 'engine-paper';
   emergencyStop: boolean;
+  // Strategy-aware paper trading state
+  strategyRules?: StrategyRules;
+  barHistory: FuturesBar[];
+  signalPosition: 1 | -1 | 0;
+  signalEntryPrice: number;
+  peakEquity: number;
 };
 
 type FuturesHealthMetric = {
@@ -256,6 +279,238 @@ function createSessionTimer(runtime: RuntimeSessionState) {
   }, 3000);
 }
 
+/**
+ * Strategy-aware timer: evaluates signal engine rules on each price tick.
+ * Replaces random fills with signal-driven trading.
+ */
+function createStrategyTimer(runtime: RuntimeSessionState) {
+  const random = seededRandom(hashSeed(runtime.sessionId));
+  const lookback = 10;
+
+  return setInterval(async () => {
+    const session = await FuturesPaperSessionModel.findById(runtime.sessionId);
+    if (!session) return;
+    if (session.status !== 'running' && session.status !== 'deployed') return;
+    if (runtime.emergencyStop) return;
+
+    const spec = await getContractSpec(session.symbol);
+    if (!spec) return;
+    const rules = runtime.strategyRules;
+    if (!rules) return;
+
+    // Simulate price movement from last mark
+    const drift = (random() - 0.49) * 0.0025;
+    const nextPrice = Math.max(0.01, session.state.markPrice * (1 + drift));
+
+    // Build a synthetic bar from the current tick
+    const now = new Date();
+    const syntheticBar: FuturesBar = {
+      timestamp: now.toISOString(),
+      open: session.state.markPrice,
+      high: Math.max(session.state.markPrice, nextPrice) * (1 + random() * 0.001),
+      low: Math.min(session.state.markPrice, nextPrice) * (1 - random() * 0.001),
+      close: nextPrice,
+      volume: Math.round(1000 + random() * 5000),
+    };
+
+    // Add to history and cap at 100 bars
+    runtime.barHistory.push(syntheticBar);
+    if (runtime.barHistory.length > 100) {
+      runtime.barHistory = runtime.barHistory.slice(-100);
+    }
+
+    const history = runtime.barHistory;
+    const contracts = Math.max(1, session.config.contracts);
+    const slippageMultiplier = session.config.slippageBps / 10000;
+
+    // Build signal context
+    const ctx: SignalContext = {
+      bar: syntheticBar,
+      barIndex: history.length - 1,
+      history: history.slice(-lookback),
+      position: runtime.signalPosition,
+      entryPrice: runtime.signalEntryPrice,
+      sma: computeSMA(history, lookback),
+      ema: computeEMA(history, lookback),
+      rsi: computeRSI(history, 14),
+      atr: computeATR(history, 14),
+      dailyPnl: session.state.dailyPnl,
+      totalPnl: session.state.realizedPnl + session.state.unrealizedPnl,
+      equity: session.state.equity,
+      peakEquity: runtime.peakEquity,
+      initialCapital: session.config.initialCapital,
+    };
+
+    // Evaluate signal
+    const engineSignal = evaluateRuleBasedSignal(rules, ctx);
+    let targetPosition = runtime.signalPosition;
+    let signalReason = '';
+
+    if (engineSignal) {
+      targetPosition = engineSignal.action;
+      signalReason = engineSignal.reason;
+    } else if (history.length > lookback) {
+      // Fallback: SMA crossover
+      if (syntheticBar.close > ctx.sma * 1.0025) targetPosition = 1;
+      else if (syntheticBar.close < ctx.sma * 0.9975) targetPosition = -1;
+      signalReason = 'SMA fallback';
+    }
+
+    // Update mark price
+    const pointMove = nextPrice - session.state.markPrice;
+    const positionSign = runtime.signalPosition;
+    session.state.markPrice = nextPrice;
+
+    // Mark-to-market for open position
+    if (runtime.signalPosition !== 0) {
+      const mtmDelta = pointMove * spec.contractMultiplier * contracts * positionSign;
+      session.state.unrealizedPnl += mtmDelta;
+    }
+
+    // Execute trade if signal changed
+    if (targetPosition !== runtime.signalPosition) {
+      const fee = session.config.feePerContract * contracts;
+      const slip = Math.abs(nextPrice * slippageMultiplier * spec.contractMultiplier * contracts);
+
+      // Close existing position
+      if (runtime.signalPosition !== 0) {
+        const grossPoints = (nextPrice - runtime.signalEntryPrice) * runtime.signalPosition;
+        const grossPnl = grossPoints * spec.contractMultiplier * contracts;
+        const closePnl = grossPnl - slip - fee;
+
+        session.state.realizedPnl += closePnl;
+        session.state.unrealizedPnl = 0;
+        session.state.cash += closePnl;
+
+        const exitSide = runtime.signalPosition === 1 ? 'short' : 'long'; // closing = opposite
+
+        io?.emit('futures:order:filled', {
+          sessionId: runtime.sessionId,
+          symbol: session.symbol,
+          side: exitSide,
+          contracts,
+          fillPrice: nextPrice,
+          pnl: closePnl,
+          reason: signalReason || 'signal exit',
+          signalSource: engineSignal?.source ?? 'sma',
+          timestamp: now.toISOString(),
+        });
+
+        session.events.push({
+          type: 'order_filled',
+          timestamp: now.toISOString(),
+          payload: { side: exitSide, contracts, fillPrice: nextPrice, pnl: closePnl, reason: signalReason },
+        } as any);
+      }
+
+      // Open new position
+      if (targetPosition !== 0) {
+        runtime.signalEntryPrice = nextPrice;
+        const entrySide = targetPosition === 1 ? 'long' : 'short';
+
+        session.state.position = {
+          side: entrySide,
+          contracts,
+          avgEntryPrice: nextPrice,
+          currentContract: `${session.symbol}FUT`,
+          openedAt: now.toISOString(),
+        } as any;
+
+        io?.emit('futures:order:filled', {
+          sessionId: runtime.sessionId,
+          symbol: session.symbol,
+          side: entrySide,
+          contracts,
+          fillPrice: nextPrice,
+          pnl: 0,
+          reason: signalReason || 'signal entry',
+          signalSource: engineSignal?.source ?? 'sma',
+          timestamp: now.toISOString(),
+        });
+
+        session.events.push({
+          type: 'order_filled',
+          timestamp: now.toISOString(),
+          payload: { side: entrySide, contracts, fillPrice: nextPrice, pnl: 0, reason: signalReason },
+        } as any);
+      } else {
+        session.state.position = {
+          side: 'flat',
+          contracts: 0,
+          avgEntryPrice: 0,
+          currentContract: `${session.symbol}FUT`,
+          openedAt: null,
+        } as any;
+      }
+
+      runtime.signalPosition = targetPosition;
+    }
+
+    // Update equity and risk metrics
+    session.state.dailyPnl = session.state.realizedPnl + session.state.unrealizedPnl;
+    session.state.equity = session.config.initialCapital + session.state.dailyPnl;
+    session.state.marginUsed = Math.abs(runtime.signalPosition) * contracts * spec.defaultInitialMargin;
+    session.state.marginUtilizationPct = session.state.equity > 0
+      ? (session.state.marginUsed / session.state.equity) * 100
+      : 100;
+    session.state.riskUtilizationPct = session.config.maxDailyLoss > 0
+      ? Math.min(100, (Math.abs(Math.min(0, session.state.dailyPnl)) / session.config.maxDailyLoss) * 100)
+      : 0;
+    session.state.lastPriceUpdateAt = now.toISOString();
+
+    if (session.state.equity > runtime.peakEquity) {
+      runtime.peakEquity = session.state.equity;
+    }
+
+    // Risk breaker: pause if daily loss exceeded
+    if (session.state.riskUtilizationPct >= 100) {
+      session.status = 'paused';
+      session.events.push({
+        type: 'risk_update',
+        timestamp: now.toISOString(),
+        payload: { reason: 'max daily loss breached', riskUtilizationPct: session.state.riskUtilizationPct },
+      } as any);
+      io?.emit('futures:risk:update', {
+        sessionId: runtime.sessionId,
+        symbol: session.symbol,
+        status: 'paused',
+        reason: 'max daily loss breached',
+      });
+    }
+
+    await persistStateAndBroadcast(runtime.sessionId, {
+      eventType: 'market_update',
+      eventPayload: {
+        markPrice: nextPrice,
+        dailyPnl: session.state.dailyPnl,
+        signalPosition: runtime.signalPosition,
+        signalReason,
+      },
+    });
+  }, 3000);
+}
+
+/**
+ * Fetch recent price history from Polygon for strategy-aware paper sessions.
+ * Returns the last N daily bars and the most recent close as initial mark price.
+ */
+async function fetchInitialPriceData(symbol: string): Promise<{ markPrice: number; bars: FuturesBar[] }> {
+  try {
+    const endDate = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10); // 60 days back
+    const response = await fetchFuturesDailyBars({ symbol, startDate, endDate });
+    if (response.bars.length > 0) {
+      const markPrice = response.bars[response.bars.length - 1].close;
+      console.log(`[PAPER] Fetched ${response.bars.length} bars from ${response.provider} for ${symbol}, mark price: ${markPrice}`);
+      return { markPrice, bars: response.bars.slice(-50) }; // keep last 50 bars for indicators
+    }
+  } catch (err: any) {
+    console.warn(`[PAPER] Failed to fetch initial price for ${symbol}:`, err?.message);
+  }
+  // Fallback to hardcoded base price
+  return { markPrice: basePrice(symbol), bars: [] };
+}
+
 export function initFuturesRuntime(socketServer: SocketServer) {
   io = socketServer;
 }
@@ -263,6 +518,12 @@ export function initFuturesRuntime(socketServer: SocketServer) {
 export async function startFuturesPaperSession(input: StartSessionInput) {
   const spec = await getContractSpec(input.symbol);
   if (!spec) throw new Error(`Unsupported symbol ${input.symbol}`);
+
+  // Fetch real price data for strategy-aware sessions
+  const useStrategy = input.strategyRules && hasMatchableRules(input.strategyRules);
+  const { markPrice: initialMarkPrice, bars: initialBars } = useStrategy
+    ? await fetchInitialPriceData(input.symbol)
+    : { markPrice: basePrice(input.symbol), bars: [] as FuturesBar[] };
 
   const now = new Date();
   const session = await FuturesPaperSessionModel.create({
@@ -280,7 +541,7 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
       feePerContract: input.feePerContract
     },
     state: {
-      markPrice: basePrice(input.symbol),
+      markPrice: initialMarkPrice,
       lastPriceUpdateAt: now.toISOString(),
       cash: input.initialCapital,
       equity: input.initialCapital,
@@ -303,7 +564,12 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
       {
         type: 'session_started',
         timestamp: now.toISOString(),
-        payload: { mode: input.mode ?? 'lab-paper' }
+        payload: {
+          mode: input.mode ?? 'lab-paper',
+          strategyAware: !!useStrategy,
+          initialMarkPrice,
+          barsLoaded: initialBars.length,
+        }
       }
     ],
     startedAt: now
@@ -315,10 +581,23 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
     symbol: input.symbol.toUpperCase(),
     mode: input.mode ?? 'lab-paper',
     emergencyStop: false,
-    timer: setInterval(() => undefined, 1000)
+    timer: setInterval(() => undefined, 1000),
+    // Strategy-aware state
+    strategyRules: useStrategy ? input.strategyRules : undefined,
+    barHistory: initialBars,
+    signalPosition: 0,
+    signalEntryPrice: 0,
+    peakEquity: input.initialCapital,
   };
   clearInterval(runtimeState.timer);
-  runtimeState.timer = createSessionTimer(runtimeState);
+
+  // Use strategy timer if rules are provided, otherwise use simulated timer
+  if (useStrategy) {
+    console.log(`[PAPER] Starting strategy-aware session for ${input.strategyName} (${initialBars.length} warmup bars)`);
+    runtimeState.timer = createStrategyTimer(runtimeState);
+  } else {
+    runtimeState.timer = createSessionTimer(runtimeState);
+  }
   runtimeSessions.set(sessionId, runtimeState);
 
   updateHealth(input.symbol, Date.now(), 'running');

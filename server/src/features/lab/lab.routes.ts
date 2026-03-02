@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import { LabStrategyModel } from '../handoff/models/strategyModel';
+import { LabStrategyModel, StrategyVersionModel } from '../handoff/models/strategyModel';
 import { getContractSpec } from '../futures/services/contractSpecs.service';
 
 const router = express.Router();
@@ -155,32 +155,67 @@ router.delete('/strategy/:id', async (req, res) => {
   }
 });
 
-// AI Analysis of Backtest Results
+// AI Analysis of Backtest Results — enhanced with structured suggestions
 router.post('/strategy/:id/ai-review', async (req, res) => {
   try {
-    const { backtestResults } = req.body;
+    const { backtestResults, stressTestResults } = req.body;
     const strategy = await LabStrategyModel.findById(req.params.id);
-    
+
     if (!strategy) {
       return res.status(404).json({ error: 'Strategy not found' });
     }
 
+    // Extract strategy rules and params for richer analysis context
+    const sc = (strategy as any).screenerConfig;
+    const params = sc?.params ?? {};
+    const entryRules = Array.isArray(params.entry_rules) ? params.entry_rules : [];
+    const exitRules = Array.isArray(params.exit_rules) ? params.exit_rules : [];
+    const riskManagement = Array.isArray(params.risk_management) ? params.risk_management : [];
+
     const agentUrl = process.env.PYTHON_URL || 'http://localhost:5001';
-    
+
     const prompt = `
-Please perform a detailed financial analysis of the following backtest results for the strategy "${strategy.name}".
-Identify strengths, weaknesses, and specific parameter optimizations to improve performance.
+Analyze these backtest results for the strategy "${strategy.name}".
 
-STRATEGY DESCRIPTION:
-${strategy.description}
+STRATEGY CONFIGURATION:
+- Type: ${(strategy as any).strategyType}
+- Description: ${strategy.description}
+- Entry Rules: ${JSON.stringify(entryRules)}
+- Exit Rules: ${JSON.stringify(exitRules)}
+- Risk Management: ${JSON.stringify(riskManagement)}
+- Parameters: ${JSON.stringify(Object.fromEntries(
+      Object.entries(params).filter(([k]) =>
+        !['source', 'strategy_template_type', 'hypothesis', 'transcript', 'parameter_definitions', 'entry_rules', 'exit_rules', 'risk_management'].includes(k)
+      )
+    ))}
 
-BACKTEST RESULTS (JSON):
-${JSON.stringify(backtestResults || strategy.backtestResults, null, 2)}
+BACKTEST RESULTS:
+${JSON.stringify(backtestResults ?? strategy.backtestResults, null, 2)}
+${Array.isArray(stressTestResults) && stressTestResults.length > 0 ? `
+STRESS TEST RESULTS:
+The following scenarios were run against the same bar data with parameter overrides.
+Flag any scenarios where the strategy breaks down (large drawdown, low win rate, negative return) and incorporate those failure modes into your suggestions.
+${JSON.stringify(stressTestResults, null, 2)}
+` : ''}
+Respond in TWO sections:
 
-FORMAT:
-- Summary of performance
-- 3 key insights (positive or warning)
-- 2 specific parameter optimization suggestions
+SECTION 1 - ANALYSIS (plain text):
+- Performance summary (2-3 sentences)
+- 3 key insights (each prefixed with a checkmark for positive or warning triangle for concerns)
+- Risk assessment
+
+SECTION 2 - SUGGESTIONS (JSON array):
+Return a JSON array wrapped in \`\`\`json ... \`\`\` with objects like:
+[
+  {
+    "field": "parameters.sma_lookback",
+    "currentValue": 10,
+    "suggestedValue": 20,
+    "action": "modify",
+    "reasoning": "A longer lookback period reduces false signals in choppy markets."
+  }
+]
+Include 2-4 specific, actionable suggestions. Use field paths like "parameters.X", "entry_rules", "exit_rules", or "risk_management".
 `;
 
     const response = await axios.post(`${agentUrl}/analyze`, {
@@ -188,12 +223,188 @@ FORMAT:
       session_name: `review_${strategy._id}`
     });
 
+    const output = response.data.output ?? '';
+
+    // Parse structured suggestions from the response
+    let suggestions: any[] = [];
+    const jsonMatch = output.match(/```json\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      try {
+        suggestions = JSON.parse(jsonMatch[1].trim());
+        if (!Array.isArray(suggestions)) suggestions = [];
+      } catch {
+        suggestions = [];
+      }
+    }
+
+    // Extract analysis text (everything before the JSON block)
+    const analysis = jsonMatch
+      ? output.slice(0, output.indexOf('```json')).trim()
+      : output.trim();
+
+    // Save review to the latest version if one exists
+    try {
+      const latestVersion = await StrategyVersionModel.findOne({ strategyId: req.params.id })
+        .sort({ versionNumber: -1 });
+      if (latestVersion) {
+        latestVersion.set('aiReview', { analysis, suggestions });
+        await latestVersion.save();
+      }
+    } catch (err) {
+      console.warn('[LAB] Could not save AI review to version:', (err as any)?.message);
+    }
+
     res.json({
-      analysis: response.data.output,
+      analysis,
+      suggestions,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
     console.error('[LAB] AI Review failed:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Strategy Versioning Endpoints ---
+
+// List all versions for a strategy
+router.get('/strategy/:id/versions', async (req, res) => {
+  try {
+    const versions = await StrategyVersionModel.find({ strategyId: req.params.id })
+      .sort({ versionNumber: -1 })
+      .lean();
+    res.json(versions);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Compare two versions
+router.get('/strategy/:id/versions/compare', async (req, res) => {
+  try {
+    const v1Num = Number(req.query.v1);
+    const v2Num = Number(req.query.v2);
+    if (!v1Num || !v2Num) {
+      return res.status(400).json({ error: 'v1 and v2 query params are required (version numbers)' });
+    }
+
+    const [v1, v2] = await Promise.all([
+      StrategyVersionModel.findOne({ strategyId: req.params.id, versionNumber: v1Num }).lean(),
+      StrategyVersionModel.findOne({ strategyId: req.params.id, versionNumber: v2Num }).lean(),
+    ]);
+
+    if (!v1 || !v2) {
+      return res.status(404).json({ error: 'One or both versions not found' });
+    }
+
+    // Compute metric deltas
+    const m1 = v1.backtestMetrics ?? {} as any;
+    const m2 = v2.backtestMetrics ?? {} as any;
+    const deltas: Record<string, { v1: number; v2: number; delta: number }> = {};
+    for (const key of ['totalReturnPct', 'sharpeRatio', 'maxDrawdownPct', 'winRatePct', 'totalPnl', 'tradeCount', 'profitFactor']) {
+      const a = (m1 as any)[key] ?? 0;
+      const b = (m2 as any)[key] ?? 0;
+      deltas[key] = { v1: a, v2: b, delta: b - a };
+    }
+
+    res.json({ v1, v2, deltas });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Revert strategy to a specific version
+router.post('/strategy/:id/versions/:versionNumber/revert', async (req, res) => {
+  try {
+    const version = await StrategyVersionModel.findOne({
+      strategyId: req.params.id,
+      versionNumber: Number(req.params.versionNumber),
+    }).lean();
+
+    if (!version) {
+      return res.status(404).json({ error: 'Version not found' });
+    }
+
+    const snapshot = version.snapshot as any;
+    const update: any = {};
+    if (snapshot.name) update.name = snapshot.name;
+    if (snapshot.description) update.description = snapshot.description;
+    if (snapshot.screenerConfig) update.screenerConfig = snapshot.screenerConfig;
+    if (snapshot.futuresConfig) update.futuresConfig = snapshot.futuresConfig;
+    if (snapshot.modelConfig) update.modelConfig = snapshot.modelConfig;
+
+    const strategy = await LabStrategyModel.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+
+    res.json({ message: `Reverted to ${version.versionLabel}`, strategy });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Apply AI suggestions to a strategy
+router.post('/strategy/:id/apply-suggestions', async (req, res) => {
+  try {
+    const { suggestions } = req.body;
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      return res.status(400).json({ error: 'suggestions array is required' });
+    }
+
+    const strategy = await LabStrategyModel.findById(req.params.id);
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+
+    const sc = ((strategy as any).screenerConfig ?? {}) as any;
+    const params = { ...(sc.params ?? {}) };
+
+    for (const suggestion of suggestions) {
+      const field = String(suggestion.field ?? '');
+      const value = suggestion.suggestedValue;
+      const action = suggestion.action ?? 'modify';
+
+      if (field.startsWith('parameters.')) {
+        const paramKey = field.replace('parameters.', '');
+        if (action === 'remove') {
+          delete params[paramKey];
+        } else {
+          params[paramKey] = value;
+        }
+      } else if (field === 'entry_rules') {
+        if (action === 'add' && typeof value === 'string') {
+          const rules = Array.isArray(params.entry_rules) ? [...params.entry_rules] : [];
+          rules.push(value);
+          params.entry_rules = rules;
+        } else if (action === 'modify' && Array.isArray(value)) {
+          params.entry_rules = value;
+        }
+      } else if (field === 'exit_rules') {
+        if (action === 'add' && typeof value === 'string') {
+          const rules = Array.isArray(params.exit_rules) ? [...params.exit_rules] : [];
+          rules.push(value);
+          params.exit_rules = rules;
+        } else if (action === 'modify' && Array.isArray(value)) {
+          params.exit_rules = value;
+        }
+      } else if (field === 'risk_management') {
+        if (action === 'add' && typeof value === 'string') {
+          const rules = Array.isArray(params.risk_management) ? [...params.risk_management] : [];
+          rules.push(value);
+          params.risk_management = rules;
+        } else if (action === 'modify' && Array.isArray(value)) {
+          params.risk_management = value;
+        }
+      }
+    }
+
+    sc.params = params;
+    (strategy as any).screenerConfig = sc;
+    await strategy.save();
+
+    res.json({ message: `Applied ${suggestions.length} suggestions`, strategy });
+  } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });

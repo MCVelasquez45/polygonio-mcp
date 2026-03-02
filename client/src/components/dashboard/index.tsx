@@ -20,6 +20,7 @@ import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import { getApiBaseUrl } from '../../api/http';
 import { apiClient, futuresApi } from '../../api';
+import type { AiSuggestion } from '../../types/futures';
 
 type Props = {
   apiBase?: string;
@@ -192,6 +193,52 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     };
   }, [socket]);
 
+  const handleApplySuggestions = async (suggestions: AiSuggestion[]) => {
+    if (!selectedStrategyId) return;
+    try {
+      await futuresApi.applySuggestions(selectedStrategyId, suggestions);
+      toast.success('Suggestions applied to strategy.');
+      setStrategyListRefreshKey(prev => prev + 1);
+      setActivePanel('lab-editor');
+    } catch (error: any) {
+      toast.error(`Failed to apply suggestions: ${error?.message ?? 'Unknown error'}`);
+    }
+  };
+
+  const handleIterateAndRerun = async (suggestions: AiSuggestion[]) => {
+    if (!selectedStrategyId) return;
+    try {
+      toast.loading('Applying suggestions and re-running backtest...', { id: 'iterate' });
+      await futuresApi.applySuggestions(selectedStrategyId, suggestions);
+      setStrategyListRefreshKey(prev => prev + 1);
+
+      const strategyName = selectedStrategy?.name ?? 'FuturesStrategy';
+      const symbol =
+        selectedStrategy?.futuresConfig?.contract ??
+        selectedStrategy?.parameters?.contract ??
+        'ES';
+
+      const backtest = await futuresApi.runFuturesBacktest({
+        strategyId: selectedStrategyId,
+        strategyName,
+        symbol,
+        startDate: '2024-01-01',
+        endDate: '2025-12-31',
+        initialCapital: 100000,
+        contracts: 1,
+        rollPolicy: 'volume',
+        rollDaysBefore: 5,
+        slippageBps: 1.5,
+        feePerContract: 2.5,
+      });
+      setBacktestResultsId(backtest._id);
+      setActivePanel('lab-backtest-results');
+      toast.success('Iteration complete — new backtest results ready.', { id: 'iterate' });
+    } catch (error: any) {
+      toast.error(`Iteration failed: ${error?.message ?? 'Unknown error'}`, { id: 'iterate' });
+    }
+  };
+
   const handleRunBacktest = () => {
     setShowBacktestConfig(true);
   };
@@ -288,6 +335,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             strategyId={selectedStrategyId || undefined}
             onDeployToPaper={() => setActivePanel('lab-paper')}
             onClose={() => setActivePanel('lab-editor')}
+            onApplySuggestions={handleApplySuggestions}
+            onIterateAndRerun={handleIterateAndRerun}
           />
         );
       case 'lab-paper':

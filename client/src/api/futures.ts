@@ -5,7 +5,9 @@ import type {
   FuturesContractSpec,
   FuturesEngineState,
   FuturesPaperSession,
-  FuturesPromotionReport
+  FuturesPromotionReport,
+  StrategyVersion,
+  StressTestResponse
 } from '../types/futures';
 
 export async function listFuturesContracts(): Promise<{ count: number; specs: FuturesContractSpec[] }> {
@@ -70,5 +72,49 @@ export async function deployFuturesSession(payload: {
 
 export async function getFuturesEngineStatus(): Promise<FuturesEngineState> {
   const { data } = await http.get<FuturesEngineState>('/api/engine/futures/status');
+  return data;
+}
+
+export async function getStrategyVersions(strategyId: string): Promise<StrategyVersion[]> {
+  const { data } = await http.get<StrategyVersion[]>(`/api/lab/strategy/${strategyId}/versions`);
+  return data;
+}
+
+export async function compareStrategyVersions(
+  strategyId: string,
+  v1: number,
+  v2: number
+): Promise<{ v1: StrategyVersion; v2: StrategyVersion; deltas: Record<string, { v1: number; v2: number; delta: number; deltaPct: number }> }> {
+  const { data } = await http.get(`/api/lab/strategy/${strategyId}/versions/compare`, { params: { v1, v2 } });
+  return data;
+}
+
+export async function applySuggestions(
+  strategyId: string,
+  suggestions: Array<{ field: string; suggestedValue: unknown; action?: string }>
+): Promise<any> {
+  const { data } = await http.post(`/api/lab/strategy/${strategyId}/apply-suggestions`, { suggestions });
+  return data;
+}
+
+export async function revertToVersion(
+  strategyId: string,
+  versionNumber: number
+): Promise<{ message: string; strategy: any }> {
+  const { data } = await http.post(`/api/lab/strategy/${strategyId}/versions/${versionNumber}/revert`);
+  return data;
+}
+
+export async function runStressTest(config: {
+  strategyId: string;
+  strategyName: string;
+  symbol: string;
+  startDate: string;
+  endDate: string;
+  initialCapital?: number;
+  slippageBps?: number;
+  feePerContract?: number;
+}): Promise<StressTestResponse> {
+  const { data } = await http.post<StressTestResponse>('/api/lab/futures/backtest/stress-test', config);
   return data;
 }

@@ -345,6 +345,77 @@ async def process_extraction_background(transcript: str, socket_id: str | None):
                 pass
 
 
+class RuleInterpretationRequest(BaseModel):
+    entry_rules: list[str] = []
+    exit_rules: list[str] = []
+    risk_management: list[str] = []
+    parameters: dict[str, Any] = {}
+    context: dict[str, Any] = {}
+
+
+class RuleInterpretationResponse(BaseModel):
+    signal: int  # -1, 0, 1
+    reasoning: str
+    confidence: float
+
+
+@app.post("/interpret-rules", response_model=RuleInterpretationResponse, status_code=status.HTTP_200_OK)
+async def interpret_rules(request: RuleInterpretationRequest) -> RuleInterpretationResponse:
+    """AI fallback for the hybrid signal engine. Interprets strategy rules against market context."""
+    ctx = request.context
+    bar = ctx.get("bar", {})
+
+    prompt = (
+        "You are a trading signal generator for a backtesting engine. "
+        "Given strategy rules and current market state, determine the signal.\n\n"
+        f"ENTRY RULES: {json.dumps(request.entry_rules)}\n"
+        f"EXIT RULES: {json.dumps(request.exit_rules)}\n"
+        f"RISK MANAGEMENT: {json.dumps(request.risk_management)}\n"
+        f"PARAMETERS: {json.dumps(request.parameters)}\n\n"
+        f"MARKET STATE:\n"
+        f"  Bar: {bar.get('timestamp', 'N/A')} O={bar.get('open', 0):.2f} H={bar.get('high', 0):.2f} "
+        f"L={bar.get('low', 0):.2f} C={bar.get('close', 0):.2f}\n"
+        f"  Position: {'LONG' if ctx.get('position') == 1 else 'SHORT' if ctx.get('position') == -1 else 'FLAT'}\n"
+        f"  Entry Price: {ctx.get('entryPrice', 0):.2f}\n"
+        f"  SMA: {ctx.get('sma', 0):.2f}, EMA: {ctx.get('ema', 0):.2f}, "
+        f"RSI: {ctx.get('rsi', 50):.1f}, ATR: {ctx.get('atr', 0):.2f}\n"
+        f"  Equity: ${ctx.get('equity', 0):.0f} (Peak: ${ctx.get('peakEquity', 0):.0f})\n\n"
+        "Respond with ONLY a JSON object: {\"signal\": 1, \"reasoning\": \"...\", \"confidence\": 0.8} "
+        "where signal is 1 (long), -1 (short), or 0 (flat/exit)."
+    )
+
+    try:
+        result = await run_analysis(prompt, skip_mcp=True, enforce_guardrail=False)
+        final_output = str(getattr(result, "final_output", result)).strip()
+
+        # Extract JSON from the response
+        import re as _re
+        json_match = _re.search(r'\{[^}]*"signal"[^}]*\}', final_output)
+        if json_match:
+            parsed = json.loads(json_match.group(0))
+            return RuleInterpretationResponse(
+                signal=int(parsed.get("signal", 0)),
+                reasoning=str(parsed.get("reasoning", "AI interpretation")),
+                confidence=float(parsed.get("confidence", 0.5)),
+            )
+
+        # If no JSON found, try to infer signal from text
+        lower = final_output.lower()
+        if "long" in lower or "buy" in lower:
+            return RuleInterpretationResponse(signal=1, reasoning=final_output[:200], confidence=0.4)
+        elif "short" in lower or "sell" in lower:
+            return RuleInterpretationResponse(signal=-1, reasoning=final_output[:200], confidence=0.4)
+        else:
+            return RuleInterpretationResponse(signal=0, reasoning=final_output[:200], confidence=0.3)
+
+    except Exception as exc:
+        return RuleInterpretationResponse(
+            signal=0,
+            reasoning=f"AI fallback error: {str(exc)[:100]}",
+            confidence=0.0,
+        )
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> JSONResponse:
     """Expose run_analysis via an OpenAI-compatible endpoint for LM Studio or other clients."""

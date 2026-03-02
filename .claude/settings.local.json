@@ -23,7 +23,10 @@
       "Bash(curl:*)",
       "Bash(# Check all env vars for Anthropic key env | grep ANTHROPIC)",
       "Bash(mongosh:*)",
-      "Bash(npx vite build:*)"
+      "Bash(npx vite build:*)",
+      "Bash(git -C /Users/sirrelesteinfeld_1/projects/polygonio-mcp log --oneline -15)",
+      "Bash(grep:*)",
+      "WebFetch(domain:vectorbt.pro)"
     ]
   }
 }

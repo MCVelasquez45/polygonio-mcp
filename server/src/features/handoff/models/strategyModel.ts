@@ -186,5 +186,58 @@ const EngineStrategySchema = new Schema({
   }
 }, { timestamps: true });
 
+// --- Strategy Versioning ---
+
+export interface AiSuggestion {
+  field: string;
+  currentValue: unknown;
+  suggestedValue: unknown;
+  reasoning: string;
+  action?: 'add' | 'modify' | 'remove';
+}
+
+export interface StrategyVersion extends Document {
+  strategyId: mongoose.Types.ObjectId;
+  versionNumber: number;
+  versionLabel: string;
+  snapshot: {
+    name: string;
+    description: string;
+    strategyType: string;
+    screenerConfig?: Record<string, unknown>;
+    futuresConfig?: Record<string, unknown>;
+    modelConfig?: Record<string, unknown>;
+  };
+  backtestId?: string;
+  backtestMetrics?: {
+    totalReturnPct: number;
+    sharpeRatio: number;
+    maxDrawdownPct: number;
+    winRatePct: number;
+    totalPnl: number;
+    tradeCount: number;
+    profitFactor?: number;
+  };
+  aiReview?: {
+    analysis: string;
+    suggestions?: AiSuggestion[];
+  };
+  createdAt: Date;
+}
+
+const StrategyVersionSchema = new Schema({
+  strategyId: { type: Schema.Types.ObjectId, ref: 'LabStrategy', required: true, index: true },
+  versionNumber: { type: Number, required: true },
+  versionLabel: { type: String, required: true },
+  snapshot: { type: Schema.Types.Mixed, required: true },
+  backtestId: { type: String },
+  backtestMetrics: { type: Schema.Types.Mixed },
+  aiReview: { type: Schema.Types.Mixed },
+}, { timestamps: true });
+
+StrategyVersionSchema.index({ strategyId: 1, versionNumber: -1 });
+
 export const LabStrategyModel = mongoose.model<LabStrategy>('LabStrategy', LabStrategySchema);
 export const EngineStrategyModel = mongoose.model<EngineStrategy>('EngineStrategy', EngineStrategySchema);
+export const StrategyVersionModel =
+  mongoose.models.StrategyVersion || mongoose.model<StrategyVersion>('StrategyVersion', StrategyVersionSchema);

@@ -28,7 +28,7 @@ export interface FuturesBacktest extends Document {
   strategyId: string;
   strategyName: string;
   symbol: FuturesSymbol;
-  provider: 'databento' | 'synthetic' | 'quandl';
+  provider: 'databento' | 'synthetic' | 'quandl' | 'polygon';
   config: {
     startDate: string;
     endDate: string;
@@ -251,7 +251,7 @@ const FuturesBacktestSchema = new Schema<FuturesBacktest>(
     strategyId: { type: String, required: true },
     strategyName: { type: String, required: true },
     symbol: { type: String, required: true },
-    provider: { type: String, enum: ['databento', 'synthetic', 'quandl'], required: true },
+    provider: { type: String, enum: ['databento', 'synthetic', 'quandl', 'polygon'], required: true },
     config: { type: Schema.Types.Mixed, required: true },
     diagnostics: { type: Schema.Types.Mixed, required: true },
     metrics: { type: Schema.Types.Mixed, required: true },

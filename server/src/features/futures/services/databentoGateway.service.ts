@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { fetchPolygonDailyBars } from './polygonGateway.service';
 
 export type FuturesBar = {
   timestamp: string;
@@ -10,16 +11,22 @@ export type FuturesBar = {
 };
 
 export type FuturesBarResponse = {
-  provider: 'databento' | 'synthetic';
+  provider: 'databento' | 'synthetic' | 'polygon';
   bars: FuturesBar[];
   usedFallbackData: boolean;
   sourceMessage: string;
+  /** When an ETF proxy was used instead of the actual symbol */
+  proxyTicker?: string;
+  /** The original symbol requested */
+  requestedSymbol?: string;
 };
 
 type FetchBarsInput = {
   symbol: string;
   startDate: string;
   endDate: string;
+  /** Set true to allow deterministic synthetic bars when no provider returns data. Default: false. */
+  allowSyntheticData?: boolean;
 };
 
 const DATABENTO_BASE_URL = process.env.DATABENTO_BASE_URL || 'https://hist.databento.com';
@@ -63,7 +70,7 @@ function generateSyntheticBars(input: FetchBarsInput): FuturesBar[] {
   for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
     const day = date.getUTCDay();
     if (day === 0 || day === 6) continue;
-    const drift = (random() - 0.49) * 0.02;
+    const drift = (random() - 0.5) * 0.02;
     const open = price;
     const close = Math.max(0.01, open * (1 + drift));
     const high = Math.max(open, close) * (1 + random() * 0.005);
@@ -107,61 +114,72 @@ function normalizeDatabentoCsv(csv: string): FuturesBar[] {
 }
 
 export async function fetchFuturesDailyBars(input: FetchBarsInput): Promise<FuturesBarResponse> {
-  const apiKey = process.env.DATABENTO_API_KEY;
-  if (!apiKey) {
-    return {
-      provider: 'synthetic',
-      bars: generateSyntheticBars(input),
-      usedFallbackData: true,
-      sourceMessage: 'DATABENTO_API_KEY not configured. Using deterministic synthetic bars.'
-    };
-  }
-
-  const dataset = process.env.DATABENTO_DATASET || 'GLBX.MDP3';
-  const schema = process.env.DATABENTO_SCHEMA || 'ohlcv-1d';
-  const symbols = `${input.symbol}.FUT`;
-
+  // 1. Try Polygon.io first (uses MASSIVE_API_KEY which is the Polygon key)
   try {
-    const response = await axios.get(`${DATABENTO_BASE_URL}/v0/timeseries.get_range`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'text/csv'
-      },
-      params: {
-        dataset,
-        schema,
-        stype_in: 'raw_symbol',
-        symbols,
-        start: input.startDate,
-        end: input.endDate,
-        limit: 5000,
-        encoding: 'csv'
-      },
-      timeout: 30_000
-    });
-
-    const bars = normalizeDatabentoCsv(typeof response.data === 'string' ? response.data : '');
-    if (bars.length) {
-      return {
-        provider: 'databento',
-        bars,
-        usedFallbackData: false,
-        sourceMessage: `Loaded ${bars.length} bars from Databento (${dataset}/${schema}).`
-      };
+    const polygonResult = await fetchPolygonDailyBars(input);
+    if (polygonResult.bars.length > 0) {
+      return polygonResult;
     }
-
-    return {
-      provider: 'synthetic',
-      bars: generateSyntheticBars(input),
-      usedFallbackData: true,
-      sourceMessage: 'Databento returned no parsable rows. Using deterministic synthetic bars.'
-    };
-  } catch (error: any) {
-    return {
-      provider: 'synthetic',
-      bars: generateSyntheticBars(input),
-      usedFallbackData: true,
-      sourceMessage: `Databento request failed (${error?.message ?? 'unknown error'}). Using deterministic synthetic bars.`
-    };
+    console.warn('[BARS] Polygon returned no bars, trying Databento...');
+  } catch (err: any) {
+    console.warn('[BARS] Polygon fetch failed, trying Databento:', err?.message);
   }
+
+  // 2. Try Databento if API key is configured
+  const databentoKey = process.env.DATABENTO_API_KEY;
+  if (databentoKey) {
+    const dataset = process.env.DATABENTO_DATASET || 'GLBX.MDP3';
+    const schema = process.env.DATABENTO_SCHEMA || 'ohlcv-1d';
+    const symbols = `${input.symbol}.FUT`;
+
+    try {
+      const response = await axios.get(`${DATABENTO_BASE_URL}/v0/timeseries.get_range`, {
+        headers: {
+          Authorization: `Bearer ${databentoKey}`,
+          Accept: 'text/csv'
+        },
+        params: {
+          dataset,
+          schema,
+          stype_in: 'raw_symbol',
+          symbols,
+          start: input.startDate,
+          end: input.endDate,
+          limit: 5000,
+          encoding: 'csv'
+        },
+        timeout: 30_000
+      });
+
+      const bars = normalizeDatabentoCsv(typeof response.data === 'string' ? response.data : '');
+      if (bars.length) {
+        return {
+          provider: 'databento',
+          bars,
+          usedFallbackData: false,
+          sourceMessage: `Loaded ${bars.length} bars from Databento (${dataset}/${schema}).`
+        };
+      }
+      console.warn('[BARS] Databento returned no parsable rows, falling back to synthetic.');
+    } catch (error: any) {
+      console.warn('[BARS] Databento request failed:', error?.message);
+    }
+  }
+
+  // 3. Fall back to deterministic synthetic bars — only if explicitly opted in
+  if (!input.allowSyntheticData) {
+    throw new Error(
+      `No market data available for ${input.symbol} (${input.startDate} to ${input.endDate}). ` +
+      `Both Polygon.io and Databento returned no results. ` +
+      `Check your API keys and symbol, or pass allowSyntheticData to use synthetic bars.`
+    );
+  }
+
+  console.warn('[BARS] Using synthetic data — results are NOT based on real market prices');
+  return {
+    provider: 'synthetic',
+    bars: generateSyntheticBars(input),
+    usedFallbackData: true,
+    sourceMessage: '⚠️ SYNTHETIC DATA — results are simulated, not based on real market prices.'
+  };
 }

@@ -2875,65 +2875,66 @@ function App() {
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:w-72 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-            }`}
+          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+            } ${view === 'dashboard' ? 'lg:w-0 lg:overflow-hidden lg:-translate-x-full' : 'lg:w-72'}`}
         >
           <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
 
         <main className="flex-1 overflow-y-auto">
-          <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
-            {marketError && (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
-                {marketError}
-              </div>
-            )}
-            {aiRequestWarning && (
-              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-100 px-4 py-3 flex items-start justify-between gap-4">
-                <span>{aiRequestWarning}</span>
-                <button
-                  type="button"
-                  onClick={() => setAiRequestWarning(null)}
-                  className="text-xs uppercase tracking-[0.2em] text-amber-200 hover:text-white"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
+          {view === 'dashboard' ? (
+            <Dashboard
+              socket={socketRef.current}
+              onTickerSelect={(ticker) => {
+                setTicker(ticker);
+                setView('trading');
+              }}
+            />
+          ) : (
+            <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
+              {marketError && (
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
+                  {marketError}
+                </div>
+              )}
+              {aiRequestWarning && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-100 px-4 py-3 flex items-start justify-between gap-4">
+                  <span>{aiRequestWarning}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAiRequestWarning(null)}
+                    className="text-xs uppercase tracking-[0.2em] text-amber-200 hover:text-white"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
 
-            {view === 'trading' && tradingView}
-            {view === 'scanner' && (
-              <div className="pb-24">
-                <OptionsScanner
-                  reports={scannerReports}
-                  isLoading={scannerLoading}
-                  highlights={checklistHighlights}
-                  highlightLoading={checklistLoading}
-                  onRunScan={handleScannerRefresh}
-                  runDisabled={!watchlistSymbols.length || !scannerAllowed}
-                  aiDisabled={!scannerAllowed}
-                  onTickerSelect={value => {
-                    setTicker(value);
-                    setView('trading');
-                  }}
-                />
-              </div>
-            )}
-            {view === 'portfolio' && (
-              <div className="pb-24">
-                <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
-              </div>
-            )}
-            {view === 'dashboard' && (
-              <Dashboard
-                socket={socketRef.current}
-                onTickerSelect={(ticker) => {
-                  setTicker(ticker);
-                  setView('trading');
-                }}
-              />
-            )}
-          </div>
+              {view === 'trading' && tradingView}
+              {view === 'scanner' && (
+                <div className="pb-24">
+                  <OptionsScanner
+                    reports={scannerReports}
+                    isLoading={scannerLoading}
+                    highlights={checklistHighlights}
+                    highlightLoading={checklistLoading}
+                    onRunScan={handleScannerRefresh}
+                    runDisabled={!watchlistSymbols.length || !scannerAllowed}
+                    aiDisabled={!scannerAllowed}
+                    onTickerSelect={value => {
+                      setTicker(value);
+                      setView('trading');
+                    }}
+                  />
+                </div>
+              )}
+              {view === 'portfolio' && (
+                <div className="pb-24">
+                  <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
 

@@ -1,7 +1,7 @@
 import express from 'express';
-import { LabStrategyModel } from '../handoff/models/strategyModel';
+import { LabStrategyModel, StrategyVersionModel } from '../handoff/models/strategyModel';
 import { getContractSpec, listActiveContractSpecs } from './services/contractSpecs.service';
-import { getFuturesBacktest, runFuturesBacktest } from './services/futuresBacktest.service';
+import { getFuturesBacktest, runFuturesBacktest, runStressTest } from './services/futuresBacktest.service';
 import {
   controlFuturesPaperSession,
   deployFuturesSessionToEngine,
@@ -48,6 +48,29 @@ router.post('/backtest', async (req, res) => {
       return res.status(400).json({ error: `Unsupported futures symbol '${symbol}'` });
     }
 
+    // Load strategy rules from the database for the hybrid signal engine
+    let entryRules: string[] = [];
+    let exitRules: string[] = [];
+    let riskManagement: string[] = [];
+    let strategyParameters: Record<string, unknown> = {};
+
+    try {
+      const strategy = await LabStrategyModel.findById(strategyId).lean();
+      if (strategy) {
+        const sc = (strategy as any).screenerConfig;
+        const params = sc?.params ?? {};
+        entryRules = Array.isArray(params.entry_rules) ? params.entry_rules : [];
+        exitRules = Array.isArray(params.exit_rules) ? params.exit_rules : [];
+        riskManagement = Array.isArray(params.risk_management) ? params.risk_management : [];
+        // Pass all non-reserved params as strategy parameters
+        // Keep strategy_template_type — used by credit spread detection
+        const { entry_rules, exit_rules, risk_management, source, hypothesis, transcript, parameter_definitions, ...rest } = params;
+        strategyParameters = rest;
+      }
+    } catch (err) {
+      console.warn('[FUTURES] Could not load strategy rules, using defaults:', (err as any)?.message);
+    }
+
     const result = await runFuturesBacktest({
       strategyId,
       strategyName,
@@ -60,8 +83,39 @@ router.post('/backtest', async (req, res) => {
       rollDaysBefore,
       slippageBps,
       feePerContract,
-      lookback
+      lookback,
+      entryRules,
+      exitRules,
+      riskManagement,
+      strategyParameters,
     });
+
+    // Auto-create strategy version on successful backtest
+    try {
+      const strategyDoc = await LabStrategyModel.findById(strategyId).lean();
+      if (strategyDoc) {
+        const latestVersion = await StrategyVersionModel.findOne({ strategyId })
+          .sort({ versionNumber: -1 }).lean();
+        const nextVersion = ((latestVersion as any)?.versionNumber ?? 0) + 1;
+        await StrategyVersionModel.create({
+          strategyId,
+          versionNumber: nextVersion,
+          versionLabel: `v${nextVersion}`,
+          snapshot: {
+            name: (strategyDoc as any).name,
+            description: (strategyDoc as any).description,
+            strategyType: (strategyDoc as any).strategyType,
+            screenerConfig: (strategyDoc as any).screenerConfig,
+            futuresConfig: (strategyDoc as any).futuresConfig,
+            modelConfig: (strategyDoc as any).modelConfig,
+          },
+          backtestId: result._id,
+          backtestMetrics: result.metrics,
+        });
+      }
+    } catch (vErr) {
+      console.warn('[FUTURES] Version creation failed:', (vErr as any)?.message);
+    }
 
     res.json(result);
   } catch (error: any) {
@@ -77,6 +131,68 @@ router.get('/backtest/:id', async (req, res) => {
     res.json(backtest);
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? 'Unable to load futures backtest' });
+  }
+});
+
+router.post('/backtest/stress-test', async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const strategyId = String(body.strategyId ?? '').trim();
+    const symbol = String(body.symbol ?? '').trim().toUpperCase();
+    const strategyName = String(body.strategyName ?? 'Unnamed').trim();
+    const startDate = String(body.startDate ?? '').trim();
+    const endDate = String(body.endDate ?? '').trim();
+    const initialCapital = Number(body.initialCapital ?? 100000);
+    const slippageBps = Number(body.slippageBps ?? 1.5);
+    const feePerContract = Number(body.feePerContract ?? 2.5);
+
+    if (!strategyId || !symbol || !startDate || !endDate) {
+      return res.status(400).json({ error: 'strategyId, symbol, startDate, and endDate are required' });
+    }
+
+    // Load strategy rules
+    let entryRules: string[] = [];
+    let exitRules: string[] = [];
+    let riskManagement: string[] = [];
+    let strategyParameters: Record<string, unknown> = {};
+
+    try {
+      const strategy = await LabStrategyModel.findById(strategyId).lean();
+      if (strategy) {
+        const sc = (strategy as any).screenerConfig;
+        const params = sc?.params ?? {};
+        entryRules = Array.isArray(params.entry_rules) ? params.entry_rules : [];
+        exitRules = Array.isArray(params.exit_rules) ? params.exit_rules : [];
+        riskManagement = Array.isArray(params.risk_management) ? params.risk_management : [];
+        const { entry_rules, exit_rules, risk_management, source, hypothesis, transcript, parameter_definitions, ...rest } = params;
+        strategyParameters = rest;
+      }
+    } catch (err) {
+      console.warn('[FUTURES] Could not load strategy rules for stress test:', (err as any)?.message);
+    }
+
+    const results = await runStressTest({
+      strategyId,
+      strategyName,
+      symbol,
+      startDate,
+      endDate,
+      initialCapital,
+      contracts: 1,
+      rollPolicy: 'volume',
+      rollDaysBefore: 5,
+      slippageBps,
+      feePerContract,
+      entryRules,
+      exitRules,
+      riskManagement,
+      strategyParameters,
+    });
+
+    res.json({ scenarios: results });
+  } catch (error: any) {
+    console.error('[FUTURES] Stress test failed:', error);
+    res.status(500).json({ error: error?.message ?? 'Stress test failed' });
   }
 });
 
@@ -100,6 +216,23 @@ router.post('/paper/start', async (req, res) => {
     const spec = await getContractSpec(symbol);
     if (!spec) return res.status(400).json({ error: `Unsupported futures symbol '${symbol}'` });
 
+    // Load strategy rules for strategy-aware paper trading
+    let strategyRules: { entry_rules: string[]; exit_rules: string[]; risk_management: string[]; parameters: Record<string, unknown> } | undefined;
+    try {
+      const strategy = await LabStrategyModel.findById(strategyId).lean();
+      if (strategy) {
+        const sc = (strategy as any).screenerConfig;
+        const params = sc?.params ?? {};
+        const entryRules = Array.isArray(params.entry_rules) ? params.entry_rules : [];
+        const exitRules = Array.isArray(params.exit_rules) ? params.exit_rules : [];
+        const riskManagement = Array.isArray(params.risk_management) ? params.risk_management : [];
+        const { entry_rules, exit_rules, risk_management, source, hypothesis, transcript, parameter_definitions, ...rest } = params;
+        strategyRules = { entry_rules: entryRules, exit_rules: exitRules, risk_management: riskManagement, parameters: rest };
+      }
+    } catch (err) {
+      console.warn('[FUTURES] Could not load strategy rules for paper session:', (err as any)?.message);
+    }
+
     const session = await startFuturesPaperSession({
       strategyId,
       strategyName,
@@ -110,7 +243,8 @@ router.post('/paper/start', async (req, res) => {
       maxDrawdown,
       slippageBps,
       feePerContract,
-      mode: 'lab-paper'
+      mode: 'lab-paper',
+      strategyRules,
     });
 
     res.json(session);
