@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, LineStyle, LineSeries } from 'lightweight-charts';
 import { apiClient, futuresApi } from '../../api';
 import type { FuturesBacktestResult, AiSuggestion, StrategyVersion, StressTestScenarioResult } from '../../types/futures';
+import { buildBacktestChartSeries } from './backtestChartData';
 
 type Metrics = {
   totalReturn: number;
@@ -20,38 +21,6 @@ type Props = {
   onApplySuggestions?: (suggestions: AiSuggestion[]) => void;
   onIterateAndRerun?: (suggestions: AiSuggestion[]) => void;
 };
-
-// Mock Data Generation
-function generateEquityCurve(days: number = 365) {
-  let value = 100000;
-  let benchmark = 100000;
-  const data = [];
-  const benchmarkData = [];
-
-  const date = new Date('2025-01-01');
-
-  for (let i = 0; i < days; i++) {
-    // Random walk with drift
-    const change = (Math.random() - 0.48) * 0.02; // Slight positive drift
-    const benchChange = (Math.random() - 0.49) * 0.015;
-
-    value = value * (1 + change);
-    benchmark = benchmark * (1 + benchChange);
-
-    // Add some "alpha" jumps properly
-    if (i % 30 === 0 && Math.random() > 0.5) {
-      value *= 1.02;
-    }
-
-    const time = date.toISOString().split('T')[0];
-    data.push({ time, value });
-    benchmarkData.push({ time, value: benchmark });
-
-    date.setDate(date.getDate() + 1);
-  }
-
-  return { strategy: data, benchmark: benchmarkData };
-}
 
 export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, onClose, onApplySuggestions, onIterateAndRerun }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -150,21 +119,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
       title: 'Benchmark (SPY)',
     });
 
-    const { strategy, benchmark } =
-      backtest?.equityCurve?.length
-        ? (() => {
-            const strategySeries = backtest.equityCurve.map(point => ({
-              time: point.timestamp.slice(0, 10),
-              value: point.equity
-            }));
-            const first = strategySeries[0]?.value ?? 100000;
-            const benchmarkSeries = strategySeries.map((point, index) => ({
-              time: point.time,
-              value: first * (1 + index * 0.0008)
-            }));
-            return { strategy: strategySeries, benchmark: benchmarkSeries };
-          })()
-        : generateEquityCurve();
+    const { strategy, benchmark } = buildBacktestChartSeries(backtest?.equityCurve);
     strategySeries.setData(strategy);
     benchmarkSeries.setData(benchmark);
 

@@ -6,6 +6,7 @@
 | 2026-02-27 | Reviewed backtest results and credit spread simulation engine progress |
 | 2026-02-27 | Discussion with Robert re: VectorBT Pro integration vs custom backtester |
 | 2026-03-01 | Full backtesting engine audit — identified 3 critical, 4 high, 2 medium issues |
+| 2026-03-01 | Replaced defunct stress scenarios + tuned credit spread defaults for profitability |
 
 ## Context
 - **Branch**: `additional-auto-features`
@@ -143,6 +144,23 @@ All 6 audit findings implemented:
 - History window dynamically sized based on max period in strategy rules
 - Diagnostics include `proxyTicker` and `requestedSymbol`
 
+### 11. Stress Scenarios & Parameter Tuning (Session 5 — 2026-03-01)
+**File**: `server/src/features/futures/services/futuresBacktest.service.ts`
+
+**Stress scenario updates:**
+- Removed defunct `Afternoon Frac 0.50` and `Afternoon Frac 0.65` (no-ops after look-ahead fix)
+- Added `Higher Delta (0.15)` — more premium, closer to money
+- Added `Higher Delta (0.20)` — aggressive premium, significantly higher breach risk
+- Added `Wider Spreads (0.5%)` — standalone test of credit-to-fee ratio improvement
+- Updated `Wide Spreads + High Vol` to use 0.5% width (was 0.2%)
+- Total: 10 scenarios (was 9)
+
+**Parameter tuning:**
+- `deltaTarget`: 0.10 → 0.12 (slightly more premium per trade)
+- `spreadWidthPct`: 0.001 (0.1%) → 0.003 (0.3%) — ~$16.50 wide on ES, realistic for $15-25 wide 0-DTE verticals
+- `estimateCreditFraction`: raised floor from 5% to 8%, updated calibration comments against real SPX 0-DTE pricing
+- Rationale: Previous 0.1% spread width gave ~$5.50 spreads where credit barely covered transaction costs; 0.3% gives meaningful premium
+
 ## Action Items
 - [x] Apply AI suggestions to engine config
 - [x] Add stress test scenarios
@@ -159,6 +177,8 @@ All 6 audit findings implemented:
 - [x] **FIX: Look-ahead bias eliminated (prev bar decision, open entry, high/low outcome)**
 - [x] **FIX: O(n^2) → O(n) precomputed indicators**
 - [x] **FIX: SMA/EMA period from rules now used by pattern matchers**
+- [x] Replace defunct stress scenarios (Afternoon Frac → Higher Delta + Wider Spreads)
+- [x] Tune defaults: delta 0.12, spread 0.3%, credit floor 8%
 - [ ] Switch to intraday bars for 0-DTE credit spread simulation
 - [ ] VectorBT Pro integration for data + backtest engine
 - [ ] Run actual backtest with v18 parameters and compare to previous results

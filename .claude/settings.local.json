@@ -26,7 +26,8 @@
       "Bash(npx vite build:*)",
       "Bash(git -C /Users/sirrelesteinfeld_1/projects/polygonio-mcp log --oneline -15)",
       "Bash(grep:*)",
-      "WebFetch(domain:vectorbt.pro)"
+      "WebFetch(domain:vectorbt.pro)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

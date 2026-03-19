@@ -63,6 +63,7 @@ class ExtractionResponse(BaseModel):
     description: str
     hypothesis: str
     type: str = "custom"
+    trading_method: str = "equities"
     parameters: dict[str, Any]
     parameter_definitions: dict[str, str] = {}
     entry_rules: list[str] = []
@@ -258,6 +259,15 @@ async def _perform_extraction(transcript: str) -> dict[str, Any]:
     if "type" not in data or not isinstance(data.get("type"), str):
         data["type"] = "custom"
 
+    if "trading_method" not in data or data.get("trading_method") not in ("options", "futures", "equities"):
+        t = data.get("type", "custom")
+        if t == "futures":
+            data["trading_method"] = "futures"
+        elif t in ("0dte", "spreads"):
+            data["trading_method"] = "options"
+        else:
+            data["trading_method"] = "equities"
+
     return data
 
 
@@ -270,6 +280,7 @@ Return ONLY valid JSON with these keys:
 - "description": one-paragraph description of the strategy (string)
 - "hypothesis": the core trading hypothesis being tested (string)
 - "type": one of "momentum", "mean_reversion", "volatility", "0dte", "spreads", "futures", or "custom" (string)
+- "trading_method": one of "options", "futures", or "equities" — the instrument class being traded (string). Use "options" for any strategy involving options contracts (credit spreads, iron condors, straddles, 0DTE, puts, calls). Use "futures" for futures contracts (ES, NQ, CL, etc.). Use "equities" for stock/ETF strategies.
 - "parameters": flat key-value object where every value is a string, number, or boolean — NOT nested objects. Use snake_case keys.
 - "parameter_definitions": object mapping each parameter key to a plain-English definition.
 - "entry_rules": array of strings, each describing a condition that must be true before placing a trade.
@@ -310,6 +321,15 @@ Transcript:
         ]
     if "type" not in data or not isinstance(data.get("type"), str):
         data["type"] = "custom"
+
+    if "trading_method" not in data or data.get("trading_method") not in ("options", "futures", "equities"):
+        t = data.get("type", "custom")
+        if t == "futures":
+            data["trading_method"] = "futures"
+        elif t in ("0dte", "spreads"):
+            data["trading_method"] = "options"
+        else:
+            data["trading_method"] = "equities"
 
     return data
 

@@ -134,6 +134,12 @@ function displayValue(value: any): string {
   return String(value);
 }
 
+function inferTradingMethod(type: string | undefined): string {
+  if (type === 'futures') return 'futures';
+  if (type === '0dte' || type === 'spreads') return 'options';
+  return 'equities';
+}
+
 export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, isSubmitting, onExtractionStart }: Props) {
   const [step, setStep] = useState<WizardStep>(initialData ? 'details' : 'method');
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(initialData ? 'ai' : null);
@@ -155,6 +161,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const [isRecording, setIsRecording] = useState(false);
   const [recordingMode, setRecordingMode] = useState<RecordingMode>('speech');
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [tradingMethod, setTradingMethod] = useState<string>(initialData?.trading_method ?? 'equities');
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
   const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -185,6 +192,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
 
     setCreationMethod('ai');
     setSelectedType((data.type as StrategyType) || 'custom');
+    setTradingMethod(data.trading_method ?? inferTradingMethod(data.type));
     setStrategyDetails({
       name: extractedName,
       description: extractedDescription,
@@ -572,6 +580,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const handleComplete = () => {
     const strategy = {
       type: selectedType ?? 'custom',
+      tradingMethod: tradingMethod ?? inferTradingMethod(selectedType ?? undefined),
       ...strategyDetails,
       parameters: flattenParameters(parameters),
       parameterDefinitions: parameterDefinitions,

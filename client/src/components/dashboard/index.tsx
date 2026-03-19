@@ -98,6 +98,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         params: {
           source: 'strategy_creation_wizard',
           strategy_template_type: strategy?.type ?? 'custom',
+          trading_method: strategy?.tradingMethod ?? inferTradingMethod(strategy?.type),
           hypothesis,
           transcript: transcript || undefined,
           parameter_definitions: Object.keys(paramDefs).length > 0 ? paramDefs : undefined,

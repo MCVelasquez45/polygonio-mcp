@@ -91,6 +91,18 @@ TEMPLATES: dict[str, list[dict[str, str]]] = {
             ),
         },
         {
+            "id": "trading_method",
+            "type": "text",
+            "prompt": (
+                "Determine the primary instrument class this strategy trades. "
+                "Return exactly one of: options, futures, or equities. "
+                "If the strategy involves options (credit spreads, iron condors, straddles, 0DTE, "
+                "puts, calls, verticals, butterflies, or any options contracts), return 'options'. "
+                "If the strategy involves futures contracts (ES, NQ, CL, GC, etc.), return 'futures'. "
+                "Otherwise return 'equities'."
+            ),
+        },
+        {
             "id": "parameters",
             "type": "map",
             "prompt": (
