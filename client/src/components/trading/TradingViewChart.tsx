@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import {
   CandlestickSeries,
   ColorType,
@@ -536,7 +536,7 @@ function ChartCanvas({
   );
 }
 
-export function TradingViewChart({
+export const TradingViewChart = memo(function TradingViewChart({
   bars,
   timeframe,
   height,
@@ -559,4 +559,4 @@ export function TradingViewChart({
       )}
     </MeasuredContainer>
   );
-}
+});
