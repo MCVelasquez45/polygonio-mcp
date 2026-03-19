@@ -27,7 +27,13 @@
       "Bash(git -C /Users/sirrelesteinfeld_1/projects/polygonio-mcp log --oneline -15)",
       "Bash(grep:*)",
       "WebFetch(domain:vectorbt.pro)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(brew list:*)",
+      "Bash(docker ps:*)",
+      "Bash(npm install:*)",
+      "Bash(source:*)",
+      "Bash(nvm use:*)",
+      "Bash(unzip:*)"
     ]
   }
 }

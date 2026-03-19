@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"}],"uuid":"d4d19be2576e46e587929c143c67bf02","collectionName":"enginestrategies","type":"collection"}

@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"}],"uuid":"4e1bc06b6e2b4de4ba8efb72ba127dd9","collectionName":"futuresbacktests","type":"collection"}
