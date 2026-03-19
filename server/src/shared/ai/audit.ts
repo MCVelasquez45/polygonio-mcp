@@ -1,5 +1,5 @@
 import type { Collection } from 'mongodb';
-import { getCollection } from '../db/mongo';
+import { getCollection, isMongoReady } from '../db/mongo';
 
 type AiAuditEntry = {
   feature: string;
@@ -30,6 +30,7 @@ function normalizeError(value: unknown): string | null {
 }
 
 export async function logAiAudit(entry: Omit<AiAuditEntry, 'createdAt'> & { createdAt?: Date }) {
+  if (!isMongoReady()) return;
   try {
     const payload: AiAuditEntry = {
       ...entry,

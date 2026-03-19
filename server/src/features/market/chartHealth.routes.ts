@@ -1,6 +1,7 @@
 import express from 'express';
 import { getAllBufferStats, getAllDataQualityMetrics, buildDataQualityMetrics } from './services/chartHub/buffer';
 import { getRecentDataQualityLogs, computeQualityScore } from './services/chartHub/health';
+import { getFuturesHealthMetrics } from '../futures';
 
 const router = express.Router();
 
@@ -10,7 +11,9 @@ const router = express.Router();
  */
 router.get('/', (req, res) => {
   try {
-    const metrics = getAllDataQualityMetrics();
+    const chartMetrics = getAllDataQualityMetrics();
+    const futuresMetrics = getFuturesHealthMetrics();
+    const metrics = [...chartMetrics, ...futuresMetrics];
     const withScores = metrics.map(m => ({
       ...m,
       qualityScore: computeQualityScore(m)
@@ -53,10 +56,12 @@ router.get('/logs', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const stats = getAllBufferStats();
+    const futuresFeeds = getFuturesHealthMetrics();
 
     res.json({
       count: stats.length,
       buffers: stats,
+      futuresFeeds,
       timestamp: Date.now()
     });
   } catch (error: any) {

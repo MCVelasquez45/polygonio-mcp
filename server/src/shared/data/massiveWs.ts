@@ -126,13 +126,26 @@ export class MassiveWsClient {
     if (this.reconnectTimer) return;
     this.reconnectAttempts += 1;
     const attempt = this.reconnectAttempts;
-    const delayMs = 3000;
-    console.warn('[MassiveWS] scheduling reconnect', {
-      attempt,
-      delayMs,
-      url: this.url,
-      assetClass: this.assetClass
-    });
+    const MAX_ATTEMPTS = 20;
+    if (attempt > MAX_ATTEMPTS) {
+      console.warn('[MassiveWS] giving up after max reconnect attempts', {
+        attempts: MAX_ATTEMPTS,
+        url: this.url,
+        assetClass: this.assetClass
+      });
+      return;
+    }
+    // Exponential backoff: 3s, 6s, 12s, ... capped at 60s
+    const delayMs = Math.min(3000 * Math.pow(2, attempt - 1), 60_000);
+    // Only log the first 5 attempts and then every 5th to reduce noise
+    if (attempt <= 5 || attempt % 5 === 0) {
+      console.warn('[MassiveWS] scheduling reconnect', {
+        attempt,
+        delayMs,
+        url: this.url,
+        assetClass: this.assetClass
+      });
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();

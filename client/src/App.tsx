@@ -3,15 +3,15 @@ import { io, type Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
-import { TradingSidebar } from './components/layout/TradingSidebar';
-import { ChartPanel } from './components/trading/ChartPanel';
-import { GreeksPanel } from './components/options/GreeksPanel';
-import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
-import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { Dashboard } from './components/dashboard';
+import { GreeksPanel } from './components/options/GreeksPanel';
+import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
+import { Watchlist } from './components/workspace/Watchlist';
+import { ChartContainer } from './components/workspace/ChartContainer';
+import { OptionsList } from './components/workspace/OptionsList';
 import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
@@ -2042,57 +2042,65 @@ function App() {
   }
 
   // Sidebar component handles watchlist interactions + ticker selection.
-  const sidebar = (
-    <TradingSidebar
-      selectedTicker={normalizedTicker}
-      onSelectTicker={(next, snapshot) => {
-        const normalized = next.toUpperCase();
-        setTicker(normalized);
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-        setSelectedLeg(null);
-        setContractDetail(null);
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-        if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
-          const referenceContract = snapshot.referenceContract.toUpperCase();
-          pendingSelectionRef.current.contract = referenceContract;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
-          setDesiredContract(referenceContract);
-        } else if (normalized.startsWith('O:')) {
-          pendingSelectionRef.current.contract = normalized;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-          setDesiredContract(normalized);
-        } else {
-          pendingSelectionRef.current.contract = null;
-          pendingSelectionRef.current.expiration = null;
-          setDesiredContract(null);
-        }
-        setSidebarOpen(false);
-      }}
-      onSnapshotUpdate={(ticker, snapshot) => {
-        if (!ticker) return;
-        if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-      }}
-      onWatchlistChange={handleWatchlistChange}
-      onRequestAutoSelect={handleContractSelectionRequest}
-      autoSelectDisabled={contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed}
-    />
-  );
+  const handleStockSelection = useCallback((next: string, snapshot?: WatchlistSnapshot | null) => {
+    const normalized = next.toUpperCase();
+    setTicker(normalized);
+    setBars([]);
+    setIndicators(undefined);
+    setMarketSessionMeta(null);
+    setSelectedLeg(null);
+    setContractDetail(null);
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+    if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
+      const referenceContract = snapshot.referenceContract.toUpperCase();
+      pendingSelectionRef.current.contract = referenceContract;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
+      setDesiredContract(referenceContract);
+    } else if (normalized.startsWith('O:')) {
+      pendingSelectionRef.current.contract = normalized;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+      setDesiredContract(normalized);
+    } else {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+    setSidebarOpen(false);
+  }, []);
+
+  const handleWatchlistSnapshotUpdate = useCallback((ticker: string, snapshot: WatchlistSnapshot | null) => {
+    if (!ticker) return;
+    if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+  }, [normalizedTicker]);
+
+  const sidebarProps = useMemo(() => ({
+    selectedTicker: normalizedTicker,
+    onSelectTicker: handleStockSelection,
+    onSnapshotUpdate: handleWatchlistSnapshotUpdate,
+    onWatchlistChange: handleWatchlistChange,
+    onRequestAutoSelect: handleContractSelectionRequest,
+    autoSelectDisabled: contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed,
+  }), [
+    normalizedTicker,
+    handleStockSelection,
+    handleWatchlistSnapshotUpdate,
+    handleWatchlistChange,
+    handleContractSelectionRequest,
+    contractSelectionLoading,
+    chainExpirations.length,
+    contractSelectionAllowed,
+  ]);
+
+  const sidebar = <Watchlist sidebarProps={sidebarProps} />;
 
   // When the user chooses a contract in the chain, sync selection + expiration state.
   const handleContractSelection = useCallback(
     (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
       selectionSourceRef.current = source;
       setSelectedLeg(leg);
-      if (leg) {
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-      }
       if (source === 'user') {
         setContractSelection(null);
       }
@@ -2144,7 +2152,74 @@ function App() {
     return latestBar?.close ?? null;
   }, [chainUnderlyingPrice, underlyingSnapshot, bars]);
 
-  const preferredOptionSide = useMemo(() => {
+  const handleTimeframeChange = useCallback((value: string) => {
+    setTimeframe(value as TimeframeKey);
+  }, []);
+
+  const handleOrderSubmitted = useCallback((ticker: string, side: string, qty: number, price: number) => {
+    console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
+  }, []);
+
+  const chartFallbackPrice = useMemo(
+    () => (
+      underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
+        ? underlyingSnapshot.price ?? null
+        : null
+    ),
+    [underlyingSnapshot]
+  );
+
+  const chartFallbackChange = useMemo(
+    () => (
+      underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
+        ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
+        : undefined
+    ),
+    [underlyingSnapshot]
+  );
+
+  const chartPanelProps = useMemo(() => ({
+    ticker: displayTicker,
+    chartKey: chartDataSymbol ?? displayTicker,
+    timeframe,
+    data: bars,
+    indicators,
+    isLoading: chartLoading,
+    onTimeframeChange: handleTimeframeChange,
+    sessionMode: chartSessionMode,
+    onSessionModeChange: setChartSessionMode,
+    onRunAnalysis: handleChartAnalysisRun,
+    analysis: chartAnalysis,
+    analysisLoading: chartAnalysisLoading,
+    analysisError: chartAnalysisError,
+    analysisUpdatedAt: chartAnalysisUpdatedAt,
+    analysisDisabled: !chartAnalysisAllowed,
+    fallbackPrice: chartFallbackPrice,
+    fallbackChange: chartFallbackChange,
+    sessionMeta: marketSessionMeta,
+    markers: tradeMarkers,
+  }), [
+    displayTicker,
+    chartDataSymbol,
+    timeframe,
+    bars,
+    indicators,
+    chartLoading,
+    handleTimeframeChange,
+    chartSessionMode,
+    handleChartAnalysisRun,
+    chartAnalysis,
+    chartAnalysisLoading,
+    chartAnalysisError,
+    chartAnalysisUpdatedAt,
+    chartAnalysisAllowed,
+    chartFallbackPrice,
+    chartFallbackChange,
+    marketSessionMeta,
+    tradeMarkers,
+  ]);
+
+  const preferredOptionSide = useMemo<'call' | 'put' | null>(() => {
     const sentiment = deskInsight?.sentiment?.label?.toLowerCase() ?? null;
     const shortBias = deskInsight?.shortBias?.label?.toLowerCase() ?? null;
     if (sentiment === 'bullish') return 'call';
@@ -2353,6 +2428,97 @@ function App() {
   const activeLiveQuote = activeContractKey ? liveChainQuotes[activeContractKey] : null;
   const activeLiveTrade = activeContractKey ? liveChainTrades[activeContractKey] : null;
 
+  const optionsPanelProps = useMemo(() => ({
+    ticker: displayTicker,
+    groups: chainExpirations,
+    underlyingPrice: resolvedUnderlyingPrice,
+    loading: chainLoading,
+    error: chainError,
+    availableExpirations: mergedExpirations,
+    selectedExpiration,
+    onExpirationChange: handleExpirationChange,
+    selectedContract: selectedLeg,
+    onContractSelect: handleContractSelection,
+    liveQuotes: liveChainQuotes,
+    liveTrades: liveChainTrades,
+    selectedContractDetail: contractDetail,
+    preferredSide: preferredOptionSide,
+    onRequestAnalysis: handleContractAnalysisRequest,
+    analysisDisabled: !contractAnalysisAllowed || (!selectedLeg && !contractDetail),
+  }), [
+    displayTicker,
+    chainExpirations,
+    resolvedUnderlyingPrice,
+    chainLoading,
+    chainError,
+    mergedExpirations,
+    selectedExpiration,
+    handleExpirationChange,
+    selectedLeg,
+    handleContractSelection,
+    liveChainQuotes,
+    liveChainTrades,
+    contractDetail,
+    preferredOptionSide,
+    handleContractAnalysisRequest,
+    contractAnalysisAllowed,
+  ]);
+
+  const greeksPanelProps = useMemo(() => ({
+    contract: contractDetail,
+    leg: selectedLeg,
+    label: displayTicker,
+    underlyingPrice: greeksUnderlyingPrice,
+    insight: deskInsight,
+    selection: contractSelection,
+    selectionLoading: contractSelectionLoading,
+    onRequestSelection: handleContractSelectionRequest,
+    selectionDisabled: !contractSelectionAllowed,
+    analysisRequestId: contractAnalysisRequestId,
+    analysisDisabled: !contractAnalysisAllowed,
+    liveQuote: activeLiveQuote,
+    liveTrade: activeLiveTrade,
+  }), [
+    contractDetail,
+    selectedLeg,
+    displayTicker,
+    greeksUnderlyingPrice,
+    deskInsight,
+    contractSelection,
+    contractSelectionLoading,
+    handleContractSelectionRequest,
+    contractSelectionAllowed,
+    contractAnalysisRequestId,
+    contractAnalysisAllowed,
+    activeLiveQuote,
+    activeLiveTrade,
+  ]);
+
+  const orderTicketProps = useMemo(() => ({
+    contract: contractDetail,
+    quote,
+    trades,
+    isLoading: false,
+    label: displayTicker,
+    spotPrice: resolvedUnderlyingPrice,
+    marketClosed: marketSessionMeta?.marketClosed,
+    afterHours: marketSessionMeta?.afterHours,
+    nextOpen: marketSessionMeta?.nextOpen ?? null,
+    autoSubmit: autoSubmitOrders,
+    onOrderSubmitted: handleOrderSubmitted,
+  }), [
+    contractDetail,
+    quote,
+    trades,
+    displayTicker,
+    resolvedUnderlyingPrice,
+    marketSessionMeta?.marketClosed,
+    marketSessionMeta?.afterHours,
+    marketSessionMeta?.nextOpen,
+    autoSubmitOrders,
+    handleOrderSubmitted,
+  ]);
+
   // Subscribe to a near-the-money strip so the chain shows live prices.
   useEffect(() => {
     const socket = socketRef.current;
@@ -2435,57 +2601,7 @@ function App() {
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
-        {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
-          <div
-            className={`rounded-2xl border px-4 py-3 ${marketSessionMeta.marketClosed
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
-              }`}
-          >
-            <p className="text-sm font-semibold flex items-center gap-2">
-              {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
-              {marketSessionMeta.usingLastSession && (
-                <span className="text-[10px] uppercase tracking-[0.3em] opacity-80">Last Session</span>
-              )}
-            </p>
-            <p className="text-xs mt-1">
-              {marketSessionMeta.marketClosed
-                ? 'Data reflects the last completed trading session.'
-                : 'Prices are updating slower during the extended session.'}{' '}
-              {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
-            </p>
-            {marketSessionMeta.note && <p className="text-[11px] mt-1 opacity-80">{marketSessionMeta.note}</p>}
-          </div>
-        )}
-        <ChartPanel
-          ticker={displayTicker}
-          chartKey={chartDataSymbol ?? displayTicker}
-          timeframe={timeframe}
-          data={bars}
-          indicators={indicators}
-          isLoading={chartLoading}
-          onTimeframeChange={value => setTimeframe(value as TimeframeKey)}
-          sessionMode={chartSessionMode}
-          onSessionModeChange={setChartSessionMode}
-          onRunAnalysis={handleChartAnalysisRun}
-          analysis={chartAnalysis}
-          analysisLoading={chartAnalysisLoading}
-          analysisError={chartAnalysisError}
-          analysisUpdatedAt={chartAnalysisUpdatedAt}
-          analysisDisabled={!chartAnalysisAllowed}
-          fallbackPrice={
-            underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
-              ? underlyingSnapshot.price ?? null
-              : null
-          }
-          fallbackChange={
-            underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
-              ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
-              : undefined
-          }
-          sessionMeta={marketSessionMeta}
-          markers={tradeMarkers}
-        />
+        <ChartContainer panelProps={chartPanelProps} />
         <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div>
@@ -2553,65 +2669,14 @@ function App() {
             </div>
           )}
         </div>
-        <GreeksPanel
-          contract={contractDetail}
-          leg={selectedLeg}
-          label={displayTicker}
-          underlyingPrice={greeksUnderlyingPrice}
-          insight={deskInsight}
-          selection={contractSelection}
-          selectionLoading={contractSelectionLoading}
-          onRequestSelection={handleContractSelectionRequest}
-          selectionDisabled={!contractSelectionAllowed}
-          analysisRequestId={contractAnalysisRequestId}
-          analysisDisabled={!contractAnalysisAllowed}
-          liveQuote={activeLiveQuote}
-          liveTrade={activeLiveTrade}
-        />
+        <div className="min-w-0">
+          <GreeksPanel {...greeksPanelProps} />
+        </div>
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
-        <OrderTicketPanel
-          contract={contractDetail}
-          quote={quote}
-          trades={trades}
-          isLoading={false}
-          label={displayTicker}
-          spotPrice={resolvedUnderlyingPrice}
-          marketClosed={marketSessionMeta?.marketClosed}
-          afterHours={marketSessionMeta?.afterHours}
-          nextOpen={marketSessionMeta?.nextOpen ?? null}
-          autoSubmit={autoSubmitOrders}
-          onOrderSubmitted={(ticker, side, qty, price) => {
-            console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
-            // Future: add to visual journaling history
-          }}
-        />
+        <OrderTicketPanel {...orderTicketProps} />
       </div>
-      <div className="lg:col-span-3 min-w-0">
-        {marketSessionMeta?.marketClosed && (
-          <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 text-amber-100 px-4 py-2 text-xs">
-            Options quotes are paused — spreads reflect the last available snapshot.
-          </div>
-        )}
-        <OptionsChainPanel
-          ticker={displayTicker}
-          groups={chainExpirations}
-          underlyingPrice={resolvedUnderlyingPrice}
-          loading={chainLoading}
-          error={chainError}
-          availableExpirations={mergedExpirations}
-          selectedExpiration={selectedExpiration}
-          onExpirationChange={handleExpirationChange}
-          selectedContract={selectedLeg}
-          onContractSelect={handleContractSelection}
-          liveQuotes={liveChainQuotes}
-          liveTrades={liveChainTrades}
-          selectedContractDetail={contractDetail}
-          preferredSide={preferredOptionSide}
-          onRequestAnalysis={handleContractAnalysisRequest}
-          analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
-        />
-      </div>
+      <OptionsList panelProps={optionsPanelProps} marketClosed={marketSessionMeta?.marketClosed} />
     </div>
   );
 

@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import os
+import tempfile
 from fastapi import FastAPI, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any
 import httpx
+from openai import AsyncOpenAI
 
 from agents.exceptions import InputGuardrailTripwireTriggered
 
 from core.polygon_agent import run_analysis
+from core.sift_router import router as sift_router
 from instrumentation import setup_telemetry
 
 app = FastAPI(title="Polygon Market Analysis API", version="1.0.0")
 setup_telemetry(app)
+app.include_router(sift_router)
 
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
@@ -25,6 +32,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -53,7 +62,19 @@ class ExtractionResponse(BaseModel):
     name: str
     description: str
     hypothesis: str
+    type: str = "custom"
     parameters: dict[str, Any]
+    parameter_definitions: dict[str, str] = {}
+    entry_rules: list[str] = []
+    exit_rules: list[str] = []
+    risk_management: list[str] = []
+
+
+class AudioTranscriptionRequest(BaseModel):
+    audio_base64: str
+    filename: str | None = None
+    mime_type: str | None = None
+    language: str | None = "en"
 
 
 class CodeGenRequest(BaseModel):
@@ -108,6 +129,65 @@ async def extract_strategy_async(request: ExtractionRequest, background_tasks: B
     return {"message": "Extraction started in background", "status": "accepted"}
 
 
+@app.post("/transcribe-audio", status_code=status.HTTP_200_OK)
+async def transcribe_audio(request: AudioTranscriptionRequest):
+    if not request.audio_base64.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="audio_base64 must not be empty.")
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENAI_API_KEY is not configured on the agent service.",
+        )
+
+    try:
+        audio_bytes = base64.b64decode(request.audio_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 audio payload.") from exc
+
+    if not audio_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Decoded audio payload is empty.")
+
+    filename = (request.filename or "audio-upload.webm").strip() or "audio-upload.webm"
+    _, extension = os.path.splitext(filename)
+    suffix = extension if extension else ".webm"
+    model_name = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip() or "gpt-4o-mini-transcribe"
+
+    temp_file_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_file.flush()
+            temp_file_path = temp_file.name
+
+        client = AsyncOpenAI(api_key=api_key)
+        with open(temp_file_path, "rb") as audio_file:
+            transcription = await client.audio.transcriptions.create(
+                model=model_name,
+                file=audio_file,
+                language=request.language or "en",
+                response_format="text",
+            )
+
+        transcript_text = transcription if isinstance(transcription, str) else str(transcription)
+        transcript_text = transcript_text.strip()
+        if not transcript_text:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Transcription service returned empty text.")
+
+        return {"transcript": transcript_text}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Audio transcription failed: {exc}") from exc
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                pass
+
+
 @app.post("/generate-strategy", response_model=CodeGenResponse, status_code=status.HTTP_200_OK)
 async def generate_strategy(request: CodeGenRequest) -> CodeGenResponse:
     description = request.description.strip()
@@ -138,24 +218,100 @@ async def generate_strategy(request: CodeGenRequest) -> CodeGenResponse:
 
 
 async def _perform_extraction(transcript: str) -> dict[str, Any]:
-    prompt = f"Call extract_strategy_parameters with this transcript: {transcript}"
-    
-    # We disable guardrails for this technical extraction task to avoid false positives
+    """Extract a structured trading strategy using SIFT's extraction engine."""
+    import asyncio
+    from core.sift_router import TEMPLATES, _configure_provider, _run_extraction
+
+    _configure_provider(None, None)  # uses SIFT_PROVIDER env or defaults to anthropic
+    fields = TEMPLATES["trading-strategy"]
+
+    try:
+        data = await asyncio.to_thread(
+            _run_extraction, transcript, fields, "trading-strategy", ""
+        )
+    except Exception as exc:
+        print(f"[AGENT] SIFT extraction failed, falling back to LLM: {exc}")
+        return await _perform_extraction_llm_fallback(transcript)
+
+    # Flatten parameters if SIFT returned nested maps
+    params = data.get("parameters")
+    if isinstance(params, dict):
+        flat: dict[str, Any] = {}
+        for k, v in params.items():
+            if isinstance(v, dict):
+                for nk, nv in v.items():
+                    flat[f"{k}_{nk}"] = nv
+            else:
+                flat[k] = v
+        data["parameters"] = flat
+
+    if "parameter_definitions" not in data or not isinstance(data.get("parameter_definitions"), dict):
+        data["parameter_definitions"] = {}
+
+    for list_field in ("entry_rules", "exit_rules", "risk_management"):
+        if list_field not in data or not isinstance(data.get(list_field), list):
+            data[list_field] = []
+        data[list_field] = [
+            " ".join(item.values()) if isinstance(item, dict) else str(item)
+            for item in data[list_field]
+        ]
+    if "type" not in data or not isinstance(data.get("type"), str):
+        data["type"] = "custom"
+
+    return data
+
+
+async def _perform_extraction_llm_fallback(transcript: str) -> dict[str, Any]:
+    """Fallback extraction using the raw LLM agent when SIFT is unavailable."""
+    prompt = f"""Extract a structured trading strategy from the following transcript.
+
+Return ONLY valid JSON with these keys:
+- "name": short strategy name (string)
+- "description": one-paragraph description of the strategy (string)
+- "hypothesis": the core trading hypothesis being tested (string)
+- "type": one of "momentum", "mean_reversion", "volatility", "0dte", "spreads", "futures", or "custom" (string)
+- "parameters": flat key-value object where every value is a string, number, or boolean — NOT nested objects. Use snake_case keys.
+- "parameter_definitions": object mapping each parameter key to a plain-English definition.
+- "entry_rules": array of strings, each describing a condition that must be true before placing a trade.
+- "exit_rules": array of strings, each describing an exit rule, stop-loss condition, or profit-taking trigger.
+- "risk_management": array of strings, each describing a risk management rule (position sizing, max daily loss, drawdown limits, etc.).
+
+IMPORTANT:
+- All parameter values must be primitives (string, number, boolean). Do NOT nest objects.
+- For complex rules, break them into separate flat parameters with descriptive names.
+- entry_rules, exit_rules, and risk_management must be arrays of plain-English rule strings.
+
+Transcript:
+{transcript}"""
+
+    import re
+
     result = await run_analysis(prompt, skip_mcp=True, enforce_guardrail=False)
-    
     final_output = getattr(result, "final_output", result)
     output_text = str(final_output).strip()
-    
-    # Extract JSON from potential conversational text
-    import re
+
     json_match = re.search(r'(\{.*\})', output_text, re.DOTALL)
     if json_match:
         output_text = json_match.group(1)
 
     try:
-        return json.loads(output_text)
+        data = json.loads(output_text)
     except Exception as exc:
         raise ValueError(f"Failed to parse agent output as JSON: {output_text}") from exc
+
+    if "parameter_definitions" not in data:
+        data["parameter_definitions"] = {}
+    for list_field in ("entry_rules", "exit_rules", "risk_management"):
+        if list_field not in data or not isinstance(data.get(list_field), list):
+            data[list_field] = []
+        data[list_field] = [
+            " ".join(item.values()) if isinstance(item, dict) else str(item)
+            for item in data[list_field]
+        ]
+    if "type" not in data or not isinstance(data.get("type"), str):
+        data["type"] = "custom"
+
+    return data
 
 
 async def process_extraction_background(transcript: str, socket_id: str | None):

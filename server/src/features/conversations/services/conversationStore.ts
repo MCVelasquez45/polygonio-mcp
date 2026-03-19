@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 
 export type ConversationMessage = {
   id: string;
@@ -26,6 +26,9 @@ export type ConversationSummary = {
 };
 
 function conversationsCollection() {
+  if (!isMongoReady()) {
+    throw new Error('Conversations require MongoDB. Start MongoDB or set MONGO_URI.');
+  }
   return getCollection<ConversationDocument>('conversations');
 }
 

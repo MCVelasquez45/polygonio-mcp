@@ -1,5 +1,5 @@
 import { Collection } from 'mongodb';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 
 // Persists the last per-user option selection so the UI can restore context.
 
@@ -33,6 +33,7 @@ export async function ensureSelectionIndexes() {
 }
 
 export async function getLatestSelection(userId: string) {
+  if (!isMongoReady()) return null;
   await ensureSelectionIndexes();
   const collection = getSelectionCollection();
   return collection.findOne({ userId });
@@ -44,6 +45,9 @@ export async function saveSelection(userId: string, payload: Partial<OptionSelec
   }
   if (!payload?.ticker || !payload?.contract) {
     throw new Error('ticker and contract are required');
+  }
+  if (!isMongoReady()) {
+    return { userId, ticker: payload.ticker, contract: payload.contract, updatedAt: new Date() } as OptionSelectionDocument;
   }
   await ensureSelectionIndexes();
   const collection = getSelectionCollection();

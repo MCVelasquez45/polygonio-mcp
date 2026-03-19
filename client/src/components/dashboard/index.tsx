@@ -5,6 +5,7 @@ import { ActiveStrategiesPanel } from './ActiveStrategiesPanel';
 import { HandoffRequestsPanel } from './HandoffRequestsPanel';
 import { ScannerResultsPanel } from './ScannerResultsPanel';
 import { AgentChatPanel } from './AgentChatPanel';
+import { StrategyPipelineShell } from '../../features/lab/StrategyPipelineShell';
 import {
   StrategyListPanel,
   StrategyCreationWizard,
@@ -18,6 +19,8 @@ import { EngineRoomDashboard } from '../engine';
 import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
 import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
+import { getApiBaseUrl } from '../../api/http';
+import { apiClient, futuresApi } from '../../api';
 
 type Props = {
   apiBase?: string;
@@ -25,19 +28,23 @@ type Props = {
   socket?: Socket | null;
 };
 
-export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, socket }: Props) {
+export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }: Props) {
   const [activePanel, setActivePanel] = useState('lab-strategies');
   const [lastActivePanel, setLastActivePanel] = useState('lab-strategies');
   const [showCreationWizard, setShowCreationWizard] = useState(false);
   const [showBacktestConfig, setShowBacktestConfig] = useState(false);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
+  const [selectedStrategy, setSelectedStrategy] = useState<any>(null);
   const [backtestResultsId, setBacktestResultsId] = useState<string | null>(null);
+  const [paperSessionId, setPaperSessionId] = useState<string | null>(null);
   const [backgroundExtraction, setBackgroundExtraction] = useState<{
     data?: any;
     status: 'idle' | 'processing' | 'completed' | 'error';
     error?: string;
   }>({ status: 'idle' });
   const [wizardInitialData, setWizardInitialData] = useState<any>(null);
+  const [strategyListRefreshKey, setStrategyListRefreshKey] = useState(0);
+  const [isCreatingStrategy, setIsCreatingStrategy] = useState(false);
 
   const handlePanelChange = (panelId: string) => {
     if (panelId !== 'chat') {
@@ -50,13 +57,85 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
     setShowCreationWizard(true);
   };
 
-  const handleWizardComplete = (strategy: any) => {
-    console.log('Strategy created:', strategy);
-    setShowCreationWizard(false);
+  const handleWizardComplete = async (strategy: any) => {
+    if (isCreatingStrategy) return;
+    setIsCreatingStrategy(true);
+    const strategyType = strategy?.type === 'futures' ? 'futures' : 'screener';
+    const strategyName = typeof strategy?.name === 'string' && strategy.name.trim()
+      ? strategy.name.trim()
+      : 'Untitled Strategy';
+    const strategyDescription = typeof strategy?.description === 'string' ? strategy.description : '';
+    const hypothesis = typeof strategy?.hypothesis === 'string' ? strategy.hypothesis : '';
+    const transcript = typeof strategy?.transcript === 'string' ? strategy.transcript : '';
+    const strategyParams =
+      strategy?.parameters && typeof strategy.parameters === 'object' && !Array.isArray(strategy.parameters)
+        ? strategy.parameters
+        : {};
+    const paramDefs =
+      strategy?.parameterDefinitions && typeof strategy.parameterDefinitions === 'object'
+        ? strategy.parameterDefinitions
+        : {};
+
+    const entryRules = Array.isArray(strategy?.entryRules) ? strategy.entryRules.filter((r: string) => r?.trim()) : [];
+    const exitRules = Array.isArray(strategy?.exitRules) ? strategy.exitRules.filter((r: string) => r?.trim()) : [];
+    const riskManagement = Array.isArray(strategy?.riskManagement) ? strategy.riskManagement.filter((r: string) => r?.trim()) : [];
+
+    const payload: any = {
+      name: strategyName,
+      description: strategyDescription,
+      strategyType,
+      ownerId: 'lab_user',
+    };
+
+    if (strategyType === 'futures') {
+      payload.futuresConfig = {
+        contract: String(strategyParams.contract ?? 'ES'),
+      };
+    } else {
+      payload.screenerConfig = {
+        screener_type: 'transcript_strategy',
+        endpoint: 'manual://strategy-wizard',
+        params: {
+          source: 'strategy_creation_wizard',
+          strategy_template_type: strategy?.type ?? 'custom',
+          hypothesis,
+          transcript: transcript || undefined,
+          parameter_definitions: Object.keys(paramDefs).length > 0 ? paramDefs : undefined,
+          entry_rules: entryRules.length > 0 ? entryRules : undefined,
+          exit_rules: exitRules.length > 0 ? exitRules : undefined,
+          risk_management: riskManagement.length > 0 ? riskManagement : undefined,
+          ...strategyParams
+        },
+        schedule: 'manual'
+      };
+    }
+
+    try {
+      const response = await apiClient.post('/api/lab/strategy/create', payload);
+      const created = response.data;
+      setShowCreationWizard(false);
+      setWizardInitialData(null);
+      setStrategyListRefreshKey(prev => prev + 1);
+      toast.success('Strategy created in Room A.');
+      if (created?._id || created?.id) {
+        setSelectedStrategyId(String(created._id ?? created.id));
+      }
+    } catch (error: any) {
+      console.error('Failed to create strategy:', error);
+      const detail =
+        error?.response?.data?.error ||
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Unknown error';
+      toast.error(`Failed to create strategy: ${detail}`);
+    } finally {
+      setIsCreatingStrategy(false);
+    }
   };
 
   const handleSelectStrategy = (strategy: any) => {
-    setSelectedStrategyId(strategy.id);
+    setSelectedStrategyId(strategy.id ?? strategy._id);
+    setSelectedStrategy(strategy);
     setActivePanel('lab-editor');
   };
 
@@ -118,10 +197,51 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
     setShowBacktestConfig(true);
   };
 
-  const handleStartBacktest = (config: any) => {
-    setShowBacktestConfig(false);
-    setBacktestResultsId('BT-20250116-001');
-    setActivePanel('lab-backtest-results');
+  const handleStartBacktest = async (config: any) => {
+    if (!selectedStrategyId) return;
+    try {
+      setShowBacktestConfig(false);
+      const strategyName = selectedStrategy?.name ?? 'FuturesStrategy';
+      const symbol =
+        selectedStrategy?.futuresConfig?.contract ??
+        config.contractType ??
+        selectedStrategy?.parameters?.contract ??
+        'ES';
+
+      const backtest = await futuresApi.runFuturesBacktest({
+        strategyId: selectedStrategyId,
+        strategyName,
+        symbol,
+        startDate: config.startDate,
+        endDate: config.endDate,
+        initialCapital: Number(config.initialCapital ?? 100000),
+        contracts: Number(config.position_size_contracts ?? 1),
+        rollPolicy: config.rollStrategy ?? 'volume',
+        rollDaysBefore: Number(config.roll_days_before_expiry ?? 5),
+        slippageBps: config.slippageModel === 'zero' ? 0 : config.slippageModel === 'fixed' ? 1 : 2.5,
+        feePerContract: config.commissionModel === 'zero' ? 0 : config.commissionModel === 'fixed' ? 1 : 2.5
+      });
+      setBacktestResultsId(backtest._id);
+
+      const paper = await futuresApi.startFuturesPaperSession({
+        strategyId: selectedStrategyId,
+        strategyName,
+        symbol,
+        contracts: Number(config.position_size_contracts ?? 1),
+        initialCapital: Number(config.initialCapital ?? 100000),
+        maxDailyLoss: 5000,
+        maxDrawdown: 0.08,
+        slippageBps: config.slippageModel === 'zero' ? 0 : config.slippageModel === 'fixed' ? 1 : 2.5,
+        feePerContract: config.commissionModel === 'zero' ? 0 : config.commissionModel === 'fixed' ? 1 : 2.5
+      });
+      setPaperSessionId(paper._id);
+
+      setActivePanel('lab-backtest-results');
+      toast.success('Futures backtest completed and paper session started.');
+    } catch (error: any) {
+      toast.error(`Backtest failed: ${error?.message ?? 'Unknown error'}`);
+      setShowBacktestConfig(false);
+    }
   };
 
   const getPanelLabel = () => {
@@ -146,33 +266,45 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
   const renderPanel = () => {
     switch (activePanel) {
       case 'lab-strategies':
-        return (
-          <StrategyListPanel
-            onCreateNew={handleCreateStrategy}
-            onSelectStrategy={handleSelectStrategy}
-          />
-        );
+        return <StrategyPipelineShell />;
       case 'lab-editor':
         return (
           <StrategyEditorPanel
             strategyId={selectedStrategyId || undefined}
             onRunBacktest={handleRunBacktest}
-            onSave={(code) => console.log('Save code', code)}
+            onSave={() => setStrategyListRefreshKey(prev => prev + 1)}
+            onBack={() => setActivePanel('lab-strategies')}
           />
         );
       case 'lab-backtest-results':
         return (
           <BacktestResultsPanel
             backtestId={backtestResultsId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            onDeployToPaper={() => setActivePanel('lab-paper')}
             onClose={() => setActivePanel('lab-editor')}
           />
         );
       case 'lab-paper':
-        return <PaperTradingDashboard />;
+        return (
+          <PaperTradingDashboard
+            sessionId={paperSessionId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            strategyName={selectedStrategy?.name}
+            onRequestPromotion={() => setActivePanel('lab-promotion')}
+          />
+        );
       case 'lab-promotion':
-        return <PromotionGatePanel />;
+        return (
+          <PromotionGatePanel
+            sessionId={paperSessionId || undefined}
+            strategyId={selectedStrategyId || undefined}
+            symbol={selectedStrategy?.futuresConfig?.contract ?? 'ES'}
+            onPromote={() => setActivePanel('live')}
+          />
+        );
       case 'live':
-        return <EngineRoomDashboard />;
+        return <EngineRoomDashboard sessionId={paperSessionId || undefined} strategyId={selectedStrategyId || undefined} />;
       case 'monitoring-perf':
         return <PerformanceReviewDashboard />;
       case 'monitoring-ab':
@@ -188,7 +320,7 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
       case 'chat':
         return <AgentChatPanel apiBase={apiBase} context={{ source: lastActivePanel }} />;
       default:
-        return <StrategyListPanel onCreateNew={handleCreateStrategy} />;
+        return <StrategyListPanel onCreateNew={handleCreateStrategy} refreshKey={strategyListRefreshKey} />;
     }
   };
 
@@ -261,6 +393,7 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
           initialData={wizardInitialData}
           socketId={socket?.id}
           isProcessing={backgroundExtraction.status === 'processing'}
+          isSubmitting={isCreatingStrategy}
           onExtractionStart={handleExtractionStart}
           onComplete={handleWizardComplete}
           onCancel={() => {
@@ -272,7 +405,8 @@ export function Dashboard({ apiBase = 'http://localhost:3000', onTickerSelect, s
 
       {showBacktestConfig && (
         <BacktestConfigModal
-          strategyName="VolArbitrage_v2"
+          strategyName={selectedStrategy?.name ?? 'FuturesStrategy'}
+          strategyType={selectedStrategy?.type === 'futures' || selectedStrategy?.strategyType === 'futures' ? 'futures' : undefined}
           onRun={handleStartBacktest}
           onCancel={() => setShowBacktestConfig(false)}
         />

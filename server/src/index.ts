@@ -12,8 +12,10 @@ import { brokerRouter } from './features/broker';
 import { analysisRouter } from './features/analysis';
 import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
+import { strategyRouter } from './features/strategy/strategy.routes';
 import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
+import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -42,7 +44,12 @@ app.use(
 app.use(express.json());
 
 app.use((req, _res, next) => {
-  console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+  const isStrategyRequest = req.originalUrl.startsWith('/api/strategy');
+  if (isStrategyRequest) {
+    console.log(`[SERVER] ${req.method} ${req.originalUrl} received`);
+  } else {
+    console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+  }
   next();
 });
 
@@ -59,8 +66,11 @@ app.use('/api/broker', brokerRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
+app.use('/api/strategy', strategyRouter);
 app.use('/api/chart/health', chartHealthRouter);
 app.use('/api/engine', engineRouter);
+app.use('/api/lab/futures', futuresRouter);
+app.use('/api/engine/futures', futuresRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
@@ -78,6 +88,7 @@ const io = new SocketIOServer(httpServer, {
 app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
+initFuturesRuntime(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
@@ -92,11 +103,14 @@ io.on('connection', socket => {
 
 async function start() {
   const mongoConfig = resolveMongoConfig();
-  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? '').toLowerCase() === 'true';
+  // Default to allowing server to start without Mongo so core functionality
+  // (webhooks, socket.io, strategy extraction) is never blocked by DB issues.
+  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? 'true').toLowerCase() !== 'false';
   try {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
     await ensureMarketCacheIndexes();
+    await seedDefaultContractSpecs();
     startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);

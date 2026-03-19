@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { getApiBaseUrl } from '../../api/http';
+import { apiClient } from '../../api';
 
 type HandoffRequest = {
   _id: string;
@@ -66,7 +68,7 @@ function getStatusColor(status: string): string {
   }
 }
 
-export function HandoffRequestsPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 10000, onApprove, onReject }: Props) {
+export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs = 10000, onApprove, onReject }: Props) {
   const [requests, setRequests] = useState<HandoffRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,9 +76,7 @@ export function HandoffRequestsPanel({ apiBase = 'http://localhost:3000', refres
 
   const fetchRequests = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/handoff/requests`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const { data } = await apiClient.get('/api/handoff/requests', { baseURL: apiBase });
       setRequests(data ?? []);
       setError(null);
     } catch (err: any) {
@@ -89,15 +89,12 @@ export function HandoffRequestsPanel({ apiBase = 'http://localhost:3000', refres
   const approveRequest = async (request: HandoffRequest) => {
     setProcessingId(request._id);
     try {
-      const res = await fetch(`${apiBase}/api/handoff/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: request._id,
-          approverId: 'dashboard-user'
-        })
+      await apiClient.post('/api/handoff/approve', {
+        requestId: request._id,
+        approverId: 'dashboard-user'
+      }, {
+        baseURL: apiBase
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await fetchRequests();
       onApprove?.(request);
     } catch (err: any) {
