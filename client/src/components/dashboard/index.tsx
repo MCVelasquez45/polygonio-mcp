@@ -5,6 +5,7 @@ import { ActiveStrategiesPanel } from './ActiveStrategiesPanel';
 import { HandoffRequestsPanel } from './HandoffRequestsPanel';
 import { ScannerResultsPanel } from './ScannerResultsPanel';
 import { AgentChatPanel } from './AgentChatPanel';
+import { StrategyPipelineShell } from '../../features/lab/StrategyPipelineShell';
 import {
   StrategyListPanel,
   StrategyCreationWizard,
@@ -265,13 +266,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   const renderPanel = () => {
     switch (activePanel) {
       case 'lab-strategies':
-        return (
-          <StrategyListPanel
-            onCreateNew={handleCreateStrategy}
-            onSelectStrategy={handleSelectStrategy}
-            refreshKey={strategyListRefreshKey}
-          />
-        );
+        return <StrategyPipelineShell />;
       case 'lab-editor':
         return (
           <StrategyEditorPanel

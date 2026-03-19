@@ -12,6 +12,7 @@ import { brokerRouter } from './features/broker';
 import { analysisRouter } from './features/analysis';
 import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
+import { strategyRouter } from './features/strategy/strategy.routes';
 import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
@@ -43,7 +44,12 @@ app.use(
 app.use(express.json());
 
 app.use((req, _res, next) => {
-  console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+  const isStrategyRequest = req.originalUrl.startsWith('/api/strategy');
+  if (isStrategyRequest) {
+    console.log(`[SERVER] ${req.method} ${req.originalUrl} received`);
+  } else {
+    console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+  }
   next();
 });
 
@@ -60,6 +66,7 @@ app.use('/api/broker', brokerRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
+app.use('/api/strategy', strategyRouter);
 app.use('/api/chart/health', chartHealthRouter);
 app.use('/api/engine', engineRouter);
 app.use('/api/lab/futures', futuresRouter);
