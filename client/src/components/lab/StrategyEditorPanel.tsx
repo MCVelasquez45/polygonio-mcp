@@ -693,17 +693,17 @@ const editorStyles = `
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #0a0a0f;
-    color: #e5e5e5;
+    background: var(--bg-base, #060810);
+    color: var(--text-primary, #f0f2f5);
   }
 
   .sed-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
+    padding: 0.875rem 1.75rem;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    background: var(--bg-surface, #0c0e18);
     flex-shrink: 0;
   }
 
@@ -718,58 +718,58 @@ const editorStyles = `
   .sed-toolbar-right {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.625rem;
     flex-shrink: 0;
   }
 
   .sed-back-btn {
     background: none;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #9ca3af;
+    border: 1px solid var(--border-default, rgba(255,255,255,0.09));
+    color: var(--text-secondary, #8b92a5);
     width: 32px;
     height: 32px;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
     font-size: 1rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
+    transition: all var(--transition-fast, 150ms);
     flex-shrink: 0;
   }
 
   .sed-back-btn:hover {
-    color: #e5e5e5;
-    border-color: rgba(255, 255, 255, 0.25);
-    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary, #f0f2f5);
+    border-color: var(--border-hover, rgba(255,255,255,0.14));
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .sed-name-input {
     background: transparent;
     border: 1px solid transparent;
-    color: #e5e5e5;
-    font-size: 1.1rem;
+    color: var(--text-primary, #f0f2f5);
+    font-size: 1.05rem;
     font-weight: 600;
     padding: 0.375rem 0.5rem;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm, 6px);
     min-width: 180px;
     max-width: 400px;
-    transition: border-color 0.15s;
+    transition: all var(--transition-fast, 150ms);
+    letter-spacing: -0.01em;
   }
 
-  .sed-name-input:hover {
-    border-color: rgba(255, 255, 255, 0.1);
-  }
+  .sed-name-input:hover { border-color: var(--border-subtle, rgba(255,255,255,0.06)); }
 
   .sed-name-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: var(--accent, #10b981);
+    background: rgba(255,255,255,0.02);
   }
 
   .sed-status-badge {
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 5px;
+    font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -777,257 +777,260 @@ const editorStyles = `
   }
 
   .sed-type-badge {
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 5px;
+    font-size: 0.65rem;
     font-weight: 500;
-    color: #9ca3af;
-    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #8b92a5);
+    background: rgba(255, 255, 255, 0.04);
     white-space: nowrap;
   }
 
   .sed-unsaved-dot {
-    width: 8px;
-    height: 8px;
-    background: #f59e0b;
+    width: 7px;
+    height: 7px;
+    background: var(--warning, #f59e0b);
     border-radius: 50%;
-    animation: sed-pulse-unsaved 2s infinite;
+    animation: sed-pulse-unsaved 2s ease-in-out infinite;
+    box-shadow: 0 0 8px rgba(245,158,11,0.4);
   }
 
   @keyframes sed-pulse-unsaved {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50% { opacity: 0.35; }
   }
 
   .sed-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 500;
+    padding: 0.4375rem 0.875rem;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all var(--transition-fast, 150ms);
     border: none;
     white-space: nowrap;
+    letter-spacing: 0.01em;
   }
 
   .sed-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
   .sed-btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: var(--accent, #10b981);
     color: white;
   }
 
   .sed-btn-primary:hover:not(:disabled) {
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    background: var(--accent-hover, #34d399);
+    box-shadow: var(--shadow-glow, 0 0 20px rgba(16,185,129,0.15));
     transform: translateY(-1px);
   }
 
   .sed-btn-secondary {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    color: #e5e5e5;
+    background: var(--bg-raised, #111420);
+    border: 1px solid var(--border-default, rgba(255,255,255,0.09)) !important;
+    color: var(--text-primary, #f0f2f5);
   }
 
   .sed-btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.25) !important;
+    background: var(--bg-overlay, #161a28);
+    border-color: var(--border-hover, rgba(255,255,255,0.14)) !important;
   }
 
   .sed-btn-small {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.8rem;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3) !important;
-    color: #10b981;
-    border-radius: 0.375rem;
+    padding: 0.3125rem 0.625rem;
+    font-size: 0.75rem;
+    background: var(--accent-muted, rgba(16,185,129,0.12));
+    border: 1px solid rgba(16, 185, 129, 0.2) !important;
+    color: var(--accent, #10b981);
+    border-radius: 6px;
   }
 
   .sed-btn-small:hover:not(:disabled) {
-    background: rgba(16, 185, 129, 0.2);
+    background: rgba(16, 185, 129, 0.18);
   }
 
   .sed-content {
     flex: 1;
     overflow-y: auto;
-    padding: 1.5rem;
+    padding: 1.25rem 1.75rem;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.875rem;
   }
 
   .sed-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: var(--bg-surface, #0c0e18);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    border-radius: var(--radius-lg, 14px);
     overflow: hidden;
   }
 
   .sed-section-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 1.25rem;
+    gap: 0.625rem;
+    padding: 0.875rem 1.125rem;
     cursor: pointer;
     user-select: none;
-    transition: background 0.15s;
+    transition: background var(--transition-fast, 150ms);
   }
 
   .sed-section-header:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .sed-section-header h3 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: 0.875rem;
     font-weight: 600;
     flex: 1;
+    letter-spacing: -0.005em;
   }
 
   .sed-section-arrow {
-    color: #6b7280;
-    font-size: 0.85rem;
+    color: var(--text-tertiary, #555d73);
+    font-size: 0.75rem;
     width: 16px;
     text-align: center;
+    transition: transform var(--transition-fast, 150ms);
   }
 
   .sed-section-count {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
     padding: 0.125rem 0.5rem;
-    border-radius: 1rem;
-    font-size: 0.75rem;
-    color: #9ca3af;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    color: var(--text-secondary, #8b92a5);
+    font-weight: 500;
   }
 
   .sed-section-body {
-    padding: 0 1.25rem 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
-    padding-top: 1rem;
+    padding: 0 1.125rem 1.125rem;
+    border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    padding-top: 0.875rem;
   }
 
   .sed-field {
-    margin-bottom: 1rem;
+    margin-bottom: 0.875rem;
   }
 
-  .sed-field:last-child {
-    margin-bottom: 0;
-  }
+  .sed-field:last-child { margin-bottom: 0; }
 
   .sed-field label {
     display: block;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.375rem;
     font-weight: 500;
-    color: #9ca3af;
-    font-size: 0.85rem;
+    color: var(--text-secondary, #8b92a5);
+    font-size: 0.8rem;
+    letter-spacing: 0.01em;
   }
 
   .sed-field textarea,
   .sed-field input[type="text"] {
     width: 100%;
-    padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #e5e5e5;
-    font-size: 0.9rem;
+    padding: 0.625rem 0.75rem;
+    background: var(--bg-raised, #111420);
+    border: 1px solid var(--border-default, rgba(255,255,255,0.09));
+    border-radius: 8px;
+    color: var(--text-primary, #f0f2f5);
+    font-size: 0.85rem;
     line-height: 1.5;
     resize: vertical;
-    transition: border-color 0.15s;
+    transition: border-color var(--transition-fast, 150ms);
     font-family: inherit;
   }
 
   .sed-field textarea:focus,
   .sed-field input[type="text"]:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: var(--accent, #10b981);
+    box-shadow: 0 0 0 3px rgba(16,185,129,0.08);
   }
 
-  /* Parameters grid */
   .sed-params-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.625rem;
+    margin-bottom: 0.875rem;
   }
 
   .sed-param-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.5rem;
+    background: var(--bg-raised, #111420);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    border-radius: var(--radius-md, 10px);
     padding: 0.75rem;
-    transition: border-color 0.15s;
+    transition: all var(--transition-fast, 150ms);
   }
 
   .sed-param-card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: var(--border-hover, rgba(255,255,255,0.14));
   }
 
   .sed-param-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4375rem;
   }
 
   .sed-param-key {
-    font-size: 0.8rem;
-    color: #9ca3af;
+    font-size: 0.75rem;
+    color: var(--text-secondary, #8b92a5);
     font-weight: 500;
   }
 
   .sed-param-delete {
     background: none;
     border: none;
-    color: #4b5563;
+    color: var(--text-tertiary, #555d73);
     cursor: pointer;
-    font-size: 1.1rem;
+    font-size: 1rem;
     padding: 0 0.25rem;
-    border-radius: 0.25rem;
-    transition: color 0.15s;
+    border-radius: 4px;
+    transition: color var(--transition-fast, 150ms);
     line-height: 1;
   }
 
-  .sed-param-delete:hover {
-    color: #ef4444;
-  }
+  .sed-param-delete:hover { color: var(--danger, #f43f5e); }
 
   .sed-param-input,
   select.sed-param-input {
     width: 100%;
-    padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.375rem;
-    color: #e5e5e5;
-    font-size: 0.9rem;
+    padding: 0.4375rem 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    border-radius: 6px;
+    color: var(--text-primary, #f0f2f5);
+    font-size: 0.85rem;
     font-weight: 500;
-    transition: border-color 0.15s;
+    transition: border-color var(--transition-fast, 150ms);
   }
 
   .sed-param-input:focus,
   select.sed-param-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: var(--accent, #10b981);
+    box-shadow: 0 0 0 2px rgba(16,185,129,0.08);
   }
 
   .sed-param-def {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: #6b7280;
+    margin-top: 0.375rem;
+    font-size: 0.7rem;
+    color: var(--text-tertiary, #555d73);
     line-height: 1.4;
     font-style: italic;
   }
 
   .sed-param-value-display {
-    font-size: 0.9rem;
-    color: #e5e5e5;
+    font-size: 0.85rem;
+    color: var(--text-primary, #f0f2f5);
     font-weight: 500;
-    margin-top: 0.5rem;
+    margin-top: 0.375rem;
   }
 
-  /* Add parameter row */
   .sed-add-row {
     display: flex;
     gap: 0.5rem;
@@ -1036,121 +1039,115 @@ const editorStyles = `
 
   .sed-add-input {
     flex: 1;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px dashed rgba(255, 255, 255, 0.1);
-    border-radius: 0.375rem;
-    color: #e5e5e5;
-    font-size: 0.85rem;
-    transition: border-color 0.15s;
+    padding: 0.4375rem 0.625rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed var(--border-default, rgba(255,255,255,0.09));
+    border-radius: 6px;
+    color: var(--text-primary, #f0f2f5);
+    font-size: 0.8rem;
+    transition: all var(--transition-fast, 150ms);
   }
 
-  .sed-add-input::placeholder {
-    color: #4b5563;
-  }
+  .sed-add-input::placeholder { color: var(--text-tertiary, #555d73); }
 
   .sed-add-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: var(--accent, #10b981);
     border-style: solid;
+    background: rgba(255,255,255,0.03);
   }
 
-  /* Rules */
   .sed-rule-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4375rem;
   }
 
   .sed-rule-number {
-    color: #6b7280;
-    font-size: 0.8rem;
-    min-width: 24px;
+    color: var(--text-tertiary, #555d73);
+    font-size: 0.75rem;
+    min-width: 22px;
     text-align: right;
     flex-shrink: 0;
+    font-weight: 600;
   }
 
   .sed-rule-input {
     flex: 1;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.375rem;
-    color: #e5e5e5;
-    font-size: 0.85rem;
-    transition: border-color 0.15s;
+    padding: 0.4375rem 0.625rem;
+    background: var(--bg-raised, #111420);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    border-radius: 6px;
+    color: var(--text-primary, #f0f2f5);
+    font-size: 0.8rem;
+    transition: border-color var(--transition-fast, 150ms);
   }
 
   .sed-rule-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: var(--accent, #10b981);
+    box-shadow: 0 0 0 2px rgba(16,185,129,0.08);
   }
 
   .sed-rule-delete {
     background: none;
     border: none;
-    color: #4b5563;
+    color: var(--text-tertiary, #555d73);
     cursor: pointer;
-    font-size: 1.1rem;
+    font-size: 1rem;
     padding: 0.25rem;
-    border-radius: 0.25rem;
-    transition: color 0.15s;
+    border-radius: 4px;
+    transition: color var(--transition-fast, 150ms);
     flex-shrink: 0;
     line-height: 1;
   }
 
-  .sed-rule-delete:hover {
-    color: #ef4444;
-  }
-
-  .sed-add-rule-btn {
-    margin-top: 0.5rem;
-  }
+  .sed-rule-delete:hover { color: var(--danger, #f43f5e); }
+  .sed-add-rule-btn { margin-top: 0.375rem; }
 
   .sed-empty-section {
-    color: #4b5563;
-    font-size: 0.85rem;
-    padding: 1rem 0;
+    color: var(--text-tertiary, #555d73);
+    font-size: 0.8rem;
+    padding: 0.75rem 0;
     text-align: center;
   }
 
-  /* Compiled artifacts */
   .sed-artifact-tabs {
     display: flex;
     gap: 0.25rem;
-    margin-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    padding-bottom: 0.75rem;
+    margin-bottom: 0.875rem;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    padding-bottom: 0.625rem;
   }
 
   .sed-artifact-tab {
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.375rem;
-    font-size: 0.8rem;
+    padding: 0.3125rem 0.625rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
     font-weight: 500;
     cursor: pointer;
     border: 1px solid transparent;
     background: transparent;
-    color: #6b7280;
-    transition: all 0.15s;
+    color: var(--text-tertiary, #555d73);
+    transition: all var(--transition-fast, 150ms);
   }
 
   .sed-artifact-tab:hover {
-    color: #9ca3af;
+    color: var(--text-secondary, #8b92a5);
     background: rgba(255, 255, 255, 0.03);
   }
 
   .sed-artifact-tab.active {
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.08);
-    border-color: rgba(16, 185, 129, 0.2);
+    color: var(--accent, #10b981);
+    background: var(--accent-muted, rgba(16,185,129,0.12));
+    border-color: rgba(16, 185, 129, 0.15);
   }
 
   .sed-artifact-content {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    border-radius: var(--radius-md, 10px);
     overflow: hidden;
   }
 
@@ -1158,75 +1155,73 @@ const editorStyles = `
     padding: 1rem;
     margin: 0;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.78rem;
-    line-height: 1.6;
-    color: #d1d5db;
+    font-size: 0.75rem;
+    line-height: 1.65;
+    color: #c4c9d4;
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 400px;
     overflow-y: auto;
   }
 
-  /* Version history rows */
   .sed-version-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.625rem 0.75rem;
-    border-radius: 0.375rem;
-    transition: background 0.15s;
-    margin-bottom: 0.25rem;
+    padding: 0.5rem 0.625rem;
+    border-radius: 6px;
+    transition: background var(--transition-fast, 150ms);
+    margin-bottom: 0.1875rem;
+    border: 1px solid transparent;
   }
 
-  .sed-version-row:hover {
-    background: rgba(255, 255, 255, 0.04);
-  }
+  .sed-version-row:hover { background: rgba(255, 255, 255, 0.03); }
 
   .sed-version-row.active {
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: var(--accent-muted, rgba(16,185,129,0.12));
+    border-color: rgba(16, 185, 129, 0.15);
   }
 
   .sed-version-label {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
-    color: #e5e5e5;
-    min-width: 50px;
+    color: var(--text-primary, #f0f2f5);
+    min-width: 48px;
   }
 
   .sed-version-stage {
-    font-size: 0.75rem;
-    color: #6b7280;
+    font-size: 0.7rem;
+    color: var(--text-tertiary, #555d73);
     text-transform: capitalize;
   }
 
   .sed-version-backtest {
-    font-size: 0.7rem;
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--accent, #10b981);
+    background: var(--accent-muted, rgba(16,185,129,0.12));
     padding: 0.125rem 0.5rem;
-    border-radius: 1rem;
+    border-radius: 10px;
     margin-left: auto;
   }
 
-  /* Loading & Empty states */
   .sed-loading, .sed-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 300px;
-    color: #6b7280;
-    gap: 1rem;
+    height: 280px;
+    color: var(--text-tertiary, #555d73);
+    gap: 0.875rem;
   }
 
   .sed-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid rgba(16, 185, 129, 0.2);
-    border-top-color: #10b981;
+    width: 28px;
+    height: 28px;
+    border: 2px solid rgba(16, 185, 129, 0.15);
+    border-top-color: var(--accent, #10b981);
     border-radius: 50%;
-    animation: sed-spin 1s linear infinite;
+    animation: sed-spin 0.8s linear infinite;
   }
 
   @keyframes sed-spin {

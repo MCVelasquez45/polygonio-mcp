@@ -491,42 +491,46 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           .dashboard-main {
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
             height: 100%;
+            overflow: hidden;
           }
 
           .main-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding-bottom: 1.5rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+            background: var(--bg-surface, #0c0e18);
+            flex-shrink: 0;
           }
 
           .main-header h1 {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.375rem;
             font-weight: 700;
-            color: #e5e5e5;
+            color: var(--text-primary, #f0f2f5);
+            letter-spacing: -0.01em;
           }
 
           .header-actions {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
           }
 
           .breadcrumb-home {
-            color: #6b7280;
+            color: var(--text-tertiary, #555d73);
           }
 
           .breadcrumb-sep {
-            color: #4b5563;
+            color: var(--text-tertiary, #555d73);
+            opacity: 0.5;
           }
 
           .breadcrumb-current {
-            color: #10b981;
+            color: var(--accent, #10b981);
             font-weight: 600;
           }
         `}</style>
