@@ -37,7 +37,9 @@
       "Bash(ls -la /home/sirrele/projects/polygonio-mcp/server/.env*)",
       "Bash(chmod +x /home/sirrele/projects/polygonio-mcp/scripts/seed-mongo.sh)",
       "Bash(.venv/bin/pip install:*)",
-      "Bash(netstat -tlnp)"
+      "Bash(netstat -tlnp)",
+      "Bash(ps:*)",
+      "Bash(npx ts-node -e \":*)"
     ]
   }
 }

@@ -106,6 +106,26 @@ async function start() {
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
     await ensureMarketCacheIndexes();
     await seedDefaultContractSpecs();
+    // Drop stale unique index on strategyversions that conflicts with Lab version creation.
+    // The Pipeline StrategyVersionModel (PipelineVersion) previously created { strategyId, version }
+    // unique on the shared collection; Lab versions don't have a 'version' field so inserts fail.
+    try {
+      const mongoose = (await import('mongoose')).default;
+      const col = mongoose.connection.collection('strategyversions');
+      const indexes = await col.indexes();
+      const stale = indexes.find(
+        (idx: any) => idx.key?.strategyId && idx.key?.version && idx.unique
+      );
+      if (stale) {
+        await col.dropIndex(stale.name!);
+        console.log(`[SERVER] Dropped stale index '${stale.name}' from strategyversions`);
+      }
+    } catch (indexErr: any) {
+      // Collection may not exist yet — ignore
+      if (indexErr?.codeName !== 'NamespaceNotFound') {
+        console.warn('[SERVER] Could not clean strategyversions indexes:', indexErr?.message);
+      }
+    }
     startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);

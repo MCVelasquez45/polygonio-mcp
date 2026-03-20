@@ -235,7 +235,7 @@ const StrategyVersionSchema = new Schema({
   aiReview: { type: Schema.Types.Mixed },
 }, { timestamps: true });
 
-StrategyVersionSchema.index({ strategyId: 1, versionNumber: -1 });
+StrategyVersionSchema.index({ strategyId: 1, versionNumber: -1 }, { unique: true });
 
 export const LabStrategyModel = mongoose.model<LabStrategy>('LabStrategy', LabStrategySchema);
 export const EngineStrategyModel = mongoose.model<EngineStrategy>('EngineStrategy', EngineStrategySchema);

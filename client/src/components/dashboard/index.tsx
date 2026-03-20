@@ -15,8 +15,7 @@ import {
   PromotionGatePanel
 } from '../lab';
 import { EngineRoomDashboard } from '../engine';
-import { StrategyPipelineShell } from '../../features/lab/StrategyPipelineShell';
-import { useStrategyLabStore } from '../../features/lab/store/useStrategyLabStore';
+import { compileExtractedStrategy } from '../../features/lab/api/strategy';
 import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
 import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
@@ -133,7 +132,6 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         const hasExtractionData = strategy?.contract_selection || strategy?.regime_config;
         if (hasExtractionData) {
           try {
-            const { compileExtractedStrategy } = await import('../../features/lab/api/strategy');
             const compileResult = await compileExtractedStrategy({
               strategyId: createdId,
               name: strategyName,
@@ -176,24 +174,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     setActivePanel('lab-editor');
   };
 
-  const { setDraftInput } = useStrategyLabStore();
-
-  const handleCompileStrategy = async (extractionData: Record<string, unknown>) => {
-    try {
-      const { compileExtractedStrategy } = await import('../../features/lab/api/strategy');
-      const result = await compileExtractedStrategy(extractionData);
-      toast.success(`Compiled: ${result.version.version}`);
-      setStrategyListRefreshKey(prev => prev + 1);
-      // Also set draft for the pipeline shell view
-      const rulesText = [
-        ...(Array.isArray(extractionData.entry_rules) ? extractionData.entry_rules.map((r: string) => `Buy when ${r}`) : []),
-        ...(Array.isArray(extractionData.exit_rules) ? extractionData.exit_rules.map((r: string) => `Exit when ${r}`) : []),
-      ].join('. ');
-      setDraftInput(rulesText);
-      setActivePanel('lab-compiler');
-    } catch (err: any) {
-      toast.error(`Compile failed: ${err?.response?.data?.error ?? err?.message ?? 'Unknown error'}`);
-    }
+  const handleCompileNotify = () => {
+    setStrategyListRefreshKey(prev => prev + 1);
   };
 
   const handleOpenWizardWithData = (data: any) => {
@@ -351,7 +333,6 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     const labels: Record<string, string> = {
       'lab-strategies': 'Strategy Pipeline',
       'lab-editor': 'Strategy Editor',
-      'lab-compiler': 'Strategy Compiler',
       'lab-backtest-results': 'Backtest Results',
       'lab-paper': 'Paper Trading Monitor',
       'lab-promotion': 'Promotion Gate',
@@ -377,8 +358,6 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             refreshKey={strategyListRefreshKey}
           />
         );
-      case 'lab-compiler':
-        return <StrategyPipelineShell />;
       case 'lab-editor':
         return (
           <StrategyEditorPanel
@@ -386,7 +365,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             onRunBacktest={handleRunBacktest}
             onSave={() => setStrategyListRefreshKey(prev => prev + 1)}
             onBack={() => setActivePanel('lab-strategies')}
-            onCompile={handleCompileStrategy}
+            onCompile={handleCompileNotify}
           />
         );
       case 'lab-backtest-results':

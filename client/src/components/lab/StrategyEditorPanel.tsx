@@ -1,6 +1,8 @@
-import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import { apiClient } from '../../api';
 import { toast } from 'sonner';
+import { compileExtractedStrategy, getStrategyVersions } from '../../features/lab/api/strategy';
+import type { StrategyVersionRecord } from '../../features/lab/types';
 
 type Props = {
   strategyId?: string;
@@ -52,6 +54,13 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
   const [riskRules, setRiskRules] = useState<string[]>([]);
   const [newParamKey, setNewParamKey] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [compiledVersion, setCompiledVersion] = useState<StrategyVersionRecord | null>(null);
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [versions, setVersions] = useState<StrategyVersionRecord[]>([]);
+  const [activeArtifactTab, setActiveArtifactTab] = useState<'ast' | 'dsl' | 'runtimeSpec'>('dsl');
+  const compiledSectionRef = useRef<HTMLDivElement>(null);
+  // Pipeline strategy ID — compile-extracted creates a separate Strategy doc; track its ID for version lookups
+  const [pipelineStrategyId, setPipelineStrategyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!strategyId) {
@@ -68,20 +77,26 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
       const data = res.data;
       setStrategy(data);
 
-      setName((data.name as string) ?? '');
-      setDescription((data.description as string) ?? '');
+      const stratName = (data.name as string) ?? '';
+      const stratDesc = (data.description as string) ?? '';
+      setName(stratName);
+      setDescription(stratDesc);
 
       const sc = data.screenerConfig as Record<string, unknown> | undefined;
       const params = (sc?.params ?? {}) as Record<string, unknown>;
-      setHypothesis(typeof params.hypothesis === 'string' ? params.hypothesis : '');
+      const hyp = typeof params.hypothesis === 'string' ? params.hypothesis : '';
+      setHypothesis(hyp);
       setParamDefs(
         params.parameter_definitions && typeof params.parameter_definitions === 'object' && !Array.isArray(params.parameter_definitions)
           ? { ...(params.parameter_definitions as Record<string, string>) }
           : {}
       );
-      setEntryRules(Array.isArray(params.entry_rules) ? [...params.entry_rules] : []);
-      setExitRules(Array.isArray(params.exit_rules) ? [...params.exit_rules] : []);
-      setRiskRules(Array.isArray(params.risk_management) ? [...params.risk_management] : []);
+      const entry = Array.isArray(params.entry_rules) ? [...params.entry_rules] : [];
+      const exit = Array.isArray(params.exit_rules) ? [...params.exit_rules] : [];
+      const risk = Array.isArray(params.risk_management) ? [...params.risk_management] : [];
+      setEntryRules(entry);
+      setExitRules(exit);
+      setRiskRules(risk);
 
       const tunable: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(params)) {
@@ -89,11 +104,97 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
       }
       setParameters(tunable);
       setDirty(false);
+
+      // Auto-compile on load if there are rules, so user always sees compiled artifacts
+      const hasRules = entry.some(r => typeof r === 'string' && r.trim()) || exit.some(r => typeof r === 'string' && r.trim());
+      if (hasRules && strategyId) {
+        try {
+          const result = await compileExtractedStrategy({
+            strategyId,
+            name: stratName,
+            description: stratDesc,
+            hypothesis: hyp,
+            entry_rules: entry.filter((r: string) => r.trim()),
+            exit_rules: exit.filter((r: string) => r.trim()),
+            risk_management: risk.filter((r: string) => r.trim()),
+            trading_method: params.trading_method ?? 'equities',
+            underlying_ticker: params.underlying_ticker ?? params.underlying_symbol,
+            contract_selection: params.contract_selection,
+            regime_config: params.regime_config,
+            time_rules: params.time_rules,
+            ...tunable,
+          });
+          setPipelineStrategyId(result.strategy._id);
+          setCompiledVersion(result.version);
+          setVersions([result.version]);
+        } catch (compileErr) {
+          // Compile failure on load is non-fatal — user can still edit and try again
+          console.warn('[EDITOR] Auto-compile on load failed:', compileErr);
+        }
+      }
     } catch (err: unknown) {
       console.error('[EDITOR] Failed to fetch strategy:', err);
       toast.error('Failed to load strategy');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // When pipeline strategy ID is known, load its compiled versions
+  useEffect(() => {
+    if (!pipelineStrategyId) return;
+    let cancelled = false;
+    getStrategyVersions(pipelineStrategyId)
+      .then(v => {
+        if (cancelled) return;
+        setVersions(v);
+        const latest = v.find(ver => ver.compiledArtifacts?.ast || ver.compiledArtifacts?.dsl);
+        if (latest) setCompiledVersion(latest);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [pipelineStrategyId]);
+
+  /**
+   * Auto-compile before backtest, then open config modal.
+   */
+  const handleRunBacktestWithCompile = async () => {
+    const hasRules = entryRules.some(r => r.trim()) || exitRules.some(r => r.trim());
+    if (!hasRules || !strategyId) {
+      onRunBacktest?.();
+      return;
+    }
+
+    setIsCompiling(true);
+    try {
+      if (dirty) await handleSave();
+
+      const sc = strategy?.screenerConfig as Record<string, unknown> | undefined;
+      const params = (sc?.params ?? {}) as Record<string, unknown>;
+      const result = await compileExtractedStrategy({
+        strategyId,
+        name,
+        description,
+        hypothesis,
+        entry_rules: entryRules.filter(r => r.trim()),
+        exit_rules: exitRules.filter(r => r.trim()),
+        risk_management: riskRules.filter(r => r.trim()),
+        trading_method: params.trading_method ?? 'equities',
+        underlying_ticker: params.underlying_ticker ?? params.underlying_symbol,
+        contract_selection: params.contract_selection,
+        regime_config: params.regime_config,
+        time_rules: params.time_rules,
+        ...parameters,
+      });
+      setPipelineStrategyId(result.strategy._id);
+      setCompiledVersion(result.version);
+      setVersions(prev => [result.version, ...prev]);
+      onCompile?.({ strategyId });
+      onRunBacktest?.();
+    } catch (err: any) {
+      toast.error(`Compile failed: ${err?.response?.data?.error ?? err?.message ?? 'Unknown'}`);
+    } finally {
+      setIsCompiling(false);
     }
   };
 
@@ -333,37 +434,13 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
-          <button className="sed-btn sed-btn-primary" onClick={onRunBacktest}>
-            Run Backtest
+          <button
+            className="sed-btn sed-btn-primary"
+            onClick={handleRunBacktestWithCompile}
+            disabled={isCompiling}
+          >
+            {isCompiling ? 'Compiling...' : 'Run Backtest'}
           </button>
-          {onCompile && (entryRules.length > 0 || exitRules.length > 0) && (
-            <button
-              className="sed-btn sed-btn-secondary"
-              onClick={() => {
-                const sc = strategy?.screenerConfig as Record<string, unknown> | undefined;
-                const params = (sc?.params ?? {}) as Record<string, unknown>;
-                onCompile({
-                  name,
-                  description,
-                  hypothesis,
-                  strategyId,
-                  entry_rules: entryRules,
-                  exit_rules: exitRules,
-                  risk_management: riskRules,
-                  trading_method: params.trading_method,
-                  underlying_ticker: params.underlying_ticker ?? params.underlying_symbol,
-                  contract_selection: params.contract_selection,
-                  regime_config: params.regime_config,
-                  time_rules: params.time_rules,
-                  parameters: { ...parameters },
-                  parameter_definitions: { ...paramDefs },
-                });
-              }}
-              title="Compile strategy with all extraction data into AST, DSL, and RuntimeSpec"
-            >
-              Compile
-            </button>
-          )}
         </div>
       </div>
 
@@ -511,6 +588,82 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Compiled Artifacts */}
+        {compiledVersion && compiledVersion.compiledArtifacts && (
+          <div className="sed-section" ref={compiledSectionRef}>
+            <div className="sed-section-header" onClick={() => toggleSection('compiled')}>
+              <span className="sed-section-arrow">{collapsed.compiled ? '\u25B8' : '\u25BE'}</span>
+              <h3>Compiled Artifacts</h3>
+              <span className="sed-section-count">v{compiledVersion.version}</span>
+            </div>
+            {!collapsed.compiled && (
+              <div className="sed-section-body">
+                <div className="sed-artifact-tabs">
+                  {(['dsl', 'ast', 'runtimeSpec'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      className={`sed-artifact-tab ${activeArtifactTab === tab ? 'active' : ''}`}
+                      onClick={() => setActiveArtifactTab(tab)}
+                    >
+                      {tab === 'runtimeSpec' ? 'Runtime Spec' : tab.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <div className="sed-artifact-content">
+                  {activeArtifactTab === 'dsl' && (
+                    <pre className="sed-artifact-pre">
+                      {compiledVersion.compiledArtifacts.dsl || 'No DSL generated.'}
+                    </pre>
+                  )}
+                  {activeArtifactTab === 'ast' && (
+                    <pre className="sed-artifact-pre">
+                      {compiledVersion.compiledArtifacts.ast
+                        ? JSON.stringify(compiledVersion.compiledArtifacts.ast, null, 2)
+                        : 'No AST generated.'}
+                    </pre>
+                  )}
+                  {activeArtifactTab === 'runtimeSpec' && (
+                    <pre className="sed-artifact-pre">
+                      {compiledVersion.compiledArtifacts.runtimeSpec
+                        ? JSON.stringify(compiledVersion.compiledArtifacts.runtimeSpec, null, 2)
+                        : 'No Runtime Spec generated.'}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Version History (compiled versions) */}
+        {versions.length > 0 && (
+          <div className="sed-section">
+            <div className="sed-section-header" onClick={() => toggleSection('versions')}>
+              <span className="sed-section-arrow">{collapsed.versions ? '\u25B8' : '\u25BE'}</span>
+              <h3>Compiled Versions</h3>
+              <span className="sed-section-count">{versions.length}</span>
+            </div>
+            {!collapsed.versions && (
+              <div className="sed-section-body">
+                {versions.slice(0, 5).map(ver => (
+                  <div
+                    key={ver._id}
+                    className={`sed-version-row ${compiledVersion?._id === ver._id ? 'active' : ''}`}
+                    onClick={() => setCompiledVersion(ver)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <span className="sed-version-label">v{ver.version}</span>
+                    <span className="sed-version-stage">{ver.pipelineStage}</span>
+                    {ver.latestBacktestRun && (
+                      <span className="sed-version-backtest">backtested</span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -947,6 +1100,100 @@ const editorStyles = `
     font-size: 0.85rem;
     padding: 1rem 0;
     text-align: center;
+  }
+
+  /* Compiled artifacts */
+  .sed-artifact-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding-bottom: 0.75rem;
+  }
+
+  .sed-artifact-tab {
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #6b7280;
+    transition: all 0.15s;
+  }
+
+  .sed-artifact-tab:hover {
+    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .sed-artifact-tab.active {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.2);
+  }
+
+  .sed-artifact-content {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  .sed-artifact-pre {
+    padding: 1rem;
+    margin: 0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: #d1d5db;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  /* Version history rows */
+  .sed-version-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.375rem;
+    transition: background 0.15s;
+    margin-bottom: 0.25rem;
+  }
+
+  .sed-version-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .sed-version-row.active {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+  }
+
+  .sed-version-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #e5e5e5;
+    min-width: 50px;
+  }
+
+  .sed-version-stage {
+    font-size: 0.75rem;
+    color: #6b7280;
+    text-transform: capitalize;
+  }
+
+  .sed-version-backtest {
+    font-size: 0.7rem;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 0.125rem 0.5rem;
+    border-radius: 1rem;
+    margin-left: auto;
   }
 
   /* Loading & Empty states */
