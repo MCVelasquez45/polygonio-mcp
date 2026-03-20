@@ -14,6 +14,8 @@ import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
 import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
+import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
+import { strategyRouter } from './features/strategy/strategy.routes';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -61,6 +63,9 @@ app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
 app.use('/api/chart/health', chartHealthRouter);
 app.use('/api/engine', engineRouter);
+app.use('/api/lab/futures', futuresRouter);
+app.use('/api/engine/futures', futuresRouter);
+app.use('/api/strategy', strategyRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
@@ -78,6 +83,7 @@ const io = new SocketIOServer(httpServer, {
 app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
+initFuturesRuntime(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
@@ -92,11 +98,34 @@ io.on('connection', socket => {
 
 async function start() {
   const mongoConfig = resolveMongoConfig();
-  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? '').toLowerCase() === 'true';
+  // Default to allowing server to start without Mongo so core functionality
+  // (webhooks, socket.io, strategy extraction) is never blocked by DB issues.
+  const allowMongoSkip = String(process.env.MONGO_OPTIONAL ?? 'true').toLowerCase() !== 'false';
   try {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
     await ensureMarketCacheIndexes();
+    await seedDefaultContractSpecs();
+    // Drop stale unique index on strategyversions that conflicts with Lab version creation.
+    // The Pipeline StrategyVersionModel (PipelineVersion) previously created { strategyId, version }
+    // unique on the shared collection; Lab versions don't have a 'version' field so inserts fail.
+    try {
+      const mongoose = (await import('mongoose')).default;
+      const col = mongoose.connection.collection('strategyversions');
+      const indexes = await col.indexes();
+      const stale = indexes.find(
+        (idx: any) => idx.key?.strategyId && idx.key?.version && idx.unique
+      );
+      if (stale) {
+        await col.dropIndex(stale.name!);
+        console.log(`[SERVER] Dropped stale index '${stale.name}' from strategyversions`);
+      }
+    } catch (indexErr: any) {
+      // Collection may not exist yet — ignore
+      if (indexErr?.codeName !== 'NamespaceNotFound') {
+        console.warn('[SERVER] Could not clean strategyversions indexes:', indexErr?.message);
+      }
+    }
     startAggregatesWorker();
   } catch (error) {
     console.error('[SERVER] Failed to connect to MongoDB', error);

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const DEFAULT_API_PORT = '3000';
+const DEFAULT_API_PORT = '4000';
 const DEV_SERVER_PORTS = new Set(['5173', '5174', '3000']);
 
 function normalizeHost(hostname: string): string {
@@ -35,6 +35,26 @@ function parseAbsoluteUrl(value: string): URL | null {
     return new URL(value);
   } catch {
     return null;
+  }
+}
+
+function assertApiRuntimeConfig(): void {
+  const configuredUrl = typeof import.meta.env.VITE_API_URL === 'string' ? import.meta.env.VITE_API_URL.trim() : '';
+  if (configuredUrl) {
+    const parsed = parseAbsoluteUrl(configuredUrl);
+    if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+      throw new Error(
+        `[CLIENT] Invalid VITE_API_URL '${configuredUrl}'. Expected an absolute http(s) URL like http://localhost:4000`
+      );
+    }
+  }
+
+  const configuredPort = typeof import.meta.env.VITE_API_PORT === 'string' ? import.meta.env.VITE_API_PORT.trim() : '';
+  if (configuredPort) {
+    const asNumber = Number(configuredPort);
+    if (!Number.isInteger(asNumber) || asNumber <= 0 || asNumber > 65535) {
+      throw new Error(`[CLIENT] Invalid VITE_API_PORT '${configuredPort}'. Expected an integer between 1 and 65535.`);
+    }
   }
 }
 
@@ -97,6 +117,8 @@ function getActiveBaseUrl(): string {
 export function getApiBaseUrl(): string {
   return getActiveBaseUrl();
 }
+
+export { assertApiRuntimeConfig };
 
 export const http = axios.create({
   baseURL: API_BASE_URL,

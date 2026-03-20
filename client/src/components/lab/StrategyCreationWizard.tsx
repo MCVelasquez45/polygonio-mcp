@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ChangeEvent } from 'react';
+import { extractStrategy, startAgentExtraction, transcribeAudioUpload } from '../../api/agent';
 
-type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'custom';
+type StrategyType = 'momentum' | 'mean_reversion' | 'volatility' | '0dte' | 'spreads' | 'futures' | 'custom';
 
 type WizardStep = 'method' | 'transcript' | 'type' | 'details' | 'parameters' | 'review';
 
 type CreationMethod = 'ai' | 'manual' | null;
+type RecordingMode = 'speech' | 'local';
 
 type StrategyTemplate = {
   id: StrategyType;
@@ -76,6 +78,21 @@ const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     },
   },
   {
+    id: 'futures',
+    name: 'Futures',
+    description: 'Futures contract trading strategies with roll management and margin tracking',
+    icon: '📜',
+    suggestedParameters: {
+      contract: 'ES',
+      lookback_period: 14,
+      entry_threshold: 0.5,
+      position_size_contracts: 2,
+      stop_loss_ticks: 8,
+      take_profit_ticks: 16,
+      roll_days_before_expiry: 5,
+    },
+  },
+  {
     id: 'custom',
     name: 'Custom',
     description: 'Start from scratch with a blank strategy template',
@@ -90,10 +107,40 @@ type Props = {
   initialData?: any;
   socketId?: string | null;
   isProcessing?: boolean;
+  isSubmitting?: boolean;
   onExtractionStart?: () => void;
 };
 
-export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, onExtractionStart }: Props) {
+/** Recursively flatten nested objects into dot-notation keys with primitive values. */
+function flattenParameters(obj: Record<string, any>, prefix = ''): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      Object.assign(result, flattenParameters(value, fullKey));
+    } else {
+      result[fullKey] = value;
+    }
+  }
+  return result;
+}
+
+/** Convert any value to a display string, handling objects/arrays gracefully. */
+function displayValue(value: any): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+  }
+  return String(value);
+}
+
+function inferTradingMethod(type: string | undefined): string {
+  if (type === 'futures') return 'futures';
+  if (type === '0dte' || type === 'spreads') return 'options';
+  return 'equities';
+}
+
+export function StrategyCreationWizard({ onComplete, onCancel, initialData, socketId, isProcessing, isSubmitting, onExtractionStart }: Props) {
   const [step, setStep] = useState<WizardStep>(initialData ? 'details' : 'method');
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(initialData ? 'ai' : null);
   const [selectedType, setSelectedType] = useState<StrategyType | null>(initialData ? 'custom' : null);
@@ -103,21 +150,81 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     hypothesis: initialData?.hypothesis || '',
   });
   const [parameters, setParameters] = useState<Record<string, any>>(initialData?.parameters || {});
+  const [parameterDefinitions, setParameterDefinitions] = useState<Record<string, string>>(initialData?.parameter_definitions || {});
+  const [entryRules, setEntryRules] = useState<string[]>(initialData?.entry_rules || []);
+  const [exitRules, setExitRules] = useState<string[]>(initialData?.exit_rules || []);
+  const [riskManagement, setRiskManagement] = useState<string[]>(initialData?.risk_management || []);
   const [agentSuggestion, setAgentSuggestion] = useState<string | null>(initialData ? "✨ AI Extraction complete! Review the details below." : null);
   const [transcript, setTranscript] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionStarted, setExtractionStarted] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>('speech');
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [tradingMethod, setTradingMethod] = useState<string>(initialData?.trading_method ?? 'equities');
+  const [extractionMeta, setExtractionMeta] = useState<Record<string, any>>({});
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const audioUploadRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const localRecordingChunksRef = useRef<BlobPart[]>([]);
+  const userStoppedRef = useRef(false);
+  const speechSupportedRef = useRef(false);
 
   const selectedTemplate = STRATEGY_TEMPLATES.find(t => t.id === selectedType);
+
+  const applyExtractedData = (data: any) => {
+    if (!data || typeof data !== 'object') return;
+
+    const extractedName = typeof data.name === 'string' ? data.name : '';
+    const extractedDescription = typeof data.description === 'string' ? data.description : '';
+    const extractedHypothesis = typeof data.hypothesis === 'string' ? data.hypothesis : '';
+    const rawParameters =
+      data.parameters && typeof data.parameters === 'object' && !Array.isArray(data.parameters) ? data.parameters : {};
+    const extractedDefinitions =
+      data.parameter_definitions && typeof data.parameter_definitions === 'object' && !Array.isArray(data.parameter_definitions)
+        ? data.parameter_definitions
+        : {};
+
+    // Flatten nested objects so the UI can render every field as a simple input
+    const flatParams = flattenParameters(rawParameters);
+
+    setCreationMethod('ai');
+    setSelectedType((data.type as StrategyType) || 'custom');
+    setTradingMethod(data.trading_method ?? inferTradingMethod(data.type));
+    setStrategyDetails({
+      name: extractedName,
+      description: extractedDescription,
+      hypothesis: extractedHypothesis,
+    });
+    setParameters(flatParams);
+    setParameterDefinitions(extractedDefinitions);
+    setEntryRules(Array.isArray(data.entry_rules) ? data.entry_rules : []);
+    setExitRules(Array.isArray(data.exit_rules) ? data.exit_rules : []);
+    setRiskManagement(Array.isArray(data.risk_management) ? data.risk_management : []);
+    setExtractionMeta({
+      underlying_ticker: data.underlying_ticker ?? '',
+      contract_selection: data.contract_selection ?? {},
+      regime_config: data.regime_config ?? {},
+      time_rules: data.time_rules ?? [],
+    });
+    setStep('details');
+    setAgentSuggestion('✨ AI extraction complete. Review and refine before creating the strategy.');
+    setExtractionStarted(false);
+  };
+
+  useEffect(() => {
+    if (!initialData) return;
+    applyExtractedData(initialData);
+  }, [initialData]);
 
   const handleTypeSelect = (type: StrategyType) => {
     setSelectedType(type);
     const template = STRATEGY_TEMPLATES.find(t => t.id === type);
     if (template) {
       setParameters(template.suggestedParameters);
-      // Simulate agent suggestion
       setTimeout(() => {
         setAgentSuggestion(getAgentSuggestion(type));
       }, 500);
@@ -131,72 +238,247 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       volatility: 'VIX term structure shows contango of 6.2%. Short volatility strategies historically perform well in this regime.',
       '0dte': 'Current 0-DTE implied volatility is elevated. Consider targeting 30-delta options for better risk/reward.',
       spreads: 'With earnings season approaching, consider widening your spreads or reducing position sizes.',
+      futures: 'ES and NQ futures are showing strong trends. Consider using volume-based roll strategy and ensure margin requirements are factored into position sizing.',
       custom: 'I can help you build your custom strategy. What market conditions are you targeting?',
     };
     return suggestions[type];
   };
 
   useEffect(() => {
-    // Initialize speech recognition
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-
-      recognitionRef.current.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-
-        if (finalTranscript) {
-          setTranscript(prev => {
-            const lastChar = prev.trim().slice(-1);
-            const needsSpace = lastChar && !['.', '!', '?'].includes(lastChar);
-            return prev + (needsSpace ? ' ' : '') + finalTranscript;
-          });
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        setIsRecording(false);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsRecording(false);
-      };
+    if (!SpeechRecognition) {
+      speechSupportedRef.current = false;
+      return;
     }
 
+    speechSupportedRef.current = true;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+
+      if (finalTranscript) {
+        setTranscript(prev => {
+          const trimmed = prev.trim();
+          const lastChar = trimmed.slice(-1);
+          const needsSpace = trimmed.length > 0 && !['.', '!', '?'].includes(lastChar);
+          return trimmed + (needsSpace ? '. ' : ' ') + finalTranscript;
+        });
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
+
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        setRecordingError('Microphone access denied. Please allow microphone permissions in your browser settings.');
+        userStoppedRef.current = true;
+        setIsRecording(false);
+      } else if (event.error === 'no-speech') {
+        // No speech detected - don't stop, just let it continue
+      } else if (event.error === 'network') {
+        setRecordingMode('local');
+        setRecordingError('Browser speech service network error. Switched to local recording mode. Click the mic again to record and transcribe through the app.');
+        userStoppedRef.current = true;
+        try { recognition.stop(); } catch { /* ignore */ }
+        setIsRecording(false);
+      } else if (event.error === 'aborted') {
+        // Ignore - this fires when we call .stop()
+      } else {
+        setRecordingError(`Speech recognition error: ${event.error}. Try again or type your strategy instead.`);
+        userStoppedRef.current = true;
+        setIsRecording(false);
+      }
+    };
+
+    recognition.onend = () => {
+      // Browser auto-stops recognition even with continuous=true (e.g., after silence).
+      // If the user didn't explicitly stop, restart it automatically.
+      if (!userStoppedRef.current) {
+        try {
+          recognition.start();
+        } catch {
+          // If restart fails, give up gracefully
+          setIsRecording(false);
+        }
+      } else {
+        setIsRecording(false);
+      }
+    };
+
+    recognitionRef.current = recognition;
+
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+      userStoppedRef.current = true;
+      try { recognition.stop(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
       }
     };
   }, []);
 
-  const toggleRecording = () => {
-    if (!recognitionRef.current) {
-      setAgentSuggestion("❌ Speech recognition is not supported in your browser.");
+  const stopLocalStream = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+  };
+
+  const finalizeLocalRecording = async () => {
+    const chunks = localRecordingChunksRef.current;
+    localRecordingChunksRef.current = [];
+    if (!chunks.length) {
+      setRecordingError('No audio captured. Please try again.');
       return;
     }
 
+    setIsTranscribingAudio(true);
+    try {
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const file = new File([blob], `strategy-recording-${Date.now()}.webm`, { type: blob.type || 'audio/webm' });
+      const { transcript: transcribedText } = await transcribeAudioUpload(file);
+      if (!transcribedText?.trim()) {
+        throw new Error('No transcript returned from audio transcription.');
+      }
+      setTranscript(prev => (prev.trim() ? `${prev.trim()}\n${transcribedText.trim()}` : transcribedText.trim()));
+      setAgentSuggestion('🎧 Local recording transcribed. Review/edit the text, then run extraction.');
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Audio transcription failed.';
+      setRecordingError(String(detail));
+    } finally {
+      setIsTranscribingAudio(false);
+      stopLocalStream();
+      mediaRecorderRef.current = null;
+    }
+  };
+
+  const startLocalRecording = async () => {
+    setRecordingError(null);
+    setAudioUploadError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const recorder = new MediaRecorder(stream);
+      localRecordingChunksRef.current = [];
+
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) {
+          localRecordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setRecordingError('Recording failed. Please try again.');
+        setIsRecording(false);
+        stopLocalStream();
+        mediaRecorderRef.current = null;
+      };
+
+      recorder.onstop = () => {
+        setIsRecording(false);
+        void finalizeLocalRecording();
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecordingMode('local');
+      setIsRecording(true);
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setRecordingError('Microphone access denied. Please allow microphone access and try again.');
+      } else if (err?.name === 'NotFoundError') {
+        setRecordingError('No microphone found. Please connect a microphone and try again.');
+      } else {
+        setRecordingError('Could not start local audio recording. Please check your microphone settings.');
+      }
+    }
+  };
+
+  const toggleRecording = async () => {
+    setRecordingError(null);
+    setAudioUploadError(null);
+
     if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      try {
-        recognitionRef.current.start();
+      if (recordingMode === 'local') {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        } else {
+          setIsRecording(false);
+          stopLocalStream();
+        }
+      } else {
+        userStoppedRef.current = true;
+        try { recognitionRef.current?.stop(); } catch { /* ignore */ }
+        setIsRecording(false);
+      }
+      return;
+    }
+
+    if (recordingMode === 'local' || !speechSupportedRef.current) {
+      if (!speechSupportedRef.current) {
+        setRecordingError('Live browser speech recognition is unavailable. Using local recording + server transcription.');
+      }
+      await startLocalRecording();
+      return;
+    }
+
+    // Request microphone permission first
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Release the stream immediately - we just needed to trigger the permission prompt
+      stream.getTracks().forEach(track => track.stop());
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setRecordingError('Microphone access denied. Please allow microphone access and try again.');
+      } else if (err.name === 'NotFoundError') {
+        setRecordingError('No microphone found. Please connect a microphone and try again.');
+      } else {
+        setRecordingError('Could not access microphone. Please check your audio settings.');
+      }
+      return;
+    }
+
+    // Start speech recognition
+    try {
+      userStoppedRef.current = false;
+      recognitionRef.current?.start();
+      setRecordingMode('speech');
+      setIsRecording(true);
+    } catch (error: any) {
+      if (error?.message?.includes('already started')) {
+        // Already running - just update the state
         setIsRecording(true);
-      } catch (error) {
+      } else {
         console.error('Failed to start recording:', error);
+        setRecordingError('Failed to start speech recognition. Please try again or type your strategy directly.');
       }
     }
   };
@@ -204,31 +486,74 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const handleExtractFromTranscript = async () => {
     if (!transcript.trim()) return;
 
+    setAudioUploadError(null);
     setIsExtracting(true);
-    onExtractionStart?.();
 
     try {
-      // Use the async endpoint
-      const response = await fetch('http://localhost:5001/extract-strategy-async', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript,
-          socket_id: socketId
-        }),
+      const extracted = await extractStrategy({
+        transcript: transcript.trim(),
+        socket_id: socketId
       });
-
-      if (!response.ok) throw new Error('Failed to start extraction');
-
-      setExtractionStarted(true);
-      setAgentSuggestion("⚡ I've started the extraction in the background. You can close this wizard and I'll notify you when it's ready!");
-
+      applyExtractedData(extracted);
       setIsExtracting(false);
     } catch (error) {
-      console.error('Error starting extraction:', error);
-      setAgentSuggestion("❌ Sorry, I had trouble starting the extraction. Please try again.");
-      setIsExtracting(false);
+      console.error('Error running synchronous extraction:', error);
+      if (socketId) {
+        try {
+          onExtractionStart?.();
+          await startAgentExtraction({
+            transcript: transcript.trim(),
+            socket_id: socketId
+          });
+          setExtractionStarted(true);
+          setAgentSuggestion("⚡ I started background extraction. You can close this wizard and review when the result is ready.");
+        } catch (backgroundError) {
+          console.error('Error starting extraction:', backgroundError);
+          setAgentSuggestion("❌ Sorry, I had trouble starting the extraction. Please try again.");
+        } finally {
+          setIsExtracting(false);
+        }
+      } else {
+        setAgentSuggestion("❌ Sorry, I had trouble extracting from that transcript. Please try again.");
+        setIsExtracting(false);
+      }
     }
+  };
+
+  const handleAudioFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAudioUploadError(null);
+    setIsTranscribingAudio(true);
+
+    try {
+      const { transcript: transcribedText } = await transcribeAudioUpload(file);
+      if (!transcribedText?.trim()) {
+        throw new Error('No transcript returned from audio transcription.');
+      }
+
+      setTranscript(prev => (prev.trim() ? `${prev.trim()}\n${transcribedText.trim()}` : transcribedText.trim()));
+      setAgentSuggestion('🎧 Audio transcription complete. Review/edit the text, then run extraction.');
+    } catch (error: any) {
+      console.error('Audio transcription failed:', error);
+      const detail =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Audio transcription failed.';
+      setAudioUploadError(String(detail));
+    } finally {
+      if (audioUploadRef.current) {
+        audioUploadRef.current.value = '';
+      }
+      setIsTranscribingAudio(false);
+    }
+  };
+
+  const openAudioPicker = () => {
+    setAudioUploadError(null);
+    audioUploadRef.current?.click();
   };
 
   const handleNext = () => {
@@ -261,9 +586,20 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
 
   const handleComplete = () => {
     const strategy = {
-      type: selectedType,
+      type: selectedType ?? 'custom',
+      tradingMethod: tradingMethod ?? inferTradingMethod(selectedType ?? undefined),
       ...strategyDetails,
-      parameters,
+      parameters: flattenParameters(parameters),
+      parameterDefinitions: parameterDefinitions,
+      entryRules,
+      exitRules,
+      riskManagement,
+      transcript: transcript.trim() || undefined,
+      // Extraction-specific fields (regime, contract selection, time rules)
+      underlying_ticker: extractionMeta.underlying_ticker || undefined,
+      contract_selection: extractionMeta.contract_selection || undefined,
+      regime_config: extractionMeta.regime_config || undefined,
+      time_rules: extractionMeta.time_rules || undefined,
       status: 'draft',
       version: 'v1.0',
       createdAt: new Date().toISOString(),
@@ -348,13 +684,21 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       <p className="subtitle">Explain your hypothesis, entry rules, and risk management.</p>
 
       <div className="agent-transcript-section ai-redesign">
-        <div className="transcript-header-row">
-          <label>Your Strategy Hypothesis & Rules</label>
-          <div className="recording-status">
-            {isRecording && <span className="pulse-dot"></span>}
-            <span>{isRecording ? 'Listening...' : 'Ready to record'}</span>
+          <div className="transcript-header-row">
+            <label>Your Strategy Hypothesis & Rules</label>
+            <div className="recording-status">
+              {isRecording && <span className="pulse-dot"></span>}
+              <span>
+                {isRecording
+                  ? recordingMode === 'local'
+                    ? 'Recording locally...'
+                    : 'Listening...'
+                  : recordingMode === 'local'
+                    ? 'Local recording mode'
+                    : 'Ready to record'}
+              </span>
+            </div>
           </div>
-        </div>
 
         <div className="transcript-input-wrapper">
           <div className="ai-textarea-wrapper">
@@ -385,9 +729,47 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
               {isRecording && <span className="mic-ring-animate"></span>}
             </button>
             <span className="action-hint">
-              {isRecording ? 'Click to stop and edit' : 'Click to start recording'}
+              {isRecording
+                ? recordingMode === 'local'
+                  ? 'Click to stop, then auto-transcribe'
+                  : 'Click to stop and edit'
+                : recordingMode === 'local'
+                  ? 'Local mode: click to record'
+                  : 'Click to start recording'}
             </span>
           </div>
+
+          <div className="audio-upload-row">
+            <input
+              ref={audioUploadRef}
+              type="file"
+              accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg"
+              onChange={handleAudioFileSelected}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="btn-audio-upload"
+              onClick={openAudioPicker}
+              disabled={isRecording || isTranscribingAudio || isExtracting || Boolean(isProcessing)}
+            >
+              {isTranscribingAudio ? '⏳ Transcribing audio...' : '📎 Upload Audio File'}
+            </button>
+            <span className="action-hint">Upload meeting audio and auto-convert it to text</span>
+          </div>
+
+          {recordingError && (
+            <div className="recording-error-msg">
+              <span>{recordingError}</span>
+              <button className="dismiss-error-btn" onClick={() => setRecordingError(null)}>Dismiss</button>
+            </div>
+          )}
+
+          {audioUploadError && (
+            <div className="recording-error-msg">
+              <span>{audioUploadError}</span>
+              <button className="dismiss-error-btn" onClick={() => setAudioUploadError(null)}>Dismiss</button>
+            </div>
+          )}
 
           {(isExtracting || isProcessing) ? (
             <div className="ai-processing-view">
@@ -540,21 +922,50 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       <p className="subtitle">Configure initial parameters (can be optimized later)</p>
 
       <div className="parameters-grid">
-        {Object.entries(parameters).map(([key, value]) => (
-          <div key={key} className="form-group">
-            <label>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</label>
-            <input
-              type={typeof value === 'number' ? 'number' : 'text'}
-              value={value}
-              onChange={(e) => setParameters({
-                ...parameters,
-                [key]: typeof value === 'number' ? parseFloat(e.target.value) : e.target.value
-              })}
-              step={typeof value === 'number' && value < 1 ? 0.01 : 1}
-            />
-          </div>
-        ))}
+        {Object.entries(parameters).map(([key, value]) => {
+          const displayed = displayValue(value);
+          const definition = parameterDefinitions[key] ?? parameterDefinitions[key.replace(/\./g, '_')];
+          return (
+            <div key={key} className="form-group">
+              <label>{key.replace(/_/g, ' ').replace(/\./g, ' > ').replace(/\b\w/g, l => l.toUpperCase())}</label>
+              {typeof value === 'boolean' ? (
+                <select
+                  value={String(value)}
+                  onChange={(e) => setParameters({ ...parameters, [key]: e.target.value === 'true' })}
+                >
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              ) : (
+                <input
+                  type={typeof value === 'number' ? 'number' : 'text'}
+                  value={displayed}
+                  onChange={(e) => setParameters({
+                    ...parameters,
+                    [key]: typeof value === 'number' ? parseFloat(e.target.value) || 0 : e.target.value
+                  })}
+                  step={typeof value === 'number' && Math.abs(value) < 1 ? 0.01 : 1}
+                />
+              )}
+              {definition && <span className="form-hint">{definition}</span>}
+            </div>
+          );
+        })}
       </div>
+
+      {Object.keys(parameters).length === 0 && (
+        <div className="empty-params-hint">
+          <p>No parameters extracted yet. Go back to the AI Input step and run extraction, or add parameters manually below.</p>
+          <button
+            className="btn-agent-action"
+            onClick={() => {
+              setParameters({ custom_param_1: '' });
+            }}
+          >
+            + Add Parameter
+          </button>
+        </div>
+      )}
 
       <div className="agent-suggestion">
         <div className="suggestion-header">
@@ -566,51 +977,114 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     </div>
   );
 
-  const renderReviewStep = () => (
-    <div className="wizard-content review-summary">
-      <h3>Review & Create</h3>
-      <p className="subtitle">Confirm your strategy configuration</p>
+  const renderReviewStep = () => {
+    const reviewType = selectedType ?? 'custom';
+    const reviewTemplate = selectedTemplate ?? STRATEGY_TEMPLATES.find(t => t.id === 'custom');
 
-      <div className="review-section">
-        <h4>Strategy Type</h4>
-        <div className="review-value">
-          <span className="review-icon">{selectedTemplate?.icon}</span>
-          <span>{selectedTemplate?.name}</span>
+    return (
+      <div className="wizard-content review-summary">
+        <h3>Review & Create</h3>
+        <p className="subtitle">Confirm your strategy configuration</p>
+
+        <div className="review-section">
+          <h4>Strategy Type</h4>
+          <div className="review-value">
+            <span className="review-icon">{reviewTemplate?.icon ?? '🔧'}</span>
+            <span>{reviewTemplate?.name ?? reviewType}</span>
+          </div>
         </div>
-      </div>
 
-      <div className="review-section">
-        <h4>Details</h4>
-        <div className="review-details">
-          <div><strong>Name:</strong> {strategyDetails.name || 'Unnamed Strategy'}</div>
-          <div><strong>Description:</strong> {strategyDetails.description || 'No description'}</div>
-          <div><strong>Hypothesis:</strong> {strategyDetails.hypothesis || 'No hypothesis defined'}</div>
+        <div className="review-section">
+          <h4>Details</h4>
+          <div className="review-details">
+            <div><strong>Name:</strong> {strategyDetails.name || 'Unnamed Strategy'}</div>
+            <div><strong>Description:</strong> {strategyDetails.description || 'No description'}</div>
+            <div><strong>Hypothesis:</strong> {strategyDetails.hypothesis || 'No hypothesis defined'}</div>
+          </div>
         </div>
-      </div>
 
-      <div className="review-section">
-        <h4>Parameters</h4>
-        <div className="parameters-review">
-          {Object.entries(parameters).map(([key, value]) => (
-            <div key={key} className="param-item">
-              <span className="param-key">{key.replace(/_/g, ' ')}</span>
-              <span className="param-value">{value}</span>
+        <div className="review-section">
+          <h4>Parameters ({Object.keys(parameters).length})</h4>
+          <div className="parameters-review">
+            {Object.entries(parameters).map(([key, value]) => {
+              const definition = parameterDefinitions[key] ?? parameterDefinitions[key.replace(/\./g, '_')];
+              return (
+                <div key={key} className="param-item">
+                  <div className="param-item-content">
+                    <span className="param-key">{key.replace(/_/g, ' ').replace(/\./g, ' > ')}</span>
+                    <span className="param-value">{displayValue(value)}</span>
+                  </div>
+                  {definition && <span className="param-definition">{definition}</span>}
+                </div>
+              );
+            })}
+          </div>
+          {Object.keys(parameters).length === 0 && (
+            <p className="form-hint">No parameters configured. You can add them later in the Strategy Editor.</p>
+          )}
+        </div>
+
+        {(tradingMethod || parameters.underlying_ticker || parameters.underlying_symbol) && (
+          <div className="review-section">
+            <h4>Instrument</h4>
+            <div className="review-details">
+              {tradingMethod && <div><strong>Trading Method:</strong> <span style={{ textTransform: 'capitalize', padding: '2px 8px', borderRadius: '4px', fontSize: '0.85rem', background: tradingMethod === 'options' ? 'rgba(139,92,246,0.15)' : tradingMethod === 'futures' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: tradingMethod === 'options' ? '#a78bfa' : tradingMethod === 'futures' ? '#fbbf24' : '#6ee7b7' }}>{tradingMethod}</span></div>}
+              {(parameters.underlying_ticker || parameters.underlying_symbol) && <div><strong>Underlying:</strong> {String(parameters.underlying_ticker || parameters.underlying_symbol)}</div>}
             </div>
-          ))}
+          </div>
+        )}
+
+        {entryRules.length > 0 && (
+          <div className="review-section">
+            <h4>Entry Rules ({entryRules.length})</h4>
+            <div className="review-details">
+              {entryRules.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {exitRules.length > 0 && (
+          <div className="review-section">
+            <h4>Exit Rules ({exitRules.length})</h4>
+            <div className="review-details">
+              {exitRules.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {riskManagement.length > 0 && (
+          <div className="review-section">
+            <h4>Risk Management ({riskManagement.length})</h4>
+            <div className="review-details">
+              {riskManagement.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="next-steps">
+          <h4>What&apos;s Next?</h4>
+          <ul>
+            <li>📝 Strategy will be created in <strong>Draft</strong> status</li>
+            <li>💻 Open in Strategy Editor to write or refine code</li>
+            <li>🔬 Run backtests to validate your hypothesis</li>
+            <li>📊 Paper trade before going live</li>
+          </ul>
         </div>
       </div>
-
-      <div className="next-steps">
-        <h4>What's Next?</h4>
-        <ul>
-          <li>📝 Strategy will be created in <strong>Draft</strong> status</li>
-          <li>💻 Open in Strategy Editor to write or refine code</li>
-          <li>🔬 Run backtests to validate your hypothesis</li>
-          <li>📊 Paper trade before going live</li>
-        </ul>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="strategy-wizard-overlay">
@@ -648,8 +1122,8 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
               Next →
             </button>
           ) : step === 'transcript' ? null : (
-            <button className="btn-primary create" onClick={handleComplete}>
-              🚀 Create Strategy
+            <button className="btn-primary create" onClick={handleComplete} disabled={isSubmitting}>
+              {isSubmitting ? 'Creating...' : '🚀 Create Strategy'}
             </button>
           )}
         </div>
@@ -945,12 +1419,10 @@ const styles = `
     gap: 0.5rem;
   }
 
-  .param-item {
+  .param-item-content {
     display: flex;
     justify-content: space-between;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 0.375rem;
+    width: 100%;
   }
 
   .param-key {
@@ -963,6 +1435,53 @@ const styles = `
     color: #e5e5e5;
     font-weight: 500;
     font-size: 0.85rem;
+    max-width: 60%;
+    text-align: right;
+    word-break: break-word;
+  }
+
+  .param-definition {
+    display: block;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.25rem;
+    line-height: 1.4;
+    font-style: italic;
+  }
+
+  .param-item {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0.375rem;
+  }
+
+  .empty-params-hint {
+    text-align: center;
+    padding: 2rem;
+    color: #6b7280;
+    font-size: 0.9rem;
+  }
+
+  .empty-params-hint p {
+    margin: 0 0 1rem;
+  }
+
+  .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    color: #e5e5e5;
+    font-size: 0.9rem;
+    transition: border-color 0.15s ease;
+  }
+
+  .form-group select:focus {
+    outline: none;
+    border-color: #10b981;
   }
 
   .next-steps {
@@ -1332,6 +1851,14 @@ const styles = `
     margin-bottom: 2.5rem;
   }
 
+  .audio-upload-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 1.5rem;
+  }
+
   .mic-primary-btn {
     width: 80px;
     height: 80px;
@@ -1387,6 +1914,27 @@ const styles = `
     font-size: 0.9rem;
     color: #9ca3af;
     font-weight: 600;
+  }
+
+  .btn-audio-upload {
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.12);
+    color: #d1fae5;
+    padding: 0.7rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .btn-audio-upload:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+
+  .btn-audio-upload:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .fluid-action {
@@ -1537,6 +2085,36 @@ const styles = `
     from { opacity: 0; }
     to { opacity: 1; }
   }
+  .recording-error-msg {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .dismiss-error-btn {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .dismiss-error-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
   .extraction-status-toast {
     background: rgba(16, 185, 129, 0.1);
     border: 1px solid #10b981;

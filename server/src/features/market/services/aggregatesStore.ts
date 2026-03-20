@@ -1,5 +1,5 @@
 import { AnyBulkWriteOperation, Collection } from 'mongodb';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 
 // Local persistence for Massive aggregate bars so we can serve cached sessions
 // if the provider rate-limits us.
@@ -36,6 +36,7 @@ function aggregatesCollection(): Collection<AggregateBarDocument> {
 // and that we can evict/inspect by `updatedAt`.
 export async function ensureAggregateIndexes(): Promise<void> {
   if (indexesEnsured) return;
+  if (!isMongoReady()) return;
   const collection = aggregatesCollection();
   await collection.createIndex(
     { ticker: 1, timespan: 1, multiplier: 1, timestamp: 1 },
@@ -57,6 +58,7 @@ export async function upsertAggregateBars(
   options: { source?: 'massive' | 'mongo' | 'synthetic' } = {}
 ): Promise<void> {
   if (!bars.length) return;
+  if (!isMongoReady()) return;
   await ensureAggregateIndexes();
   const collection = aggregatesCollection();
   const operations: AnyBulkWriteOperation<AggregateBarDocument>[] = bars.map(bar => ({
@@ -95,6 +97,7 @@ export async function getRecentAggregateBars(
   timespan: Timespan,
   window: number
 ): Promise<StoredAggregateBar[]> {
+  if (!isMongoReady()) return [];
   await ensureAggregateIndexes();
   const docs = await aggregatesCollection()
     .find({ ticker, multiplier, timespan })

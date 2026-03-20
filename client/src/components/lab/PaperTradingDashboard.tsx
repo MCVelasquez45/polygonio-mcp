@@ -1,151 +1,171 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
+import { futuresApi } from '../../api';
+import { getApiBaseUrl } from '../../api/http';
+import type { FuturesPaperSession } from '../../types/futures';
 
-type Position = {
-  symbol: string;
-  side: 'LONG' | 'SHORT';
-  qty: number;
-  entryPrice: number;
-  currentPrice: number;
-  pnl: number;
-  timeOpen: string;
+type Props = {
+  sessionId?: string;
+  strategyId?: string;
+  strategyName?: string;
+  onRequestPromotion?: () => void;
 };
 
-type Metric = {
-  label: string;
-  value: string;
-  subValue?: string;
-  trend: 'positive' | 'negative' | 'neutral';
-};
+export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onRequestPromotion }: Props) {
+  const [session, setSession] = useState<FuturesPaperSession | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-type ComparisonRow = {
-  metric: string;
-  paper: string;
-  backtest: string;
-  deviation: string;
-  status: 'pass' | 'fail' | 'warning';
-};
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    setLoading(true);
+    futuresApi
+      .getFuturesPaperSession(sessionId)
+      .then(payload => {
+        if (!cancelled) setSession(payload);
+      })
+      .catch(err => {
+        if (!cancelled) setError(err?.message ?? 'Failed to load paper session');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
-export function PaperTradingDashboard() {
-  // Mock Real-time Data
-  const [metrics, setMetrics] = useState<Metric[]>([
-    { label: 'TODAY P&L', value: '+$1,842', subValue: '+1.84%', trend: 'positive' },
-    { label: 'WEEK P&L', value: '+$4,523', subValue: '+4.52%', trend: 'positive' },
-    { label: 'TOTAL P&L', value: '+$12,450', subValue: '+12.45%', trend: 'positive' },
-    { label: 'READINESS', value: '82/100', subValue: 'PROMOTION READY', trend: 'positive' },
-  ]);
+  useEffect(() => {
+    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    const handleMarketUpdate = (payload: any) => {
+      if (!sessionId || payload?.sessionId !== sessionId) return;
+      setSession(prev => (prev ? { ...prev, state: payload.state, status: payload.status } : prev));
+    };
+    const handlePositionUpdate = (payload: any) => {
+      if (!sessionId || payload?.sessionId !== sessionId) return;
+      setSession(prev =>
+        prev
+          ? {
+              ...prev,
+              state: {
+                ...prev.state,
+                position: payload.position,
+                unrealizedPnl: payload.pnl?.unrealized ?? prev.state.unrealizedPnl,
+                realizedPnl: payload.pnl?.realized ?? prev.state.realizedPnl,
+                dailyPnl: payload.pnl?.daily ?? prev.state.dailyPnl
+              }
+            }
+          : prev
+      );
+    };
 
-  const [positions, setPositions] = useState<Position[]>([
-    { symbol: 'VXX', side: 'SHORT', qty: 150, entryPrice: 25.42, currentPrice: 25.18, pnl: 36, timeOpen: '2h 15m' },
-    { symbol: 'SPY', side: 'LONG', qty: 10, entryPrice: 452.10, currentPrice: 453.20, pnl: 11, timeOpen: '2h 15m' },
-  ]);
+    socket.on('futures:market:update', handleMarketUpdate);
+    socket.on('futures:position:update', handlePositionUpdate);
 
-  const [comparisons, setComparisons] = useState<ComparisonRow[]>([
-    { metric: 'Sharpe Ratio', paper: '1.38', backtest: '1.42', deviation: '-2.8%', status: 'pass' },
-    { metric: 'Win Rate', paper: '62%', backtest: '58%', deviation: '+6.9%', status: 'pass' },
-    { metric: 'Avg Slippage', paper: '1.2 bps', backtest: '1.0 bps', deviation: '+20%', status: 'warning' },
-  ]);
+    return () => {
+      socket.off('futures:market:update', handleMarketUpdate);
+      socket.off('futures:position:update', handlePositionUpdate);
+      socket.disconnect();
+    };
+  }, [sessionId]);
+
+  const controlsDisabled = !sessionId || !session;
+
+  const handleControl = async (action: 'pause' | 'resume' | 'stop' | 'emergency_stop') => {
+    if (!sessionId) return;
+    try {
+      const updated = await futuresApi.controlFuturesPaperSession(sessionId, action);
+      setSession(updated);
+      setError(null);
+    } catch (err: any) {
+      setError(err?.message ?? 'Failed to update paper session');
+    }
+  };
+
+  const pnlColor = useMemo(() => {
+    const dailyPnl = session?.state.dailyPnl ?? 0;
+    return dailyPnl >= 0 ? '#10b981' : '#ef4444';
+  }, [session]);
 
   return (
     <div className="paper-dashboard">
       <div className="dashboard-header">
         <div className="header-left">
-          <h2>📝 PAPER TRADING: VolArbitrage_v2</h2>
-          <span className="status-badge">Day 12 of 15 ●</span>
+          <h2>📝 PAPER TRADING: {strategyName || session?.strategyName || 'Futures Strategy'}</h2>
+          <span className="status-badge">{session?.status?.toUpperCase() ?? 'NOT STARTED'}</span>
         </div>
         <div className="header-right">
-          <button className="btn-danger">Pause Trading</button>
-          <button className="btn-primary">Request Promotion →</button>
+          <button className="btn-danger" disabled={controlsDisabled} onClick={() => handleControl('pause')}>Pause Trading</button>
+          <button className="btn-secondary" disabled={controlsDisabled} onClick={() => handleControl('resume')}>Resume</button>
+          <button className="btn-danger" disabled={controlsDisabled} onClick={() => handleControl('emergency_stop')}>Emergency Stop</button>
+          <button className="btn-primary" disabled={controlsDisabled} onClick={onRequestPromotion}>Request Promotion →</button>
         </div>
       </div>
 
-      {/* Live Metrics Grid */}
+      {loading && <div className="notice">Loading paper session...</div>}
+      {!sessionId && <div className="notice">Run a futures backtest to initialize a paper session.</div>}
+      {error && <div className="notice error">⚠ {error}</div>}
+
       <div className="metrics-grid">
-        {metrics.map((m, i) => (
-          <div key={i} className="metric-card">
-            <span className="metric-label">{m.label}</span>
-            <span className={`metric-value ${m.trend}`}>{m.value}</span>
-            <span className="metric-sub">{m.subValue}</span>
-          </div>
-        ))}
+        <div className="metric-card">
+          <span className="metric-label">TODAY P&L</span>
+          <span className="metric-value" style={{ color: pnlColor }}>{(session?.state.dailyPnl ?? 0).toFixed(2)}</span>
+          <span className="metric-sub">Mark: {(session?.state.markPrice ?? 0).toFixed(2)}</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">EQUITY</span>
+          <span className="metric-value">${(session?.state.equity ?? 0).toFixed(0)}</span>
+          <span className="metric-sub">Cash ${(session?.state.cash ?? 0).toFixed(0)}</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">MARGIN USED</span>
+          <span className="metric-value">${(session?.state.marginUsed ?? 0).toFixed(0)}</span>
+          <span className="metric-sub">{(session?.state.marginUtilizationPct ?? 0).toFixed(1)}% utilization</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">RISK UTILIZATION</span>
+          <span className="metric-value">{(session?.state.riskUtilizationPct ?? 0).toFixed(1)}%</span>
+          <span className="metric-sub">Limit ${(session?.config.maxDailyLoss ?? 0).toFixed(0)}</span>
+        </div>
+        <div className="metric-card">
+          <span className="metric-label">READINESS</span>
+          <span className="metric-value">{session?.state.readinessScore ?? 0}/100</span>
+          <span className="metric-sub">{(session?.status ?? 'stopped').toUpperCase()}</span>
+        </div>
       </div>
 
-      {/* Current Positions */}
       <div className="section">
-        <h3>CURRENT POSITIONS</h3>
+        <h3>CURRENT POSITION</h3>
         <div className="table-container">
           <table>
             <thead>
               <tr>
                 <th>Symbol</th>
                 <th>Side</th>
-                <th>Qty</th>
-                <th>Entry</th>
-                <th>Current</th>
-                <th>P&L</th>
-                <th>Time</th>
+                <th>Contracts</th>
+                <th>Avg Entry</th>
+                <th>Mark</th>
+                <th>Unrealized</th>
+                <th>Contract</th>
+                <th>Opened</th>
               </tr>
             </thead>
             <tbody>
-              {positions.map((p, i) => (
-                <tr key={i}>
-                  <td className="font-mono">{p.symbol}</td>
-                  <td><span className={`badge ${p.side.toLowerCase()}`}>{p.side}</span></td>
-                  <td>{p.qty}</td>
-                  <td>${p.entryPrice.toFixed(2)}</td>
-                  <td>${p.currentPrice.toFixed(2)}</td>
-                  <td className={p.pnl >= 0 ? 'positive' : 'negative'}>
-                    {p.pnl >= 0 ? '+' : '-'}${Math.abs(p.pnl)}
-                  </td>
-                  <td>{p.timeOpen}</td>
-                </tr>
-              ))}
+              <tr>
+                <td className="font-mono">{session?.symbol ?? '-'}</td>
+                <td>{session?.state.position.side?.toUpperCase() ?? 'FLAT'}</td>
+                <td>{session?.state.position.contracts ?? 0}</td>
+                <td>{(session?.state.position.avgEntryPrice ?? 0).toFixed(2)}</td>
+                <td>{(session?.state.markPrice ?? 0).toFixed(2)}</td>
+                <td style={{ color: (session?.state.unrealizedPnl ?? 0) >= 0 ? '#10b981' : '#ef4444' }}>
+                  {(session?.state.unrealizedPnl ?? 0).toFixed(2)}
+                </td>
+                <td>{session?.state.position.currentContract ?? '-'}</td>
+                <td>{session?.state.position.openedAt ? new Date(session.state.position.openedAt).toLocaleTimeString() : '-'}</td>
+              </tr>
             </tbody>
           </table>
-        </div>
-      </div>
-
-      {/* Backtest Comparison */}
-      <div className="section">
-        <h3>VS BACKTEST COMPARISON</h3>
-        <div className="comparison-table">
-          <div className="comp-header">
-            <span>Metric</span>
-            <span>Paper Trading</span>
-            <span>Backtest</span>
-            <span>Deviation</span>
-          </div>
-          {comparisons.map((row, i) => (
-            <div key={i} className="comp-row">
-              <span>{row.metric}</span>
-              <span className="font-mono">{row.paper}</span>
-              <span className="font-mono text-gray">{row.backtest}</span>
-              <span className={`status ${row.status}`}>
-                {row.deviation} {row.status === 'pass' ? '✓' : '⚠'}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Agent Monitor */}
-      <div className="agent-monitor">
-        <div className="monitor-header">
-          <span className="icon">🤖</span>
-          <h3>AGENT MONITOR</h3>
-        </div>
-        <div className="monitor-feed">
-          <div className="feed-item">
-            <span className="time">● Live</span>
-            <p>Market conditions favorable: contango at 6.5%</p>
-          </div>
-          <div className="feed-item">
-            <span className="time">10:30</span>
-            <p>Execution quality excellent: 0.8 bps slippage</p>
-          </div>
-          <div className="feed-item warning">
-            <span className="time">09:15</span>
-            <p>VIX approaching threshold - monitoring closely</p>
-          </div>
         </div>
       </div>
 
@@ -162,136 +182,63 @@ const styles = `
     height: 100%;
     overflow-y: auto;
   }
-
   .dashboard-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1rem;
     border-bottom: 1px solid #333;
     padding-bottom: 1rem;
+    gap: 1rem;
   }
-
-  .header-left h2 {
-    margin: 0;
-    font-size: 1.25rem;
-    color: #e5e5e5;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
+  .header-left h2 { margin: 0; font-size: 1.1rem; }
   .status-badge {
-    font-size: 0.85rem;
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
-    padding: 0.25rem 0.75rem;
-    border-radius: 1rem;
     margin-top: 0.5rem;
     display: inline-block;
+    font-size: 0.8rem;
+    color: #10b981;
+    background: rgba(16,185,129,0.15);
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
   }
-
-  .header-right {
-    display: flex;
-    gap: 1rem;
+  .header-right { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn-primary, .btn-secondary, .btn-danger {
+    border: none;
+    padding: 0.45rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
   }
-
+  .btn-primary { background: #10b981; color: #fff; }
+  .btn-secondary { background: #374151; color: #fff; }
+  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }
+  .notice { margin-bottom: 1rem; font-size: 0.85rem; color: #9ca3af; }
+  .notice.error { color: #fca5a5; }
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
   }
-
   .metric-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 1.25rem;
-    border-radius: 0.75rem;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 0.75rem;
     display: flex;
     flex-direction: column;
   }
-
-  .metric-label { font-size: 0.75rem; color: #9ca3af; letter-spacing: 0.05em; }
-  .metric-value { font-size: 1.75rem; font-weight: 600; margin: 0.5rem 0; }
-  .metric-sub { font-size: 0.85rem; color: #6b7280; }
-  
-  .metric-value.positive { color: #10b981; }
-  .metric-value.negative { color: #ef4444; }
-
-  .section { margin-bottom: 2rem; }
-  .section h3 { font-size: 0.9rem; color: #9ca3af; margin-bottom: 1rem; letter-spacing: 0.05em; }
-
-  .table-container {
-    background: #15151a;
-    border-radius: 0.75rem;
-    overflow: hidden;
-    border: 1px solid #333;
-  }
-
+  .metric-label { color: #9ca3af; font-size: 0.7rem; }
+  .metric-value { color: #e5e5e5; font-size: 1.3rem; font-weight: 600; margin-top: 0.25rem; }
+  .metric-sub { color: #6b7280; font-size: 0.75rem; }
+  .section h3 { font-size: 0.9rem; color: #9ca3af; margin-bottom: 0.5rem; }
+  .table-container { border: 1px solid #333; border-radius: 10px; overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #2a2a2a; }
-  th { font-weight: 500; color: #9ca3af; font-size: 0.85rem; }
-  td { font-size: 0.9rem; }
-  
-  .badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-  .badge.long { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-  .badge.short { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-
-  .comparison-table {
-    display: flex;
-    flex-direction: column;
-    background: #15151a;
-    border-radius: 0.75rem;
-    border: 1px solid #333;
+  th, td { padding: 0.75rem; border-bottom: 1px solid #23232a; text-align: left; }
+  th { color: #9ca3af; font-size: 0.75rem; }
+  td { color: #e5e5e5; font-size: 0.85rem; }
+  @media (max-width: 1200px) {
+    .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-
-  .comp-header, .comp-row {
-    display: grid;
-    grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    padding: 1rem;
-    align-items: center;
-  }
-
-  .comp-header { border-bottom: 1px solid #333; color: #9ca3af; font-size: 0.85rem; font-weight: 500; }
-  .comp-row { border-bottom: 1px solid #2a2a2a; font-size: 0.9rem; }
-  .comp-row:last-child { border-bottom: none; }
-  
-  .status.pass { color: #10b981; }
-  .status.warning { color: #f59e0b; }
-  .status.fail { color: #ef4444; }
-
-  .agent-monitor {
-    background: rgba(16, 185, 129, 0.05);
-    border: 1px solid rgba(16, 185, 129, 0.1);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-  }
-
-  .monitor-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; color: #10b981; }
-  .monitor-header h3 { margin: 0; font-size: 1rem; }
-
-  .feed-item { display: flex; gap: 1rem; margin-bottom: 0.75rem; font-size: 0.9rem; }
-  .feed-item .time { color: #6b7280; font-family: monospace; min-width: 60px; }
-  .feed-item.warning .time { color: #f59e0b; }
-
-  .btn-primary, .btn-danger {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    font-weight: 500;
-    cursor: pointer;
-    font-size: 0.9rem;
-    border: none;
-  }
-
-  .btn-primary { background: #10b981; color: white; }
-  .btn-primary:hover { background: #059669; }
-  
-  .btn-danger { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
-  .btn-danger:hover { background: rgba(239, 68, 68, 0.2); }
-  
-  .font-mono { font-family: 'JetBrains Mono', monospace; }
-  .text-gray { color: #6b7280; }
 `;
-
-export default PaperTradingDashboard;

@@ -1,7 +1,7 @@
 import axios from 'axios';
 // Generates the per-symbol checklist that powers the Entry Checklist panel.
 import { Collection } from 'mongodb';
-import { getCollection } from '../../../shared/db/mongo';
+import { getCollection, isMongoReady } from '../../../shared/db/mongo';
 import {
   getRecentAggregateBars,
   StoredAggregateBar,
@@ -124,6 +124,7 @@ function blockMinuteAggs(symbol: string) {
 // Sets up symbol + updatedAt indexes once per process so lookups are fast.
 async function ensureIndexes() {
   if (indexesEnsured) return;
+  if (!isMongoReady()) return;
   await collection().createIndex({ symbol: 1 }, { unique: true, name: 'symbol_unique' });
   await collection().createIndex({ updatedAt: 1 }, { name: 'updated_at' });
   indexesEnsured = true;
@@ -671,8 +672,9 @@ async function fetchContextSnapshots(targetSymbol: string) {
  */
 export async function evaluateChecklist(symbolInput: string, opts: { force?: boolean } = {}): Promise<ChecklistResult> {
   const symbol = symbolInput.toUpperCase();
-  await ensureIndexes();
-  if (!opts.force) {
+  const mongoAvailable = isMongoReady();
+  if (mongoAvailable) await ensureIndexes();
+  if (!opts.force && mongoAvailable) {
     const existing = await collection().findOne({ symbol });
     if (existing && Date.now() - existing.updatedAt.getTime() < CHECKLIST_TTL_MS) {
       return {
@@ -767,7 +769,9 @@ export async function evaluateChecklist(symbolInput: string, opts: { force?: boo
     updatedAt: new Date()
   };
 
-  await collection().updateOne({ symbol }, { $set: doc }, { upsert: true });
+  if (mongoAvailable) {
+    await collection().updateOne({ symbol }, { $set: doc }, { upsert: true });
+  }
   return {
     ...doc,
     updatedAt: doc.updatedAt.toISOString()
@@ -790,6 +794,7 @@ export async function evaluateChecklistBatch(
 }
 
 export async function getStoredChecklist(symbolInput: string): Promise<ChecklistResult | null> {
+  if (!isMongoReady()) return null;
   const symbol = symbolInput.toUpperCase();
   await ensureIndexes();
   const doc = await collection().findOne({ symbol });

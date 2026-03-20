@@ -45,6 +45,7 @@ examples/
 1. **Python agent API**
    ```bash
    cd agent
+   source .venv/bin/activate
    uv pip install fastapi uvicorn  # first run only
    uvicorn api:app --reload --port 5001
    ```

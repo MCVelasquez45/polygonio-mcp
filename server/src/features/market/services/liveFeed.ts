@@ -128,23 +128,24 @@ function handleWsMessage(event: any) {
   broadcast(symbol, 'live:raw', payload);
 }
 
-function ensureWsClients() {
-  if (!MASSIVE_WS_KEY) return;
+function ensureWsClient(type: 'options' | 'stocks'): MassiveWsClient | null {
+  if (!MASSIVE_WS_KEY) return null;
 
-  // 1. Options Client
-  if (!wsClientOptions) {
-    wsClientOptions = new MassiveWsClient({
-      url: MASSIVE_WS_URL_OPTIONS,
-      apiKey: MASSIVE_WS_KEY,
-      assetClass: 'options',
-      onMessage: handleWsMessage,
-      onConnect: () => console.log('[LiveFeed] Options WebSocket connected'),
-      onError: (err) => console.error('[LiveFeed] Options WS error', err),
-    });
-    wsClientOptions.connect();
+  if (type === 'options') {
+    if (!wsClientOptions) {
+      wsClientOptions = new MassiveWsClient({
+        url: MASSIVE_WS_URL_OPTIONS,
+        apiKey: MASSIVE_WS_KEY,
+        assetClass: 'options',
+        onMessage: handleWsMessage,
+        onConnect: () => console.log('[LiveFeed] Options WebSocket connected'),
+        onError: (err) => console.error('[LiveFeed] Options WS error', err),
+      });
+      wsClientOptions.connect();
+    }
+    return wsClientOptions;
   }
 
-  // 2. Stocks Client
   if (!wsClientStocks) {
     wsClientStocks = new MassiveWsClient({
       url: MASSIVE_WS_URL_STOCKS,
@@ -156,14 +157,14 @@ function ensureWsClients() {
     });
     wsClientStocks.connect();
   }
+  return wsClientStocks;
 }
 
 function getClientForSymbol(symbol: string) {
-  return isOptionSymbol(symbol) ? wsClientOptions : wsClientStocks;
+  return ensureWsClient(isOptionSymbol(symbol) ? 'options' : 'stocks');
 }
 
 function subscribeSymbol(symbol: string) {
-  ensureWsClients();
   const sockets = getSymbolSockets(symbol);
   symbolSubscriptions.set(symbol, sockets);
 
@@ -183,7 +184,6 @@ function unsubscribeSymbol(symbol: string) {
 }
 
 export function subscribeAggregateSymbol(symbol: string) {
-  ensureWsClients();
   const count = aggregateSubscriptions.get(symbol) ?? 0;
   aggregateSubscriptions.set(symbol, count + 1);
 
@@ -206,7 +206,6 @@ export function unsubscribeAggregateSymbol(symbol: string) {
 
 export function initLiveFeed(io: Server) {
   ioServer = io;
-  ensureWsClients();
 }
 
 export function registerLiveFeedHandlers(socket: Socket) {

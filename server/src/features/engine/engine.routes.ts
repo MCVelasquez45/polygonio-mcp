@@ -181,11 +181,13 @@ router.get('/status', async (req, res) => {
       totalStrategies,
       activeScreeners,
       activeQuant,
+      activeFutures,
       pausedStrategies
     ] = await Promise.all([
       EngineStrategyModel.countDocuments(),
       EngineStrategyModel.countDocuments({ strategyType: 'screener', status: 'active' }),
       EngineStrategyModel.countDocuments({ strategyType: 'quant', status: 'active' }),
+      EngineStrategyModel.countDocuments({ strategyType: 'futures', status: 'active' }),
       EngineStrategyModel.countDocuments({ status: 'paused' })
     ]);
 
@@ -193,6 +195,7 @@ router.get('/status', async (req, res) => {
       totalStrategies,
       activeScreeners,
       activeQuant,
+      activeFutures,
       pausedStrategies,
       timestamp: new Date().toISOString()
     });

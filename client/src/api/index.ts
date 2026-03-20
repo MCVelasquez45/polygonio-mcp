@@ -3,3 +3,5 @@ export * as marketApi from './market';
 export * as chatApi from './chat';
 export * as analysisApi from './analysis';
 export * as alpacaApi from './alpaca';
+export * as futuresApi from './futures';
+export * as agentApi from './agent';

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { apiClient } from '../../api';
 
 type Strategy = {
   id: string;
+  _id?: string;
   name: string;
   version: string;
   status: 'draft' | 'backtesting' | 'paper_trading' | 'live' | 'paused' | 'archived';
@@ -20,6 +22,7 @@ type Strategy = {
 type Props = {
   onSelectStrategy?: (strategy: Strategy) => void;
   onCreateNew?: () => void;
+  refreshKey?: number;
 };
 
 const STATUS_CONFIG = {
@@ -31,54 +34,15 @@ const STATUS_CONFIG = {
   archived: { label: 'Archived', color: '#374151', icon: '📦' },
 };
 
-// Mock data for demonstration - replace with API call
-const MOCK_STRATEGIES: Strategy[] = [
-  {
-    id: '1',
-    name: 'VolArbitrage',
-    version: 'v2.1',
-    status: 'paper_trading',
-    type: 'Volatility',
-    metrics: { sharpe: 1.38, return: 12.45, maxDrawdown: -3.2, winRate: 62 },
-    paperTradingDays: 12,
-    lastUpdated: '2026-01-16T08:30:00Z',
-  },
-  {
-    id: '2',
-    name: 'MomentumScalper',
-    version: 'v3.0',
-    status: 'backtesting',
-    type: 'Momentum',
-    metrics: { sharpe: 1.42, return: 48.2, maxDrawdown: -15.8, winRate: 58 },
-    lastUpdated: '2026-01-15T14:20:00Z',
-  },
-  {
-    id: '3',
-    name: 'MeanReversion',
-    version: 'v1.5',
-    status: 'live',
-    type: 'Mean Reversion',
-    metrics: { sharpe: 1.24, return: 8.5, maxDrawdown: -4.1, winRate: 55 },
-    lastUpdated: '2026-01-16T09:00:00Z',
-  },
-  {
-    id: '4',
-    name: 'GammaScalp',
-    version: 'v1.0',
-    status: 'draft',
-    type: '0-DTE Options',
-    lastUpdated: '2026-01-14T10:00:00Z',
-  },
-  {
-    id: '5',
-    name: 'TrendFollower',
-    version: 'v2.0',
-    status: 'paused',
-    type: 'Trend',
-    metrics: { sharpe: 0.92, return: -2.1, maxDrawdown: -8.5, winRate: 48 },
-    lastUpdated: '2026-01-13T16:00:00Z',
-  },
-];
+function mapStrategyStatus(raw: string): Strategy['status'] {
+  if (raw === 'development') return 'draft';
+  if (raw === 'validated') return 'backtesting';
+  if (raw === 'failed') return 'paused';
+  if (raw === 'paper_trading' || raw === 'backtesting' || raw === 'live' || raw === 'paused' || raw === 'archived') {
+    return raw;
+  }
+  return 'draft';
+}
 
 function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () => void }) {
   const config = STATUS_CONFIG[strategy.status];
@@ -139,25 +103,39 @@ function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () 
   );
 }
 
-export function StrategyListPanel({ onSelectStrategy, onCreateNew }: Props) {
+export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 0 }: Props) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'pipeline' | 'list'>('pipeline');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   useEffect(() => {
-    // TODO: Replace with actual API call
     const fetchStrategies = async () => {
       try {
-        // const response = await fetch('/api/lab/strategies');
-        // const data = await response.json();
-        // setStrategies(data);
-
-        // Using mock data for now
-        setTimeout(() => {
-          setStrategies(MOCK_STRATEGIES);
-          setLoading(false);
-        }, 500);
+        setLoading(true);
+        const response = await apiClient.get('/api/lab/strategies');
+        const data = Array.isArray(response.data) ? response.data : [];
+        const mapped: Strategy[] = data.map((item: any) => ({
+          id: String(item._id ?? item.id),
+          _id: String(item._id ?? item.id),
+          name: item.name ?? 'Unnamed Strategy',
+          version: item.version ?? 'v1.0',
+          status: mapStrategyStatus(String(item.status ?? 'draft')),
+          type: String(item.strategyType ?? 'custom'),
+          metrics: item.backtestResults?.metrics
+            ? {
+                sharpe: item.backtestResults.metrics.sharpeRatio,
+                return: (item.backtestResults.metrics.expectedValue ?? 0) * 100,
+                maxDrawdown: (item.backtestResults.metrics.drawdown ?? 0) * -100,
+                winRate: (item.backtestResults.metrics.winRate ?? 0) * 100
+              }
+            : undefined,
+          paperTradingDays: item.paperTradingDays ?? undefined,
+          lastUpdated: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
+          created_by: item.ownerId
+        }));
+        setStrategies(mapped);
+        setLoading(false);
       } catch (error) {
         console.error('Failed to fetch strategies:', error);
         setLoading(false);
@@ -165,7 +143,7 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew }: Props) {
     };
 
     fetchStrategies();
-  }, []);
+  }, [refreshKey]);
 
   const pipelineStages = ['draft', 'backtesting', 'paper_trading', 'live'];
 

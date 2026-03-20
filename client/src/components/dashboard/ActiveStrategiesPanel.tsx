@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { getApiBaseUrl } from '../../api/http';
+import { apiClient } from '../../api';
 
 type Strategy = {
   _id: string;
@@ -46,7 +48,7 @@ function getTypeIcon(type: string): string {
   return type === 'screener' ? '🔍' : '📈';
 }
 
-export function ActiveStrategiesPanel({ apiBase = 'http://localhost:3000', refreshIntervalMs = 10000, onStrategyClick }: Props) {
+export function ActiveStrategiesPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs = 10000, onStrategyClick }: Props) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,9 +56,7 @@ export function ActiveStrategiesPanel({ apiBase = 'http://localhost:3000', refre
 
   const fetchStrategies = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/engine/strategies`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const { data } = await apiClient.get('/api/engine/strategies', { baseURL: apiBase });
       setStrategies(data.strategies ?? []);
       setError(null);
     } catch (err: any) {
@@ -69,10 +69,7 @@ export function ActiveStrategiesPanel({ apiBase = 'http://localhost:3000', refre
   const triggerStrategy = async (id: string) => {
     setTriggeringId(id);
     try {
-      const res = await fetch(`${apiBase}/api/engine/strategies/${id}/trigger`, {
-        method: 'POST'
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await apiClient.post(`/api/engine/strategies/${id}/trigger`, {}, { baseURL: apiBase });
       // Refresh strategies to get updated lastRun
       await fetchStrategies();
     } catch (err: any) {
@@ -85,12 +82,7 @@ export function ActiveStrategiesPanel({ apiBase = 'http://localhost:3000', refre
   const toggleStatus = async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'paused' : 'active';
     try {
-      const res = await fetch(`${apiBase}/api/engine/strategies/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await apiClient.patch(`/api/engine/strategies/${id}/status`, { status: newStatus }, { baseURL: apiBase });
       await fetchStrategies();
     } catch (err: any) {
       setError(`Status update failed: ${err.message}`);
