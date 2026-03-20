@@ -15,10 +15,13 @@ export async function listFuturesContracts(): Promise<{ count: number; specs: Fu
   return data;
 }
 
-export async function runFuturesBacktest(config: FuturesBacktestConfig): Promise<FuturesBacktestResult> {
+export async function runStrategyBacktest(config: FuturesBacktestConfig): Promise<FuturesBacktestResult> {
   const { data } = await http.post<FuturesBacktestResult>('/api/lab/futures/backtest', config);
   return data;
 }
+
+/** @deprecated Use runStrategyBacktest */
+export const runFuturesBacktest = runStrategyBacktest;
 
 export async function getFuturesBacktest(backtestId: string): Promise<FuturesBacktestResult> {
   const { data } = await http.get<FuturesBacktestResult>(`/api/lab/futures/backtest/${backtestId}`);

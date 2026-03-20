@@ -580,8 +580,12 @@ class PolygonDataFetcher:
         params = dict(params or {})
         params["apiKey"] = self.api_key
         url = f"{self.base_url}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "X-API-Key": self.api_key,
+        }
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(url, params=params)
+            response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
             return response.json()
 

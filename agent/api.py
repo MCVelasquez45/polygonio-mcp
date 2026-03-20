@@ -69,6 +69,10 @@ class ExtractionResponse(BaseModel):
     entry_rules: list[str] = []
     exit_rules: list[str] = []
     risk_management: list[str] = []
+    underlying_ticker: str = ""
+    contract_selection: dict[str, Any] = {}
+    regime_config: dict[str, Any] = {}
+    time_rules: list[dict[str, Any]] = []
 
 
 class AudioTranscriptionRequest(BaseModel):
@@ -268,6 +272,71 @@ async def _perform_extraction(transcript: str) -> dict[str, Any]:
         else:
             data["trading_method"] = "equities"
 
+    # Normalize contract_selection defaults
+    if not data.get("contract_selection") or not isinstance(data.get("contract_selection"), dict):
+        tm = data.get("trading_method", "equities")
+        if tm == "options":
+            data["contract_selection"] = {
+                "contract_type": "call",
+                "strike_selection": "atm",
+                "dte_min": 7,
+                "dte_max": 45,
+            }
+        elif tm == "futures":
+            # Try to infer symbol from the underlying_ticker or strategy name
+            ticker = data.get("underlying_ticker", "")
+            symbol = ticker.upper() if ticker and ticker.upper() in ("ES", "NQ", "CL", "GC", "YM", "RTY") else "ES"
+            data["contract_selection"] = {
+                "symbol": symbol,
+                "roll_strategy": "volume",
+            }
+        else:
+            data["contract_selection"] = {}
+
+    if not data.get("underlying_ticker") or not isinstance(data.get("underlying_ticker"), str):
+        data["underlying_ticker"] = ""
+
+    # Normalize spread_width: default 5 points for credit spreads
+    _cs = data.get("contract_selection", {})
+    if isinstance(_cs, dict) and _cs.get("spread_strategy") in ("credit_spread", "debit_spread"):
+        if not _cs.get("spread_width") or _cs.get("spread_width") == 0:
+            _cs["spread_width"] = 5
+
+    # Fix contract_type when regime-based (call_and_put is not valid, default to put)
+    if isinstance(_cs, dict) and _cs.get("contract_type") in ("call_and_put", "both", ""):
+        _cs["contract_type"] = "put"  # regime_config handles the actual direction
+
+    # Auto-inject default exit time_rules for credit spreads if none exist
+    if isinstance(_cs, dict) and _cs.get("spread_strategy") in ("credit_spread", "debit_spread"):
+        tr = data.get("time_rules", [])
+        if isinstance(tr, list):
+            has_profit_target = any(r.get("type") == "profit_target_pct" for r in tr if isinstance(r, dict))
+            has_stop_loss = any(r.get("type") == "stop_loss_multiplier" for r in tr if isinstance(r, dict))
+            has_proximity = any(r.get("type") == "proximity_exit" for r in tr if isinstance(r, dict))
+            if not has_profit_target:
+                tr.append({"type": "profit_target_pct", "target_pct": 50})
+            if not has_stop_loss:
+                tr.append({"type": "stop_loss_multiplier", "multiplier": 2.0})
+            if not has_proximity:
+                tr.append({"type": "proximity_exit", "pct_to_strike": 0.5, "min_minutes_remaining": 30})
+            data["time_rules"] = tr
+
+    # Normalize regime_config
+    if not data.get("regime_config") or not isinstance(data.get("regime_config"), dict):
+        data["regime_config"] = {}
+    else:
+        rc = data["regime_config"]
+        for key in ("risk_on_tickers", "risk_off_tickers", "leader_tickers"):
+            val = rc.get(key, "")
+            if isinstance(val, str):
+                rc[key] = [t.strip() for t in val.split(",") if t.strip()]
+            elif not isinstance(val, list):
+                rc[key] = []
+
+    # Normalize time_rules
+    if not data.get("time_rules") or not isinstance(data.get("time_rules"), list):
+        data["time_rules"] = []
+
     return data
 
 
@@ -330,6 +399,71 @@ Transcript:
             data["trading_method"] = "options"
         else:
             data["trading_method"] = "equities"
+
+    # Normalize contract_selection defaults
+    if not data.get("contract_selection") or not isinstance(data.get("contract_selection"), dict):
+        tm = data.get("trading_method", "equities")
+        if tm == "options":
+            data["contract_selection"] = {
+                "contract_type": "call",
+                "strike_selection": "atm",
+                "dte_min": 7,
+                "dte_max": 45,
+            }
+        elif tm == "futures":
+            # Try to infer symbol from the underlying_ticker or strategy name
+            ticker = data.get("underlying_ticker", "")
+            symbol = ticker.upper() if ticker and ticker.upper() in ("ES", "NQ", "CL", "GC", "YM", "RTY") else "ES"
+            data["contract_selection"] = {
+                "symbol": symbol,
+                "roll_strategy": "volume",
+            }
+        else:
+            data["contract_selection"] = {}
+
+    if not data.get("underlying_ticker") or not isinstance(data.get("underlying_ticker"), str):
+        data["underlying_ticker"] = ""
+
+    # Normalize spread_width: default 5 points for credit spreads
+    _cs = data.get("contract_selection", {})
+    if isinstance(_cs, dict) and _cs.get("spread_strategy") in ("credit_spread", "debit_spread"):
+        if not _cs.get("spread_width") or _cs.get("spread_width") == 0:
+            _cs["spread_width"] = 5
+
+    # Fix contract_type when regime-based (call_and_put is not valid, default to put)
+    if isinstance(_cs, dict) and _cs.get("contract_type") in ("call_and_put", "both", ""):
+        _cs["contract_type"] = "put"  # regime_config handles the actual direction
+
+    # Auto-inject default exit time_rules for credit spreads if none exist
+    if isinstance(_cs, dict) and _cs.get("spread_strategy") in ("credit_spread", "debit_spread"):
+        tr = data.get("time_rules", [])
+        if isinstance(tr, list):
+            has_profit_target = any(r.get("type") == "profit_target_pct" for r in tr if isinstance(r, dict))
+            has_stop_loss = any(r.get("type") == "stop_loss_multiplier" for r in tr if isinstance(r, dict))
+            has_proximity = any(r.get("type") == "proximity_exit" for r in tr if isinstance(r, dict))
+            if not has_profit_target:
+                tr.append({"type": "profit_target_pct", "target_pct": 50})
+            if not has_stop_loss:
+                tr.append({"type": "stop_loss_multiplier", "multiplier": 2.0})
+            if not has_proximity:
+                tr.append({"type": "proximity_exit", "pct_to_strike": 0.5, "min_minutes_remaining": 30})
+            data["time_rules"] = tr
+
+    # Normalize regime_config
+    if not data.get("regime_config") or not isinstance(data.get("regime_config"), dict):
+        data["regime_config"] = {}
+    else:
+        rc = data["regime_config"]
+        for key in ("risk_on_tickers", "risk_off_tickers", "leader_tickers"):
+            val = rc.get(key, "")
+            if isinstance(val, str):
+                rc[key] = [t.strip() for t in val.split(",") if t.strip()]
+            elif not isinstance(val, list):
+                rc[key] = []
+
+    # Normalize time_rules
+    if not data.get("time_rules") or not isinstance(data.get("time_rules"), list):
+        data["time_rules"] = []
 
     return data
 
@@ -477,3 +611,20 @@ async def chat_completions(request: Request) -> JSONResponse:
             ],
         }
     )
+
+
+# ── Backtest executor endpoint ────────────────────────────────────────────────
+
+from core.backtest_executor import BacktestRequest, BacktestResponse, execute_backtest  # noqa: E402
+
+
+@app.post("/backtest", response_model=BacktestResponse, status_code=status.HTTP_200_OK)
+async def run_backtest(request: BacktestRequest) -> BacktestResponse:
+    """Run a strategy backtest using real market data. Supports equities, options, and futures."""
+    try:
+        return await execute_backtest(request)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backtest execution failed: {exc}",
+        )

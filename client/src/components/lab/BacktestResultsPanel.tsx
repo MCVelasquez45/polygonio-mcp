@@ -399,6 +399,53 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
         </div>
       )}
 
+      {/* Trade Log Section */}
+      {backtest?.tradeLedger && backtest.tradeLedger.length > 0 && (
+        <div className="stress-test-section" style={{ marginBottom: '1.5rem' }}>
+          <div className="section-header">
+            <span className="icon">&#128203;</span>
+            <h3>Trade Log ({backtest.tradeLedger.length} trades)</h3>
+          </div>
+          <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #333', color: '#9ca3af', textAlign: 'left' }}>
+                  <th style={{ padding: '6px 8px' }}>Time</th>
+                  <th style={{ padding: '6px 8px' }}>Side</th>
+                  <th style={{ padding: '6px 8px' }}>Contracts</th>
+                  <th style={{ padding: '6px 8px' }}>Fill Price</th>
+                  <th style={{ padding: '6px 8px' }}>P&L</th>
+                  <th style={{ padding: '6px 8px' }}>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {backtest.tradeLedger.slice(0, 30).map((trade, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: '#d1d5db' }}>
+                    <td style={{ padding: '5px 8px', whiteSpace: 'nowrap' }}>{new Date(trade.timestamp).toLocaleString()}</td>
+                    <td style={{ padding: '5px 8px' }}>
+                      <span style={{ color: trade.side === 'buy' ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                        {trade.side.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: '5px 8px' }}>{trade.contracts}</td>
+                    <td style={{ padding: '5px 8px' }}>${trade.fillPrice?.toFixed(2)}</td>
+                    <td style={{ padding: '5px 8px', color: trade.pnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                      {trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(2)}
+                    </td>
+                    <td style={{ padding: '5px 8px', color: '#6b7280', fontSize: '0.75rem' }}>{trade.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {backtest.tradeLedger.length > 30 && (
+              <p style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.5rem', textAlign: 'center' }}>
+                Showing first 30 of {backtest.tradeLedger.length} trades
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Stress Test Section */}
       <div className="stress-test-section">
         <div className="section-header">

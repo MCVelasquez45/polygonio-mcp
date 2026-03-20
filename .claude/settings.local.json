@@ -33,7 +33,11 @@
       "Bash(npm install:*)",
       "Bash(source:*)",
       "Bash(nvm use:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(ls -la /home/sirrele/projects/polygonio-mcp/server/.env*)",
+      "Bash(chmod +x /home/sirrele/projects/polygonio-mcp/scripts/seed-mongo.sh)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(netstat -tlnp)"
     ]
   }
 }

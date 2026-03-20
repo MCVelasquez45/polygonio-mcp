@@ -7,6 +7,7 @@ type Props = {
   onRunBacktest?: () => void;
   onSave?: () => void;
   onBack?: () => void;
+  onCompile?: (extractionData: Record<string, unknown>) => void;
 };
 
 const RESERVED_PARAM_KEYS = new Set([
@@ -35,7 +36,7 @@ function formatLabel(key: string): string {
     .replace(/\b\w/g, l => l.toUpperCase());
 }
 
-export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack }: Props) {
+export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack, onCompile }: Props) {
   const [strategy, setStrategy] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -263,6 +264,14 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack 
     </div>
   );
 
+  const buildRulesText = () => {
+    const parts: string[] = [];
+    if (entryRules.length) parts.push(entryRules.map(r => `Buy when ${r}`).join('. '));
+    if (exitRules.length) parts.push(exitRules.map(r => `Exit when ${r}`).join('. '));
+    if (riskRules.length) parts.push(riskRules.join('. '));
+    return parts.join('. ') + '.';
+  };
+
   if (loading) {
     return (
       <div className="sed-panel">
@@ -327,8 +336,51 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack 
           <button className="sed-btn sed-btn-primary" onClick={onRunBacktest}>
             Run Backtest
           </button>
+          {onCompile && (entryRules.length > 0 || exitRules.length > 0) && (
+            <button
+              className="sed-btn sed-btn-secondary"
+              onClick={() => {
+                const sc = strategy?.screenerConfig as Record<string, unknown> | undefined;
+                const params = (sc?.params ?? {}) as Record<string, unknown>;
+                onCompile({
+                  name,
+                  description,
+                  hypothesis,
+                  strategyId,
+                  entry_rules: entryRules,
+                  exit_rules: exitRules,
+                  risk_management: riskRules,
+                  trading_method: params.trading_method,
+                  underlying_ticker: params.underlying_ticker ?? params.underlying_symbol,
+                  contract_selection: params.contract_selection,
+                  regime_config: params.regime_config,
+                  time_rules: params.time_rules,
+                  parameters: { ...parameters },
+                  parameter_definitions: { ...paramDefs },
+                });
+              }}
+              title="Compile strategy with all extraction data into AST, DSL, and RuntimeSpec"
+            >
+              Compile
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Metadata Row */}
+      {(() => {
+        const sc = strategy?.screenerConfig as Record<string, unknown> | undefined;
+        const params = (sc?.params ?? {}) as Record<string, unknown>;
+        const tm = params.trading_method as string | undefined;
+        const ticker = (params.underlying_ticker || params.underlying_symbol || '') as string;
+        if (!tm && !ticker) return null;
+        return (
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 1rem', borderBottom: '1px solid #333', fontSize: '0.8rem' }}>
+            {tm && <span style={{ textTransform: 'capitalize', padding: '2px 10px', borderRadius: '4px', background: tm === 'options' ? 'rgba(139,92,246,0.15)' : tm === 'futures' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: tm === 'options' ? '#a78bfa' : tm === 'futures' ? '#fbbf24' : '#6ee7b7' }}>{tm}</span>}
+            {ticker && <span style={{ color: '#9ca3af' }}>Underlying: <strong style={{ color: '#e5e5e5' }}>{ticker}</strong></span>}
+          </div>
+        );
+      })()}
 
       {/* Content */}
       <div className="sed-content">

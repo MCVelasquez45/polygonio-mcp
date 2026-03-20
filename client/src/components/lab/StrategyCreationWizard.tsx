@@ -162,6 +162,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
   const [recordingMode, setRecordingMode] = useState<RecordingMode>('speech');
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [tradingMethod, setTradingMethod] = useState<string>(initialData?.trading_method ?? 'equities');
+  const [extractionMeta, setExtractionMeta] = useState<Record<string, any>>({});
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
   const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -203,6 +204,12 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
     setEntryRules(Array.isArray(data.entry_rules) ? data.entry_rules : []);
     setExitRules(Array.isArray(data.exit_rules) ? data.exit_rules : []);
     setRiskManagement(Array.isArray(data.risk_management) ? data.risk_management : []);
+    setExtractionMeta({
+      underlying_ticker: data.underlying_ticker ?? '',
+      contract_selection: data.contract_selection ?? {},
+      regime_config: data.regime_config ?? {},
+      time_rules: data.time_rules ?? [],
+    });
     setStep('details');
     setAgentSuggestion('✨ AI extraction complete. Review and refine before creating the strategy.');
     setExtractionStarted(false);
@@ -588,6 +595,11 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
       exitRules,
       riskManagement,
       transcript: transcript.trim() || undefined,
+      // Extraction-specific fields (regime, contract selection, time rules)
+      underlying_ticker: extractionMeta.underlying_ticker || undefined,
+      contract_selection: extractionMeta.contract_selection || undefined,
+      regime_config: extractionMeta.regime_config || undefined,
+      time_rules: extractionMeta.time_rules || undefined,
       status: 'draft',
       version: 'v1.0',
       createdAt: new Date().toISOString(),
@@ -1011,6 +1023,55 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
             <p className="form-hint">No parameters configured. You can add them later in the Strategy Editor.</p>
           )}
         </div>
+
+        {(tradingMethod || parameters.underlying_ticker || parameters.underlying_symbol) && (
+          <div className="review-section">
+            <h4>Instrument</h4>
+            <div className="review-details">
+              {tradingMethod && <div><strong>Trading Method:</strong> <span style={{ textTransform: 'capitalize', padding: '2px 8px', borderRadius: '4px', fontSize: '0.85rem', background: tradingMethod === 'options' ? 'rgba(139,92,246,0.15)' : tradingMethod === 'futures' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: tradingMethod === 'options' ? '#a78bfa' : tradingMethod === 'futures' ? '#fbbf24' : '#6ee7b7' }}>{tradingMethod}</span></div>}
+              {(parameters.underlying_ticker || parameters.underlying_symbol) && <div><strong>Underlying:</strong> {String(parameters.underlying_ticker || parameters.underlying_symbol)}</div>}
+            </div>
+          </div>
+        )}
+
+        {entryRules.length > 0 && (
+          <div className="review-section">
+            <h4>Entry Rules ({entryRules.length})</h4>
+            <div className="review-details">
+              {entryRules.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {exitRules.length > 0 && (
+          <div className="review-section">
+            <h4>Exit Rules ({exitRules.length})</h4>
+            <div className="review-details">
+              {exitRules.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {riskManagement.length > 0 && (
+          <div className="review-section">
+            <h4>Risk Management ({riskManagement.length})</h4>
+            <div className="review-details">
+              {riskManagement.map((rule, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                  {i + 1}. {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="next-steps">
           <h4>What&apos;s Next?</h4>

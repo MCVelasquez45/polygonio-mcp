@@ -10,6 +10,7 @@ const PANELS = [
   { id: 'research', label: 'Market Research', icon: '🔬', phase: 'ideation' },
   { id: 'lab-strategies', label: 'Strategy Pipeline', icon: '📋', phase: 'development' },
   { id: 'lab-editor', label: 'Strategy Editor', icon: '💻', phase: 'development' },
+  { id: 'lab-compiler', label: 'Strategy Compiler', icon: '⚙️', phase: 'development' },
   { id: 'lab-paper', label: 'Paper Trading', icon: '📝', phase: 'paper' },
   { id: 'lab-promotion', label: 'Promotion Gate', icon: '🚀', phase: 'promotion' },
   // Phase 6: Live (Engine Room)

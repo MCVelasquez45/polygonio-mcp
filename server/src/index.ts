@@ -15,6 +15,7 @@ import { labRouter } from './features/lab/lab.routes';
 import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
+import { strategyRouter } from './features/strategy/strategy.routes';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -64,6 +65,7 @@ app.use('/api/chart/health', chartHealthRouter);
 app.use('/api/engine', engineRouter);
 app.use('/api/lab/futures', futuresRouter);
 app.use('/api/engine/futures', futuresRouter);
+app.use('/api/strategy', strategyRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });

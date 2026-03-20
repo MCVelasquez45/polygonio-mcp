@@ -8,20 +8,31 @@ type BacktestConfig = {
   commissionModel: 'fixed' | 'per_share' | 'zero';
   includeAfterHours: boolean;
   benchmark: string;
+  tradingMethod?: 'equities' | 'options' | 'futures';
+  // Futures fields
   contractType?: string;
   rollStrategy?: 'volume' | 'calendar' | 'open_interest';
   marginPerContract?: number;
+  // Options fields
+  underlying?: string;
+  optionType?: 'call' | 'put';
+  strikeSelection?: 'atm' | 'otm_1' | 'otm_2' | 'itm_1' | 'delta_target';
+  deltaTarget?: number;
+  dteMin?: number;
+  dteMax?: number;
 };
 
 type Props = {
   strategyName: string;
   strategyType?: string;
+  tradingMethod?: string;
   onRun: (config: BacktestConfig) => void;
   onCancel: () => void;
 };
 
-export function BacktestConfigModal({ strategyName, strategyType, onRun, onCancel }: Props) {
-  const isFutures = strategyType === 'futures' || strategyType === 'Futures';
+export function BacktestConfigModal({ strategyName, strategyType, tradingMethod, onRun, onCancel }: Props) {
+  const isFutures = tradingMethod === 'futures' || strategyType === 'futures' || strategyType === 'Futures';
+  const isOptions = tradingMethod === 'options' || strategyType === 'options' || strategyType === '0dte' || strategyType === 'spreads';
 
   const [config, setConfig] = useState<BacktestConfig>({
     startDate: '2025-01-01',
@@ -31,10 +42,18 @@ export function BacktestConfigModal({ strategyName, strategyType, onRun, onCance
     commissionModel: 'per_share',
     includeAfterHours: false,
     benchmark: isFutures ? 'ES' : 'SPY',
+    tradingMethod: isFutures ? 'futures' : isOptions ? 'options' : 'equities',
     ...(isFutures ? {
       contractType: 'ES',
       rollStrategy: 'volume' as const,
       marginPerContract: 15000,
+    } : {}),
+    ...(isOptions ? {
+      underlying: 'SPY',
+      optionType: 'call' as const,
+      strikeSelection: 'atm' as const,
+      dteMin: 7,
+      dteMax: 45,
     } : {}),
   });
 
@@ -167,6 +186,82 @@ export function BacktestConfigModal({ strategyName, strategyType, onRun, onCance
             </div>
           )}
 
+          {isOptions && (
+            <div className="futures-config-section">
+              <h4 className="futures-section-title" style={{ color: '#8b5cf6' }}>Options Configuration</h4>
+              <div className="config-grid">
+                <div className="form-group">
+                  <label>Underlying Ticker</label>
+                  <input
+                    type="text"
+                    value={config.underlying ?? 'SPY'}
+                    onChange={(e) => setConfig({ ...config, underlying: e.target.value.toUpperCase() })}
+                    placeholder="SPY"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Option Type</label>
+                  <select
+                    value={config.optionType ?? 'call'}
+                    onChange={(e) => setConfig({ ...config, optionType: e.target.value as 'call' | 'put' })}
+                  >
+                    <option value="call">Call</option>
+                    <option value="put">Put</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Strike Selection</label>
+                  <select
+                    value={config.strikeSelection ?? 'atm'}
+                    onChange={(e) => setConfig({ ...config, strikeSelection: e.target.value as any })}
+                  >
+                    <option value="atm">ATM (At the Money)</option>
+                    <option value="otm_1">OTM +1 Strike</option>
+                    <option value="otm_2">OTM +2 Strikes</option>
+                    <option value="itm_1">ITM -1 Strike</option>
+                    <option value="delta_target">Delta Target</option>
+                  </select>
+                </div>
+
+                {config.strikeSelection === 'delta_target' && (
+                  <div className="form-group">
+                    <label>Delta Target</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.05"
+                      max="0.95"
+                      value={config.deltaTarget ?? 0.30}
+                      onChange={(e) => setConfig({ ...config, deltaTarget: parseFloat(e.target.value) })}
+                    />
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label>Min DTE (Days to Expiry)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={config.dteMin ?? 7}
+                    onChange={(e) => setConfig({ ...config, dteMin: parseInt(e.target.value) })}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Max DTE (Days to Expiry)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={config.dteMax ?? 45}
+                    onChange={(e) => setConfig({ ...config, dteMax: parseInt(e.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="agent-insight">
             <div className="insight-header">
               <span className="icon">🤖</span>
@@ -175,6 +270,8 @@ export function BacktestConfigModal({ strategyName, strategyType, onRun, onCance
             <p>
               {isFutures
                 ? 'For futures strategies, ensure your backtest covers contract roll periods to validate roll logic. Use volume-based rolls for liquid contracts like ES/NQ, and account for margin requirements in position sizing. Include Globex session data to capture overnight moves.'
+                : isOptions
+                ? 'For options strategies, ATM contracts provide the highest delta exposure but cost more in premium. OTM contracts are cheaper but need larger moves to profit. Keep DTE above 7 to avoid extreme theta decay, and ensure your date range covers varying IV environments.'
                 : 'For volatility strategies, I recommend using the \'Variable\' slippage model to account for liquidity during high-vol events. Also, ensure your date range covers at least one major correction (e.g., Aug 2024 or Mar 2020) to validate drawdown resilience.'}
             </p>
           </div>

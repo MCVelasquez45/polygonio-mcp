@@ -137,6 +137,26 @@ TEMPLATES: dict[str, list[dict[str, str]]] = {
             "type": "list",
             "prompt": "List any risk management rules: position sizing, max daily loss, drawdown limits, etc.",
         },
+        {
+            "id": "underlying_ticker",
+            "type": "text",
+            "prompt": "The primary underlying ticker symbol this strategy trades (e.g. SPY, AAPL, QQQ for equities/options or ES, NQ, CL, GC for futures). Infer from context if not explicitly mentioned.",
+        },
+        {
+            "id": "contract_selection",
+            "type": "map",
+            "prompt": "For options strategies: extract contract_type (call or put), strike_selection (atm, otm_1, otm_2, itm_1, or delta_target), delta_target (number if applicable), dte_min (integer minimum days to expiry), dte_max (integer maximum days to expiry), spread_strategy (credit_spread, debit_spread, iron_condor, or single_leg), spread_width (integer points between legs if multi-leg), short_leg_delta (target delta for the short leg if applicable). For futures strategies: extract symbol (ES, NQ, CL, GC), roll_strategy (volume, calendar, or open_interest). Return an empty map for equities strategies. Use snake_case keys only.",
+        },
+        {
+            "id": "regime_config",
+            "type": "map",
+            "prompt": "If the strategy adjusts trade direction based on market regime, risk-on/risk-off conditions, or sector rotation, extract: risk_on_tickers (comma-separated ETF tickers indicating risk-on like XLK,XLF,XLY,SMH,ARKK), risk_off_tickers (comma-separated ETF tickers indicating risk-off like XLP,XLV,XLC,XLU), leader_tickers (comma-separated mega-cap leaders like NVDA,AAPL,MSFT,GOOG,AMZN,META,TSLA), risk_on_action (put_credit_spread or call_credit_spread — what to do when risk-on), risk_off_action (call_credit_spread or put_credit_spread — what to do when risk-off). Return an empty map if the strategy does not use regime-based direction."
+        },
+        {
+            "id": "time_rules",
+            "type": "list",
+            "prompt": "Extract any time-based trading rules as structured items. Each item should have: type (one of: time_window, time_before_close, profit_target_pct, hold_until_close), and relevant values: start_time (HH:MM ET), end_time (HH:MM ET), minutes_before_close (integer), target_pct (number, e.g. 50 for close at 50% max profit). Return an empty list if no time-based rules are mentioned."
+        },
     ],
     "meeting-notes": [
         {

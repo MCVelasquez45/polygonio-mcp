@@ -15,6 +15,8 @@ import {
   PromotionGatePanel
 } from '../lab';
 import { EngineRoomDashboard } from '../engine';
+import { StrategyPipelineShell } from '../../features/lab/StrategyPipelineShell';
+import { useStrategyLabStore } from '../../features/lab/store/useStrategyLabStore';
 import { PerformanceReviewDashboard, ABTestingPanel } from '../monitoring';
 import { type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
@@ -105,6 +107,11 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           entry_rules: entryRules.length > 0 ? entryRules : undefined,
           exit_rules: exitRules.length > 0 ? exitRules : undefined,
           risk_management: riskManagement.length > 0 ? riskManagement : undefined,
+          // Extraction-specific fields
+          underlying_ticker: strategy?.underlying_ticker || undefined,
+          contract_selection: strategy?.contract_selection || undefined,
+          regime_config: strategy?.regime_config || undefined,
+          time_rules: strategy?.time_rules || undefined,
           ...strategyParams
         },
         schedule: 'manual'
@@ -117,9 +124,38 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
       setShowCreationWizard(false);
       setWizardInitialData(null);
       setStrategyListRefreshKey(prev => prev + 1);
-      toast.success('Strategy created in Room A.');
-      if (created?._id || created?.id) {
-        setSelectedStrategyId(String(created._id ?? created.id));
+
+      const createdId = String(created?._id ?? created?.id ?? '');
+      if (createdId) {
+        setSelectedStrategyId(createdId);
+
+        // Auto-compile if we have extraction data
+        const hasExtractionData = strategy?.contract_selection || strategy?.regime_config;
+        if (hasExtractionData) {
+          try {
+            const { compileExtractedStrategy } = await import('../../features/lab/api/strategy');
+            const compileResult = await compileExtractedStrategy({
+              strategyId: createdId,
+              name: strategyName,
+              description: strategyDescription,
+              hypothesis,
+              entry_rules: entryRules,
+              exit_rules: exitRules,
+              risk_management: riskManagement,
+              trading_method: strategy?.tradingMethod ?? 'equities',
+              underlying_ticker: strategy?.underlying_ticker,
+              contract_selection: strategy?.contract_selection,
+              regime_config: strategy?.regime_config,
+              time_rules: strategy?.time_rules,
+            });
+            toast.success(`Strategy created and compiled (${compileResult.version.version})`);
+          } catch (compileErr: any) {
+            console.warn('Auto-compile failed:', compileErr);
+            toast.success('Strategy created. Open editor to compile.');
+          }
+        } else {
+          toast.success('Strategy created in Room A.');
+        }
       }
     } catch (error: any) {
       console.error('Failed to create strategy:', error);
@@ -138,6 +174,26 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     setSelectedStrategyId(strategy.id ?? strategy._id);
     setSelectedStrategy(strategy);
     setActivePanel('lab-editor');
+  };
+
+  const { setDraftInput } = useStrategyLabStore();
+
+  const handleCompileStrategy = async (extractionData: Record<string, unknown>) => {
+    try {
+      const { compileExtractedStrategy } = await import('../../features/lab/api/strategy');
+      const result = await compileExtractedStrategy(extractionData);
+      toast.success(`Compiled: ${result.version.version}`);
+      setStrategyListRefreshKey(prev => prev + 1);
+      // Also set draft for the pipeline shell view
+      const rulesText = [
+        ...(Array.isArray(extractionData.entry_rules) ? extractionData.entry_rules.map((r: string) => `Buy when ${r}`) : []),
+        ...(Array.isArray(extractionData.exit_rules) ? extractionData.exit_rules.map((r: string) => `Exit when ${r}`) : []),
+      ].join('. ');
+      setDraftInput(rulesText);
+      setActivePanel('lab-compiler');
+    } catch (err: any) {
+      toast.error(`Compile failed: ${err?.response?.data?.error ?? err?.message ?? 'Unknown error'}`);
+    }
   };
 
   const handleOpenWizardWithData = (data: any) => {
@@ -219,7 +275,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         selectedStrategy?.parameters?.contract ??
         'ES';
 
-      const backtest = await futuresApi.runFuturesBacktest({
+      const backtest = await futuresApi.runStrategyBacktest({
         strategyId: selectedStrategyId,
         strategyName,
         symbol,
@@ -255,7 +311,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
         selectedStrategy?.parameters?.contract ??
         'ES';
 
-      const backtest = await futuresApi.runFuturesBacktest({
+      const backtest = await futuresApi.runStrategyBacktest({
         strategyId: selectedStrategyId,
         strategyName,
         symbol,
@@ -295,6 +351,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     const labels: Record<string, string> = {
       'lab-strategies': 'Strategy Pipeline',
       'lab-editor': 'Strategy Editor',
+      'lab-compiler': 'Strategy Compiler',
       'lab-backtest-results': 'Backtest Results',
       'lab-paper': 'Paper Trading Monitor',
       'lab-promotion': 'Promotion Gate',
@@ -320,6 +377,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             refreshKey={strategyListRefreshKey}
           />
         );
+      case 'lab-compiler':
+        return <StrategyPipelineShell />;
       case 'lab-editor':
         return (
           <StrategyEditorPanel
@@ -327,6 +386,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             onRunBacktest={handleRunBacktest}
             onSave={() => setStrategyListRefreshKey(prev => prev + 1)}
             onBack={() => setActivePanel('lab-strategies')}
+            onCompile={handleCompileStrategy}
           />
         );
       case 'lab-backtest-results':

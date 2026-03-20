@@ -25,6 +25,9 @@ dependencies = [
   "opentelemetry-instrumentation-fastapi",
   "opentelemetry-exporter-otlp",
   "sift-cli[anthropic] @ git+https://github.com/gitfitbro/sift.git",
+  "pandas>=2.0",
+  "pandas_ta>=0.3.14b",
+  "numpy>=1.24",
 ]
 
 [build-system]
