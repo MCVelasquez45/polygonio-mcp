@@ -101,3 +101,203 @@ export async function getOptionOrders(params?: { status?: string; limit?: number
   const { data } = await http.get<{ orders: OptionOrder[] }>('/api/broker/alpaca/options/orders', { params });
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// Alpaca paper trading (real orders on Alpaca paper account)
+// ---------------------------------------------------------------------------
+
+export type AlpacaPaperSessionState = {
+  lastPrice: number;
+  equity: number;
+  cash: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  dailyPnl: number;
+  positionSide: 'long' | 'short' | 'flat';
+  positionQty: number;
+  positionAvgEntry: number;
+  riskUtilizationPct: number;
+  lastSignal: string;
+  lastSignalReason: string;
+  lastUpdatedAt: string;
+};
+
+export type AlpacaPaperSession = {
+  _id: string;
+  strategyId: string;
+  strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
+  symbol: string;
+  status: 'running' | 'paused' | 'stopped';
+  config: {
+    qty: number;
+    initialCapital: number;
+    maxDailyLoss: number;
+    maxDrawdownPct: number;
+    intervalSeconds: number;
+  };
+  state: AlpacaPaperSessionState;
+  orders: Array<{
+    alpacaOrderId: string;
+    symbol: string;
+    side: 'buy' | 'sell';
+    qty: number;
+    type: string;
+    status: string;
+    filledPrice: number | null;
+    filledAt: string | null;
+    reason: string;
+    createdAt: string;
+  }>;
+  events: Array<{
+    type: string;
+    timestamp: string;
+    payload: Record<string, any>;
+  }>;
+  startedAt: string;
+  endedAt: string | null;
+};
+
+export type StartAlpacaPaperPayload = {
+  strategyId: string;
+  strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
+  symbol: string;
+  qty?: number;
+  initialCapital?: number;
+  maxDailyLoss?: number;
+  maxDrawdownPct?: number;
+  intervalSeconds?: number;
+};
+
+export async function startAlpacaPaperSession(payload: StartAlpacaPaperPayload): Promise<AlpacaPaperSession> {
+  const { data } = await http.post<AlpacaPaperSession>('/api/broker/alpaca/paper/start', payload);
+  return data;
+}
+
+export async function getAlpacaPaperSession(sessionId: string): Promise<AlpacaPaperSession> {
+  const { data } = await http.get<AlpacaPaperSession>(`/api/broker/alpaca/paper/${sessionId}`);
+  return data;
+}
+
+export async function listAlpacaPaperSessions(strategyId?: string): Promise<{ sessions: AlpacaPaperSession[] }> {
+  const { data } = await http.get<{ sessions: AlpacaPaperSession[] }>('/api/broker/alpaca/paper/sessions', {
+    params: strategyId ? { strategyId } : undefined,
+  });
+  return data;
+}
+
+export async function controlAlpacaPaperSession(
+  sessionId: string,
+  action: 'pause' | 'resume' | 'stop',
+): Promise<AlpacaPaperSession> {
+  const { data } = await http.post<AlpacaPaperSession>(`/api/broker/alpaca/paper/${sessionId}/control`, { action });
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Options Paper Trading (0DTE credit spreads via Alpaca)
+// ---------------------------------------------------------------------------
+
+export type OptionsPaperSessionState = {
+  underlyingPrice: number;
+  equity: number;
+  cash: number;
+  dailyPnl: number;
+  realizedPnl: number;
+  riskUtilizationPct: number;
+  lastUpdatedAt: string;
+  phase: 'pre_analysis' | 'analyzing' | 'entry_window' | 'in_trade' | 'monitoring' | 'closing' | 'done';
+};
+
+export type SpreadState = {
+  active: boolean;
+  direction: string;
+  shortLeg: { symbol: string; strike: number; type: string; delta: number; entryBid: number; entryAsk: number; currentBid: number; currentAsk: number };
+  longLeg: { symbol: string; strike: number; type: string; delta: number; entryBid: number; entryAsk: number; currentBid: number; currentAsk: number };
+  entryCredit: number;
+  currentValue: number;
+  unrealizedPnl: number;
+  maxLoss: number;
+  enteredAt: string;
+  alpacaOrderId: string;
+};
+
+export type RegimeState = {
+  current: 'risk_on' | 'risk_off' | 'mixed' | 'unknown';
+  confidence: number;
+  action: string;
+  lastClassifiedAt: string;
+  tickerChanges: Array<{ symbol: string; changePct: number; group: string }>;
+};
+
+export type OptionsPaperSession = {
+  _id: string;
+  strategyId: string;
+  strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
+  underlying: string;
+  status: 'waiting' | 'running' | 'paused' | 'stopped' | 'expired';
+  config: {
+    underlying: string;
+    intervalSeconds: number;
+    qty: number;
+    spreadWidth: number;
+    targetDelta: number;
+    maxDailyLoss: number;
+    profitTargetPct: number;
+    stopLossMultiplier: number;
+    entryWindowStart: string;
+    entryWindowEnd: string;
+    analysisWindowStart: string;
+  };
+  regime: RegimeState;
+  spread: SpreadState;
+  state: OptionsPaperSessionState;
+  orders: Array<{
+    alpacaOrderId: string;
+    type: string;
+    legs: Array<{ symbol: string; side: string; strike: number }>;
+    status: string;
+    credit: number;
+    createdAt: string;
+  }>;
+  events: Array<{ type: string; timestamp: string; payload: Record<string, any> }>;
+  startedAt: string;
+  endedAt: string | null;
+};
+
+export async function startOptionsPaperSession(payload: {
+  strategyId: string;
+  strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
+  qty?: number;
+  intervalSeconds?: number;
+}): Promise<OptionsPaperSession> {
+  const { data } = await http.post<OptionsPaperSession>('/api/broker/alpaca/options-paper/start', payload);
+  return data;
+}
+
+export async function getOptionsPaperSession(sessionId: string): Promise<OptionsPaperSession> {
+  const { data } = await http.get<OptionsPaperSession>(`/api/broker/alpaca/options-paper/${sessionId}`);
+  return data;
+}
+
+export async function listOptionsPaperSessions(strategyId?: string): Promise<{ sessions: OptionsPaperSession[] }> {
+  const { data } = await http.get<{ sessions: OptionsPaperSession[] }>('/api/broker/alpaca/options-paper/sessions', {
+    params: strategyId ? { strategyId } : undefined,
+  });
+  return data;
+}
+
+export async function controlOptionsPaperSession(
+  sessionId: string,
+  action: 'pause' | 'resume' | 'stop',
+): Promise<OptionsPaperSession> {
+  const { data } = await http.post<OptionsPaperSession>(`/api/broker/alpaca/options-paper/${sessionId}/control`, { action });
+  return data;
+}

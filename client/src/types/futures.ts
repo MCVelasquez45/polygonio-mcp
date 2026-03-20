@@ -83,6 +83,8 @@ export type FuturesPaperSession = {
   _id: string;
   strategyId: string;
   strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
   symbol: string;
   status: 'running' | 'paused' | 'stopped' | 'deployed';
   mode: 'lab-paper' | 'engine-paper';

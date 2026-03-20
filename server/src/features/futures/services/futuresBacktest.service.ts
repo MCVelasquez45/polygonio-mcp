@@ -9,10 +9,11 @@ import {
   runStrategyBacktest,
   runStressTest,
   getFuturesBacktest,
+  listBacktestsByStrategy,
 } from './strategyBacktest.service';
 
 export type { StrategyBacktestInput, StressScenario };
 export type FuturesBacktestInput = StrategyBacktestInput;
 
-export { runStrategyBacktest, runStressTest, getFuturesBacktest };
+export { runStrategyBacktest, runStressTest, getFuturesBacktest, listBacktestsByStrategy };
 export const runFuturesBacktest = runStrategyBacktest;

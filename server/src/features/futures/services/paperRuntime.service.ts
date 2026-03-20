@@ -20,6 +20,8 @@ import {
 type StartSessionInput = {
   strategyId: string;
   strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
   symbol: string;
   contracts: number;
   initialCapital: number;
@@ -529,6 +531,8 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
   const session = await FuturesPaperSessionModel.create({
     strategyId: input.strategyId,
     strategyName: input.strategyName,
+    backtestId: input.backtestId || undefined,
+    versionLabel: input.versionLabel || undefined,
     symbol: input.symbol.toUpperCase(),
     status: 'running',
     mode: input.mode ?? 'lab-paper',
@@ -615,6 +619,11 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
 
 export async function getFuturesPaperSession(sessionId: string) {
   return FuturesPaperSessionModel.findById(sessionId).lean();
+}
+
+export async function listFuturesPaperSessions(strategyId?: string) {
+  const filter = strategyId ? { strategyId } : {};
+  return FuturesPaperSessionModel.find(filter).sort({ createdAt: -1 }).limit(20).lean();
 }
 
 export async function controlFuturesPaperSession(

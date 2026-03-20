@@ -61,7 +61,7 @@ export interface StrategyBase extends Document {
 
 export interface LabStrategy extends StrategyBase {
   strategyType: 'quant' | 'screener' | 'zonexi' | 'futures';
-  status: 'development' | 'validated' | 'failed';
+  status: 'development' | 'validated' | 'failed' | 'archived';
 
   // For quant strategies
   modelConfig?: QuantModelConfig;
@@ -93,7 +93,7 @@ const LabStrategySchema = new Schema({
   version: { type: String, default: '1.0.0' },
   ownerId: { type: String, required: true },
   strategyType: { type: String, enum: ['quant', 'screener', 'zonexi', 'futures'], required: true },
-  status: { type: String, enum: ['development', 'validated', 'failed'], default: 'development' },
+  status: { type: String, enum: ['development', 'validated', 'failed', 'archived'], default: 'development' },
 
   // Quant Model Config (optional, required if strategyType = 'quant')
   modelConfig: {

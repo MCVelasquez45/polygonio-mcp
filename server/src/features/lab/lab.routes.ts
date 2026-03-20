@@ -142,13 +142,46 @@ router.patch('/strategy/:id', async (req, res) => {
   }
 });
 
-// Delete a strategy
+// Archive a strategy (soft delete — keeps data, hides from active list)
+router.post('/strategy/:id/archive', async (req, res) => {
+  try {
+    const strategy = await LabStrategyModel.findById(req.params.id);
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+    strategy.status = 'archived';
+    await strategy.save();
+    res.json({ message: 'Strategy archived', id: req.params.id, status: 'archived' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Unarchive a strategy
+router.post('/strategy/:id/unarchive', async (req, res) => {
+  try {
+    const strategy = await LabStrategyModel.findById(req.params.id);
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+    strategy.status = 'development';
+    await strategy.save();
+    res.json({ message: 'Strategy unarchived', id: req.params.id, status: 'development' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a strategy (permanent — also cleans up related sessions)
 router.delete('/strategy/:id', async (req, res) => {
   try {
     const strategy = await LabStrategyModel.findByIdAndDelete(req.params.id);
     if (!strategy) {
       return res.status(404).json({ error: 'Strategy not found' });
     }
+    // Clean up related data
+    const { StrategyVersionModel } = await import('../handoff/models/strategyModel');
+    await StrategyVersionModel.deleteMany({ strategyId: req.params.id });
     res.json({ message: 'Strategy deleted', id: req.params.id });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

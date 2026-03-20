@@ -74,6 +74,8 @@ export interface FuturesBacktest extends Document {
 export interface FuturesPaperSession extends Document {
   strategyId: string;
   strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
   symbol: FuturesSymbol;
   status: 'running' | 'paused' | 'stopped' | 'deployed';
   mode: 'lab-paper' | 'engine-paper';
@@ -264,8 +266,10 @@ const FuturesBacktestSchema = new Schema<FuturesBacktest>(
 
 const FuturesPaperSessionSchema = new Schema<FuturesPaperSession>(
   {
-    strategyId: { type: String, required: true },
+    strategyId: { type: String, required: true, index: true },
     strategyName: { type: String, required: true },
+    backtestId: { type: String, default: null },
+    versionLabel: { type: String, default: null },
     symbol: { type: String, required: true },
     status: { type: String, enum: ['running', 'paused', 'stopped', 'deployed'], default: 'running' },
     mode: { type: String, enum: ['lab-paper', 'engine-paper'], default: 'lab-paper' },

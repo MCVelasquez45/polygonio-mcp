@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Briefcase, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
+import { Briefcase, Gamepad2, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'gamification';
 
 type Props = {
   selectedTicker: string;
@@ -22,6 +22,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'scanner', label: 'Scanner', icon: <ScanSearch className="h-4 w-4" /> },
   { id: 'portfolio', label: 'Portfolio', icon: <Briefcase className="h-4 w-4" /> },
   { id: 'dashboard', label: 'The Lab', icon: <LayoutDashboard className="h-4 w-4" /> },
+  { id: 'gamification', label: 'Learn', icon: <Gamepad2 className="h-4 w-4" /> },
 ];
 
 export function TradingHeader({

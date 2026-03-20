@@ -44,7 +44,13 @@ function mapStrategyStatus(raw: string): Strategy['status'] {
   return 'draft';
 }
 
-function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () => void }) {
+function StrategyCard({ strategy, onClick, onArchive, onDelete, onUnarchive }: {
+  strategy: Strategy;
+  onClick?: () => void;
+  onArchive?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onUnarchive?: (id: string) => void;
+}) {
   const config = STATUS_CONFIG[strategy.status];
 
   return (
@@ -54,6 +60,20 @@ function StrategyCard({ strategy, onClick }: { strategy: Strategy; onClick?: () 
         <div className="strategy-title">
           <h4>{strategy.name}</h4>
           <span className="strategy-version">{strategy.version}</span>
+        </div>
+        <div className="strategy-actions" onClick={e => e.stopPropagation()}>
+          {strategy.status === 'archived' ? (
+            <button className="action-btn action-unarchive" title="Unarchive" onClick={() => onUnarchive?.(strategy.id)}>
+              &#8634;
+            </button>
+          ) : (
+            <button className="action-btn action-archive" title="Archive" onClick={() => onArchive?.(strategy.id)}>
+              &#128230;
+            </button>
+          )}
+          <button className="action-btn action-delete" title="Delete permanently" onClick={() => onDelete?.(strategy.id)}>
+            &#128465;
+          </button>
         </div>
       </div>
 
@@ -108,6 +128,35 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'pipeline' | 'list'>('pipeline');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [internalRefresh, setInternalRefresh] = useState(0);
+
+  const handleArchive = async (id: string) => {
+    try {
+      await apiClient.post(`/api/lab/strategy/${id}/archive`);
+      setInternalRefresh(prev => prev + 1);
+    } catch (err: any) {
+      alert(`Failed to archive: ${err?.message ?? 'Unknown error'}`);
+    }
+  };
+
+  const handleUnarchive = async (id: string) => {
+    try {
+      await apiClient.post(`/api/lab/strategy/${id}/unarchive`);
+      setInternalRefresh(prev => prev + 1);
+    } catch (err: any) {
+      alert(`Failed to unarchive: ${err?.message ?? 'Unknown error'}`);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Permanently delete this strategy and all its versions? This cannot be undone.')) return;
+    try {
+      await apiClient.delete(`/api/lab/strategy/${id}`);
+      setInternalRefresh(prev => prev + 1);
+    } catch (err: any) {
+      alert(`Failed to delete: ${err?.message ?? 'Unknown error'}`);
+    }
+  };
 
   useEffect(() => {
     const fetchStrategies = async () => {
@@ -143,7 +192,7 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 
     };
 
     fetchStrategies();
-  }, [refreshKey]);
+  }, [refreshKey, internalRefresh]);
 
   const pipelineStages = ['draft', 'backtesting', 'paper_trading', 'live'];
 
@@ -214,6 +263,9 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 
                       key={strategy.id}
                       strategy={strategy}
                       onClick={() => onSelectStrategy?.(strategy)}
+                      onArchive={handleArchive}
+                      onDelete={handleDelete}
+                      onUnarchive={handleUnarchive}
                     />
                   ))}
                   {stageStrategies.length === 0 && (
@@ -245,6 +297,9 @@ export function StrategyListPanel({ onSelectStrategy, onCreateNew, refreshKey = 
                 key={strategy.id}
                 strategy={strategy}
                 onClick={() => onSelectStrategy?.(strategy)}
+                onArchive={handleArchive}
+                onDelete={handleDelete}
+                onUnarchive={handleUnarchive}
               />
             ))}
           </div>
@@ -429,6 +484,48 @@ const styles = `
 
   .strategy-icon {
     font-size: 1.25rem;
+  }
+
+  .strategy-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .strategy-card:hover .strategy-actions {
+    opacity: 1;
+  }
+
+  .action-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+    line-height: 1;
+  }
+
+  .action-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .action-delete:hover {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .action-archive:hover {
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.3);
+  }
+
+  .action-unarchive:hover {
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.3);
   }
 
   .strategy-title {

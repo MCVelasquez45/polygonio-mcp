@@ -1113,3 +1113,10 @@ export async function runStrategyBacktest(input: StrategyBacktestInput) {
 export async function getFuturesBacktest(backtestId: string) {
   return FuturesBacktestModel.findById(backtestId).lean();
 }
+
+export async function listBacktestsByStrategy(strategyId: string) {
+  return FuturesBacktestModel.find({ strategyId })
+    .sort({ createdAt: -1 })
+    .select('_id strategyId strategyName symbol provider config.startDate config.endDate config.initialCapital metrics diagnostics.barsLoaded createdAt')
+    .lean();
+}

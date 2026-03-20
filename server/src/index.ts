@@ -26,6 +26,8 @@ import {
   unsubscribeAggregateSymbol
 } from './features/market/services/liveFeed';
 import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
+import { initAlpacaPaperRuntime } from './features/broker/services/alpacaPaperRuntime.service';
+import { initOptionsPaperRuntime } from './features/broker/services/optionsPaperRuntime.service';
 
 const app = express();
 app.use(cors());
@@ -84,6 +86,8 @@ app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 initFuturesRuntime(io);
+initAlpacaPaperRuntime(io);
+initOptionsPaperRuntime(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);

@@ -41,7 +41,12 @@
       "Bash(ps:*)",
       "Bash(npx ts-node -e \":*)",
       "Bash(npm run:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(mongosh --eval \"db.runCommand\\({ping:1}\\)\")",
+      "Bash(node -e \"require\\(''dotenv''\\).config\\(\\); console.log\\(process.env.MONGO_URI || ''\\(not set\\)''\\)\")",
+      "Bash(node -e \"require\\(''''dotenv''''\\).config\\(\\); console.log\\(''''MONGO_URI:'''', process.env.MONGO_URI\\); const {resolveMongoConfig} = require\\(''''./dist/index.js''''\\); \")",
+      "Bash(node -e \":*)",
+      "Bash(find /home/sirrele/projects/polygonio-mcp-1 -type f \\\\\\(-name *.env* -o -name .env \\\\\\))"
     ]
   }
 }

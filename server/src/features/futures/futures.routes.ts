@@ -1,13 +1,14 @@
 import express from 'express';
 import { LabStrategyModel, StrategyVersionModel } from '../handoff/models/strategyModel';
 import { getContractSpec, listActiveContractSpecs } from './services/contractSpecs.service';
-import { getFuturesBacktest, runFuturesBacktest, runStressTest } from './services/futuresBacktest.service';
+import { getFuturesBacktest, listBacktestsByStrategy, runFuturesBacktest, runStressTest } from './services/futuresBacktest.service';
 import {
   controlFuturesPaperSession,
   deployFuturesSessionToEngine,
   generateFuturesPromotionReport,
   getFuturesEngineStatus,
   getFuturesPaperSession,
+  listFuturesPaperSessions,
   startFuturesPaperSession
 } from './services/paperRuntime.service';
 
@@ -124,6 +125,15 @@ router.post('/backtest', async (req, res) => {
   }
 });
 
+router.get('/backtests/strategy/:strategyId', async (req, res) => {
+  try {
+    const backtests = await listBacktestsByStrategy(req.params.strategyId);
+    res.json(backtests);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? 'Unable to list backtests' });
+  }
+});
+
 router.get('/backtest/:id', async (req, res) => {
   try {
     const backtest = await getFuturesBacktest(req.params.id);
@@ -233,9 +243,14 @@ router.post('/paper/start', async (req, res) => {
       console.warn('[FUTURES] Could not load strategy rules for paper session:', (err as any)?.message);
     }
 
+    const backtestId = body.backtestId ? String(body.backtestId).trim() : undefined;
+    const versionLabel = body.versionLabel ? String(body.versionLabel).trim() : undefined;
+
     const session = await startFuturesPaperSession({
       strategyId,
       strategyName,
+      backtestId,
+      versionLabel,
       symbol,
       contracts,
       initialCapital,
@@ -251,6 +266,16 @@ router.post('/paper/start', async (req, res) => {
   } catch (error: any) {
     console.error('[FUTURES] Paper start failed:', error);
     res.status(500).json({ error: error?.message ?? 'Unable to start futures paper session' });
+  }
+});
+
+router.get('/paper/sessions', async (req, res) => {
+  try {
+    const strategyId = typeof req.query.strategyId === 'string' ? req.query.strategyId : undefined;
+    const sessions = await listFuturesPaperSessions(strategyId);
+    res.json({ sessions });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? 'Unable to list futures paper sessions' });
   }
 });
 

@@ -11,7 +11,9 @@ import {
   StrategyEditorPanel,
   BacktestConfigModal,
   BacktestResultsPanel,
+  BacktestHistoryPanel,
   PaperTradingDashboard,
+  PaperSessionHistoryPanel,
   PromotionGatePanel
 } from '../lab';
 import { EngineRoomDashboard } from '../engine';
@@ -22,6 +24,8 @@ import { toast } from 'sonner';
 import { getApiBaseUrl } from '../../api/http';
 import { apiClient, futuresApi } from '../../api';
 import type { AiSuggestion } from '../../types/futures';
+import { AlpacaPaperTradingDashboard } from '../lab/AlpacaPaperTradingDashboard';
+import { OptionsPaperDashboard } from '../lab/OptionsPaperDashboard';
 
 type Props = {
   apiBase?: string;
@@ -38,6 +42,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   const [selectedStrategy, setSelectedStrategy] = useState<any>(null);
   const [backtestResultsId, setBacktestResultsId] = useState<string | null>(null);
   const [paperSessionId, setPaperSessionId] = useState<string | null>(null);
+  const [alpacaPaperSessionId, setAlpacaPaperSessionId] = useState<string | null>(null);
+  const [alpacaSessionType, setAlpacaSessionType] = useState<'equity' | 'options'>('equity');
   const [backgroundExtraction, setBackgroundExtraction] = useState<{
     data?: any;
     status: 'idle' | 'processing' | 'completed' | 'error';
@@ -171,7 +177,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   const handleSelectStrategy = (strategy: any) => {
     setSelectedStrategyId(strategy.id ?? strategy._id);
     setSelectedStrategy(strategy);
-    setActivePanel('lab-editor');
+    setActivePanel('lab-backtest-history');
   };
 
   const handleCompileNotify = () => {
@@ -308,21 +314,8 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
       });
       setBacktestResultsId(backtest._id);
 
-      const paper = await futuresApi.startFuturesPaperSession({
-        strategyId: selectedStrategyId,
-        strategyName,
-        symbol,
-        contracts: Number(config.position_size_contracts ?? 1),
-        initialCapital: Number(config.initialCapital ?? 100000),
-        maxDailyLoss: 5000,
-        maxDrawdown: 0.08,
-        slippageBps: config.slippageModel === 'zero' ? 0 : config.slippageModel === 'fixed' ? 1 : 2.5,
-        feePerContract: config.commissionModel === 'zero' ? 0 : config.commissionModel === 'fixed' ? 1 : 2.5
-      });
-      setPaperSessionId(paper._id);
-
       setActivePanel('lab-backtest-results');
-      toast.success('Futures backtest completed and paper session started.');
+      toast.success('Backtest completed — deploy to paper from results when ready.');
     } catch (error: any) {
       toast.error(`Backtest failed: ${error?.message ?? 'Unknown error'}`);
       setShowBacktestConfig(false);
@@ -333,7 +326,9 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
     const labels: Record<string, string> = {
       'lab-strategies': 'Strategy Pipeline',
       'lab-editor': 'Strategy Editor',
+      'lab-backtest-history': 'Backtest History',
       'lab-backtest-results': 'Backtest Results',
+      'lab-paper-history': 'Paper Sessions',
       'lab-paper': 'Paper Trading Monitor',
       'lab-promotion': 'Promotion Gate',
       'live': 'Engine Room',
@@ -358,13 +353,28 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             refreshKey={strategyListRefreshKey}
           />
         );
+      case 'lab-backtest-history':
+        return selectedStrategyId ? (
+          <BacktestHistoryPanel
+            strategyId={selectedStrategyId}
+            strategyName={selectedStrategy?.name}
+            onSelectBacktest={(backtestId) => {
+              setBacktestResultsId(backtestId);
+              setActivePanel('lab-backtest-results');
+            }}
+            onRunNew={handleRunBacktest}
+            onBack={() => setActivePanel('lab-strategies')}
+            onEditStrategy={() => setActivePanel('lab-editor')}
+            onViewPaperSessions={() => setActivePanel('lab-paper-history')}
+          />
+        ) : null;
       case 'lab-editor':
         return (
           <StrategyEditorPanel
             strategyId={selectedStrategyId || undefined}
             onRunBacktest={handleRunBacktest}
             onSave={() => setStrategyListRefreshKey(prev => prev + 1)}
-            onBack={() => setActivePanel('lab-strategies')}
+            onBack={() => setActivePanel('lab-backtest-history')}
             onCompile={handleCompileNotify}
           />
         );
@@ -373,14 +383,54 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           <BacktestResultsPanel
             backtestId={backtestResultsId || undefined}
             strategyId={selectedStrategyId || undefined}
-            onDeployToPaper={() => setActivePanel('lab-paper')}
-            onClose={() => setActivePanel('lab-editor')}
+            onDeployToPaper={(sessionId, sessionType) => {
+              setAlpacaPaperSessionId(sessionId);
+              setAlpacaSessionType(sessionType);
+              setActivePanel('lab-paper');
+            }}
+            onClose={() => setActivePanel(selectedStrategyId ? 'lab-backtest-history' : 'lab-strategies')}
             onApplySuggestions={handleApplySuggestions}
             onIterateAndRerun={handleIterateAndRerun}
           />
         );
+      case 'lab-paper-history':
+        return selectedStrategyId ? (
+          <PaperSessionHistoryPanel
+            strategyId={selectedStrategyId}
+            strategyName={selectedStrategy?.name}
+            onSelectSession={(sessionId, kind) => {
+              if (kind === 'futures') {
+                setPaperSessionId(sessionId);
+                setAlpacaPaperSessionId(null);
+                setAlpacaSessionType('equity');
+              } else if (kind === 'options') {
+                setAlpacaPaperSessionId(sessionId);
+                setAlpacaSessionType('options');
+              } else {
+                setAlpacaPaperSessionId(sessionId);
+                setAlpacaSessionType('equity');
+              }
+              setActivePanel('lab-paper');
+            }}
+            onBack={() => setActivePanel('lab-backtest-history')}
+          />
+        ) : null;
       case 'lab-paper':
-        return (
+        return alpacaPaperSessionId && alpacaSessionType === 'options' ? (
+          <OptionsPaperDashboard
+            sessionId={alpacaPaperSessionId}
+            strategyId={selectedStrategyId || undefined}
+            strategyName={selectedStrategy?.name}
+            onBack={() => setActivePanel(selectedStrategyId ? 'lab-paper-history' : 'lab-backtest-results')}
+          />
+        ) : alpacaPaperSessionId ? (
+          <AlpacaPaperTradingDashboard
+            sessionId={alpacaPaperSessionId}
+            strategyId={selectedStrategyId || undefined}
+            strategyName={selectedStrategy?.name}
+            onBack={() => setActivePanel(selectedStrategyId ? 'lab-paper-history' : 'lab-backtest-results')}
+          />
+        ) : (
           <PaperTradingDashboard
             sessionId={paperSessionId || undefined}
             strategyId={selectedStrategyId || undefined}

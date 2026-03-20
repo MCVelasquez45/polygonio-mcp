@@ -28,9 +28,20 @@ export async function getFuturesBacktest(backtestId: string): Promise<FuturesBac
   return data;
 }
 
+export type BacktestSummary = Pick<FuturesBacktestResult, '_id' | 'strategyId' | 'strategyName' | 'symbol' | 'provider' | 'metrics' | 'createdAt'> & {
+  config: Pick<FuturesBacktestResult['config'], 'startDate' | 'endDate' | 'initialCapital'>;
+};
+
+export async function listStrategyBacktests(strategyId: string): Promise<BacktestSummary[]> {
+  const { data } = await http.get<BacktestSummary[]>(`/api/lab/futures/backtests/strategy/${strategyId}`);
+  return data;
+}
+
 export async function startFuturesPaperSession(payload: {
   strategyId: string;
   strategyName: string;
+  backtestId?: string;
+  versionLabel?: string;
   symbol: string;
   contracts: number;
   initialCapital: number;
@@ -45,6 +56,13 @@ export async function startFuturesPaperSession(payload: {
 
 export async function getFuturesPaperSession(sessionId: string): Promise<FuturesPaperSession> {
   const { data } = await http.get<FuturesPaperSession>(`/api/lab/futures/paper/${sessionId}`);
+  return data;
+}
+
+export async function listFuturesPaperSessions(strategyId?: string): Promise<{ sessions: FuturesPaperSession[] }> {
+  const { data } = await http.get<{ sessions: FuturesPaperSession[] }>('/api/lab/futures/paper/sessions', {
+    params: strategyId ? { strategyId } : undefined,
+  });
   return data;
 }
 

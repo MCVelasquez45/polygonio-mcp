@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, LineStyle, LineSeries } from 'lightweight-charts';
-import { apiClient, futuresApi } from '../../api';
+import { apiClient, futuresApi, alpacaApi } from '../../api';
 import type { FuturesBacktestResult, AiSuggestion, StrategyVersion, StressTestScenarioResult } from '../../types/futures';
 import { buildBacktestChartSeries } from './backtestChartData';
 
@@ -16,7 +16,7 @@ type Metrics = {
 type Props = {
   backtestId?: string;
   strategyId?: string;
-  onDeployToPaper?: () => void;
+  onDeployToPaper?: (sessionId: string, sessionType: 'equity' | 'options') => void;
   onClose?: () => void;
   onApplySuggestions?: (suggestions: AiSuggestion[]) => void;
   onIterateAndRerun?: (suggestions: AiSuggestion[]) => void;
@@ -37,6 +37,30 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
   const [isStressTesting, setIsStressTesting] = useState(false);
   const [compareVersionId, setCompareVersionId] = useState<string | null>(null);
   const [isReverting, setIsReverting] = useState(false);
+  const [showDeployModal, setShowDeployModal] = useState(false);
+  const [deploySymbol, setDeploySymbol] = useState('SPY');
+  const [deployQty, setDeployQty] = useState(1);
+  const [deployInterval, setDeployInterval] = useState(60);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [isOptionsStrategy, setIsOptionsStrategy] = useState(false);
+  const [strategyTradingMethod, setStrategyTradingMethod] = useState<string>('');
+
+  // Detect if this is an options strategy
+  useEffect(() => {
+    const sid = strategyId ?? backtest?.strategyId;
+    if (!sid) return;
+    let cancelled = false;
+    apiClient.get(`/api/lab/strategy/${sid}`)
+      .then(res => {
+        if (cancelled) return;
+        const params = res.data?.screenerConfig?.params ?? {};
+        const method = params.trading_method ?? '';
+        setStrategyTradingMethod(method);
+        setIsOptionsStrategy(method === 'options');
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [strategyId, backtest?.strategyId]);
   const [metrics, setMetrics] = useState<Metrics>({
     totalReturn: 48.2,
     sharpeRatio: 1.42,
@@ -243,6 +267,49 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
     }
   };
 
+  const handleDeployToAlpacaPaper = async () => {
+    const sid = strategyId ?? backtest?.strategyId;
+    if (!sid) return;
+    setIsDeploying(true);
+
+    // Find the version label linked to this backtest
+    const btId = backtestId ?? backtest?._id;
+    const matchedVersion = versions.find(v => v.backtestId === btId);
+    const versionLabel = matchedVersion?.versionLabel ?? undefined;
+
+    try {
+      if (isOptionsStrategy) {
+        const session = await alpacaApi.startOptionsPaperSession({
+          strategyId: sid,
+          strategyName: backtest?.strategyName ?? 'Strategy',
+          backtestId: btId,
+          versionLabel,
+          qty: deployQty,
+          intervalSeconds: deployInterval,
+        });
+        setShowDeployModal(false);
+        onDeployToPaper?.(session._id, 'options');
+      } else {
+        const session = await alpacaApi.startAlpacaPaperSession({
+          strategyId: sid,
+          strategyName: backtest?.strategyName ?? 'Strategy',
+          backtestId: btId,
+          versionLabel,
+          symbol: deploySymbol.toUpperCase(),
+          qty: deployQty,
+          intervalSeconds: deployInterval,
+        });
+        setShowDeployModal(false);
+        onDeployToPaper?.(session._id, 'equity');
+      }
+    } catch (error: any) {
+      console.error('Deploy to paper error:', error);
+      alert(`Failed to start Alpaca paper trading: ${error?.message ?? 'Unknown error'}`);
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
   return (
     <div className="backtest-results-panel">
       <div className="panel-header">
@@ -259,7 +326,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
         </div>
         <div className="header-actions">
           <button className="btn-secondary" onClick={onClose}>Close</button>
-          <button className="btn-primary" onClick={onDeployToPaper}>Deploy to Paper</button>
+          <button className="btn-primary" onClick={() => setShowDeployModal(true)}>Deploy to Paper</button>
         </div>
       </div>
 
@@ -716,6 +783,61 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {showDeployModal && (
+        <div className="deploy-modal-overlay" onClick={() => !isDeploying && setShowDeployModal(false)}>
+          <div className="deploy-modal" onClick={e => e.stopPropagation()}>
+            <h3>{isOptionsStrategy ? 'Deploy Options Strategy to Alpaca Paper' : 'Deploy to Alpaca Paper Trading'}</h3>
+            <p className="deploy-modal-desc">
+              {isOptionsStrategy
+                ? 'This will start a live 0DTE credit spread paper trading session. The system will classify market regime using sector ETFs, select strikes near 20 delta, and submit multi-leg orders to Alpaca paper.'
+                : 'This will start a live paper trading session on your Alpaca paper account. Strategy signals will be evaluated against real market data and real orders will be submitted.'}
+            </p>
+            {isOptionsStrategy && (
+              <div className="deploy-options-badge">OPTIONS STRATEGY DETECTED — Using regime-based credit spread execution</div>
+            )}
+            <div className="deploy-form">
+              {!isOptionsStrategy && (
+                <label>
+                  <span>Symbol (equity)</span>
+                  <input
+                    type="text"
+                    value={deploySymbol}
+                    onChange={e => setDeploySymbol(e.target.value.toUpperCase())}
+                    placeholder="SPY, QQQ, AAPL..."
+                  />
+                </label>
+              )}
+              <label>
+                <span>{isOptionsStrategy ? 'Number of spreads' : 'Shares per trade'}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={deployQty}
+                  onChange={e => setDeployQty(Math.max(1, Number(e.target.value)))}
+                />
+              </label>
+              <label>
+                <span>Check interval (seconds)</span>
+                <input
+                  type="number"
+                  min={10}
+                  value={deployInterval}
+                  onChange={e => setDeployInterval(Math.max(10, Number(e.target.value)))}
+                />
+              </label>
+            </div>
+            <div className="deploy-modal-actions">
+              <button className="btn-secondary" onClick={() => setShowDeployModal(false)} disabled={isDeploying}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleDeployToAlpacaPaper} disabled={isDeploying || (!isOptionsStrategy && !deploySymbol)}>
+                {isDeploying ? 'Starting...' : isOptionsStrategy ? 'Start Options Paper Trading' : 'Start Paper Trading'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1374,6 +1496,90 @@ const styles = `
   .diff-removed { color: #ef4444; font-weight: 500; text-decoration: line-through; }
   .diff-old { color: #6b7280; }
   .diff-new { color: #10b981; font-weight: 500; }
+
+  /* Deploy modal */
+  .deploy-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .deploy-modal {
+    background: #1a1a2e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.5rem;
+    width: 420px;
+    max-width: 90vw;
+  }
+
+  .deploy-modal h3 {
+    margin: 0 0 0.5rem;
+    color: #e5e7eb;
+    font-size: 1.1rem;
+  }
+
+  .deploy-modal-desc {
+    color: #9ca3af;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin-bottom: 1rem;
+  }
+
+  .deploy-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .deploy-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .deploy-form label span {
+    color: #9ca3af;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .deploy-form input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #e5e7eb;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .deploy-form input:focus {
+    outline: none;
+    border-color: #10b981;
+  }
+
+  .deploy-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+  }
+
+  .deploy-options-badge {
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+  }
 `;
 
 export default BacktestResultsPanel;

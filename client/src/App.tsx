@@ -12,6 +12,7 @@ import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { ChatDock } from './components/chat/ChatDock';
 import { Dashboard } from './components/dashboard';
+import { GamificationVision } from './components/gamification/GamificationVision';
 import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
@@ -333,7 +334,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'gamification';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -2876,13 +2877,15 @@ function App() {
 
         <aside
           className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-            } ${view === 'dashboard' ? 'lg:w-0 lg:overflow-hidden lg:-translate-x-full' : 'lg:w-72'}`}
+            } ${view === 'dashboard' || view === 'gamification' ? 'lg:w-0 lg:overflow-hidden lg:-translate-x-full' : 'lg:w-72'}`}
         >
           <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
 
         <main className="flex-1 overflow-y-auto">
-          {view === 'dashboard' ? (
+          {view === 'gamification' ? (
+            <GamificationVision />
+          ) : view === 'dashboard' ? (
             <Dashboard
               socket={socketRef.current}
               onTickerSelect={(ticker) => {
