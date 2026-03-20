@@ -1,0 +1,345 @@
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { chatApi } from '../../api';
+import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
+import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
+import { PromptTemplates, type PromptTemplate } from './PromptTemplates';
+
+export type ChatBotProps = {
+  sessionId: string;
+  conversationTitle: string;
+  initialMessages: ChatMessage[];
+  selectedTicker: string;
+  context?: ChatContext;
+  onAssistantReply?: (reply: string) => void;
+  onRequestNewChat: () => void;
+  onMessagesChange: (messages: ChatMessage[]) => void;
+  onConversationUpdate: (meta: ConversationPayload) => void;
+};
+
+export function ChatBot({
+  sessionId,
+  conversationTitle,
+  initialMessages,
+  selectedTicker,
+  context,
+  onAssistantReply,
+  onRequestNewChat,
+  onMessagesChange,
+  onConversationUpdate,
+}: ChatBotProps) {
+  const promptTemplates: PromptTemplate[] = [
+    {
+      id: 'chart-read',
+      label: 'Analyze this chart',
+      prompt: 'Explain what is happening on this chart and call out any risks or trend shifts.',
+      description: 'Quick technical read for the active chart and timeframe.',
+    },
+    {
+      id: 'option-risk',
+      label: 'Option risk review',
+      prompt: 'Review the risk/reward for the selected option contract. Highlight IV, greeks, and key risk.',
+      description: 'Summarize risk/reward on the selected contract.',
+    },
+    {
+      id: 'why-move',
+      label: 'Why did it move?',
+      prompt: 'Why is this ticker moving today? Provide likely catalysts and key levels.',
+      description: 'Check news, momentum, and levels for the active ticker.',
+    },
+    {
+      id: 'daily-recap',
+      label: 'Daily recap',
+      prompt: 'Give me a concise daily recap for this ticker with trend, momentum, and notable events.',
+      description: 'Short daily summary for the active ticker.',
+    },
+    {
+      id: 'capitol-activity',
+      label: 'Congressional activity',
+      prompt: 'Summarize recent congressional trading activity relevant to this ticker and any notable patterns.',
+      description: 'Pulls recent Capitol Trades activity and highlights relevance.',
+    },
+    {
+      id: 'fed-move',
+      label: 'Fed movement',
+      prompt: 'Summarize the latest Fed movement and how it may affect this ticker or sector.',
+      description: 'Quick macro read tied to the active symbol.',
+    },
+  ];
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]
+  );
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [reportStatus, setReportStatus] = useState<
+    Record<string, { state: 'idle' | 'saving' | 'saved' | 'error'; message?: string }>
+  >({});
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const messagesChangeRef = useRef(onMessagesChange);
+
+  useEffect(() => {
+    messagesChangeRef.current = onMessagesChange;
+  }, [onMessagesChange]);
+
+  useEffect(() => {
+    setMessages(initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]);
+    setDraft('');
+    setReportStatus({});
+  }, [sessionId, initialMessages]);
+
+  useEffect(() => {
+    messagesChangeRef.current?.(messages);
+  }, [messages]);
+
+  useEffect(() => {
+    if (!timelineRef.current) return;
+    timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, loading]);
+
+  async function sendUserMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: trimmed,
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setLoading(true);
+
+    try {
+      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context });
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data?.reply ?? '(no reply)',
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+      onAssistantReply?.(assistantMessage.content);
+      if (data?.conversation) {
+        onConversationUpdate(data.conversation);
+      }
+    } catch (error: any) {
+      const serverMessage = typeof error?.response?.data?.error === 'string' ? error.response.data.error : null;
+      const isMaxTurnError = serverMessage?.includes('Max turns');
+      const fallback =
+        serverMessage ?? 'Chat service unavailable. Ensure the FastAPI agent is running and try again.';
+      if (isMaxTurnError) {
+        onRequestNewChat();
+        setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+        setDraft('');
+      }
+      setMessages(prev => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: isMaxTurnError
+            ? 'Session limit reached. I started a new thread; please resend your last question.'
+            : fallback,
+          timestamp: Date.now(),
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!draft.trim() || loading) return;
+    const next = draft;
+    setDraft('');
+    await sendUserMessage(next);
+  }
+
+  async function handleSaveReport(message: ChatMessage) {
+    if (reportStatus[message.id]?.state === 'saving') return;
+    setReportStatus(prev => ({ ...prev, [message.id]: { state: 'saving' } }));
+    try {
+      const title = `${selectedTicker} ${conversationTitle}`.trim();
+      const response = await chatApi.saveChatReport({
+        content: message.content,
+        title,
+        sessionId,
+        context,
+      });
+      const resultText = response?.result ?? 'Report saved';
+      setReportStatus(prev => ({
+        ...prev,
+        [message.id]: { state: 'saved', message: extractReportName(resultText) ?? resultText },
+      }));
+    } catch (error: any) {
+      const fallback = error?.response?.data?.error ?? error?.message ?? 'Failed to save report';
+      setReportStatus(prev => ({ ...prev, [message.id]: { state: 'error', message: fallback } }));
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="flex flex-col gap-2 border-b border-gray-900 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">GPT-5 Desk</p>
+            <p className="text-lg font-semibold">{conversationTitle}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300">Live</span>
+            <button
+              type="button"
+              className="text-xs px-3 py-1 rounded-full border border-gray-800 text-gray-300 hover:text-white"
+              onClick={() => {
+                onRequestNewChat();
+                setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+                setDraft('');
+              }}
+              disabled={loading}
+            >
+              New chat
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">
+          Context: watching <span className="text-gray-100 font-medium">{selectedTicker}</span>. Reference tickers, expirations, or
+          constraints when you ask a question.
+        </p>
+      </header>
+
+      <div ref={timelineRef} className="flex-1 overflow-y-auto space-y-4 p-4">
+        {messages.map(message => (
+          <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse text-right' : 'text-left'}`}>
+            <div
+              className={`h-9 w-9 rounded-2xl flex items-center justify-center text-sm font-semibold ${
+                message.role === 'assistant'
+                  ? 'bg-emerald-500/15 text-emerald-200'
+                  : 'bg-gray-800 text-gray-200'
+              }`}
+            >
+              {message.role === 'assistant' ? 'AI' : 'You'}
+            </div>
+            <div
+              className={`flex-1 rounded-2xl border px-4 py-3 text-sm leading-relaxed ${
+                message.role === 'assistant'
+                  ? 'border-gray-900 bg-gray-950 text-gray-100'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-white'
+              }`}
+            >
+              {message.role === 'assistant' ? (
+                <div className="space-y-2">
+                  <div>{renderStructuredReply(message.content)}</div>
+                  <div className="flex items-center gap-2 text-[0.65rem] text-gray-400">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveReport(message)}
+                      className="rounded-full border border-gray-800/80 px-2 py-1 text-gray-300 hover:text-white disabled:opacity-40"
+                      disabled={reportStatus[message.id]?.state === 'saving'}
+                    >
+                      {reportStatus[message.id]?.state === 'saving' ? 'Saving…' : 'Save report'}
+                    </button>
+                    {reportStatus[message.id]?.state === 'saved' && reportStatus[message.id]?.message && (
+                      <span className="text-emerald-300">Saved: {reportStatus[message.id]?.message}</span>
+                    )}
+                    {reportStatus[message.id]?.state === 'error' && reportStatus[message.id]?.message && (
+                      <span className="text-red-300">{reportStatus[message.id]?.message}</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p>{message.content}</p>
+              )}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+            Thinking…
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={handleSubmit} className="border-t border-gray-900 p-4 flex flex-col gap-3">
+        <PromptTemplates
+          templates={promptTemplates}
+          disabled={loading}
+          onSelect={prompt => {
+            setDraft('');
+            void sendUserMessage(prompt);
+          }}
+        />
+        <textarea
+          rows={3}
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+          placeholder={`Ask the desk about ${selectedTicker} or any risk scenario.`}
+          className="w-full rounded-2xl border border-gray-800 bg-gray-950 p-3 text-sm text-gray-100 focus:border-emerald-500 focus:outline-none"
+        />
+        <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+          <span>{loading ? 'Streaming response…' : 'Agent taps Massive + Polygon data per turn.'}</span>
+          <button
+            type="submit"
+            disabled={loading || !draft.trim()}
+            className="px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold disabled:bg-gray-800"
+          >
+            {loading ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function renderStructuredReply(text: string): ReactNode {
+  const lines = text.split('\n');
+  const elements: ReactNode[] = [];
+  let listBuffer: string[] = [];
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    elements.push(
+      <ul key={`list-${elements.length}`} className="list-disc space-y-1 pl-5 text-left">
+        {listBuffer.map((item, idx) => (
+          <li key={idx}>{item}</li>
+        ))}
+      </ul>
+    );
+    listBuffer = [];
+  };
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushList();
+      return;
+    }
+    if (/^[-•]/.test(trimmed)) {
+      listBuffer.push(trimmed.replace(/^[-•]+\s*/, ''));
+      return;
+    }
+    flushList();
+    const boldMatch = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
+    if (boldMatch) {
+      elements.push(
+        <p key={`bold-${elements.length}`}>
+          <strong>{boldMatch[1]}:</strong> {boldMatch[2]}
+        </p>
+      );
+    } else {
+      elements.push(<p key={`p-${elements.length}`}>{trimmed}</p>);
+    }
+  });
+
+  flushList();
+  return elements;
+}
+
+function extractReportName(resultText: string): string | null {
+  const match = resultText.match(/Report saved:\s*(.+)$/i);
+  if (!match) return null;
+  const rawPath = match[1].trim();
+  const parts = rawPath.split(/[\\/]/);
+  return parts[parts.length - 1] || rawPath;
+}

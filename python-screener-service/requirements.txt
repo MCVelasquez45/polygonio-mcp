@@ -1,0 +1,8 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+pandas==2.2.0
+polygon-api-client==1.13.7
+python-dotenv==1.0.1
+pydantic==2.6.0
+pydantic-settings==2.1.0
+requests==2.31.0

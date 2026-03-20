@@ -1,0 +1,661 @@
+import axios from 'axios';
+import { getMassiveOptionsSnapshot, getOptionAggregates } from '../../../shared/data/massive';
+import { getRecentAggregateBars, StoredAggregateBar, upsertAggregateBars } from './aggregatesStore';
+import { getMarketStatusSnapshot, MarketStatusSnapshot } from './marketStatus';
+
+/**
+ * Normalizes option aggregate bars, handling cache fallbacks + session awareness so
+ * React charts can present consistent candles regardless of upstream hiccups.
+ */
+
+type SupportedTimespan = 'minute' | 'hour' | 'day';
+
+const TIMESPAN_MS: Record<SupportedTimespan, number> = {
+  minute: 60_000,
+  hour: 3_600_000,
+  day: 86_400_000
+};
+
+const MARKET_CLOSE_UTC_HOUR = 21; // 4:00 PM ET (approx, ignores DST but good enough for fallback displays)
+const MARKET_ALLOW_INTRADAY_AGGS = !['false', '0', 'no'].includes(
+  String(process.env.MARKET_ALLOW_INTRADAY_AGGS ?? 'true').toLowerCase()
+);
+const MARKET_INTRADAY_BLOCK_TTL_MS = (() => {
+  const value = Number(process.env.MARKET_INTRADAY_BLOCK_TTL_MS ?? 15 * 60 * 1000);
+  return Number.isFinite(value) ? value : 15 * 60 * 1000;
+})();
+const MARKET_INTRADAY_RATE_LIMIT_TTL_MS = (() => {
+  const value = Number(process.env.MARKET_INTRADAY_RATE_LIMIT_TTL_MS ?? 30_000);
+  return Number.isFinite(value) ? value : 30_000;
+})();
+const intradayBlockedUntilBySymbol = new Map<string, number>();
+const inflightAggregates = new Map<string, Promise<AggregatesResponse>>();
+
+type AggregatesParams = {
+  ticker: string;
+  multiplier: number;
+  timespan: string;
+  window: number;
+  from?: string | null;
+  to?: string | null;
+};
+
+type SessionAttempt = {
+  label: 'regular' | 'after-hours' | 'previous-session' | 'fallback';
+  fromDate: Date;
+  toDate: Date;
+  usingLastSession: boolean;
+};
+
+export type NormalizedAggregateBar = {
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  vw: number | null;
+  n: number | null;
+};
+
+type MarketStatusSummary = {
+  state: 'open' | 'closed' | 'after-hours' | 'pre-market' | 'unknown';
+  asOf: string;
+  nextOpen?: string | null;
+  nextClose?: string | null;
+};
+
+export type AggregatesResponse = {
+  ticker: string;
+  interval: string;
+  marketClosed: boolean;
+  afterHours: boolean;
+  usingLastSession: boolean;
+  resultGranularity: 'intraday' | 'daily' | 'cache';
+  results: NormalizedAggregateBar[];
+  health: AggregateHealth;
+  fetchedAt: Date;
+  cache: 'fresh' | 'hit';
+  note?: string;
+  marketStatus: MarketStatusSummary;
+};
+
+type AggregateHealth = {
+  mode: 'LIVE' | 'DEGRADED' | 'BACKFILLING' | 'FROZEN';
+  source: 'rest' | 'cache' | 'snapshot';
+  lastUpdateMsAgo: number | null;
+  providerThrottled: boolean;
+  gapsDetected: number;
+};
+
+function assertTimespan(value: string): asserts value is SupportedTimespan {
+  if (value !== 'minute' && value !== 'hour' && value !== 'day') {
+    throw Object.assign(new Error(`Unsupported timespan "${value}". Use minute, hour, or day.`), { status: 400 });
+  }
+}
+
+function formatInterval(multiplier: number, timespan: SupportedTimespan): string {
+  const suffix = timespan === 'minute' ? 'm' : timespan === 'hour' ? 'h' : 'd';
+  return `${multiplier}${suffix}`;
+}
+
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function isIntradayBlocked(symbol: string): boolean {
+  if (!MARKET_ALLOW_INTRADAY_AGGS) return true;
+  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return false;
+  const until = intradayBlockedUntilBySymbol.get(symbol);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    intradayBlockedUntilBySymbol.delete(symbol);
+    return false;
+  }
+  return true;
+}
+
+function parseRetryAfter(header: any): number | null {
+  if (header == null) return null;
+  if (typeof header === 'number' && Number.isFinite(header)) {
+    return header * 1000;
+  }
+  if (typeof header === 'string') {
+    const seconds = Number(header);
+    if (!Number.isNaN(seconds)) {
+      return seconds * 1000;
+    }
+    const date = new Date(header);
+    if (!Number.isNaN(date.getTime())) {
+      const delta = date.getTime() - Date.now();
+      if (delta > 0) return delta;
+    }
+  }
+  return null;
+}
+
+function blockIntradayAggs(symbol: string, reason?: unknown, ttlOverrideMs?: number | null) {
+  if (!MARKET_ALLOW_INTRADAY_AGGS) return;
+  const ttlMs =
+    typeof ttlOverrideMs === 'number' && ttlOverrideMs > 0 ? ttlOverrideMs : MARKET_INTRADAY_BLOCK_TTL_MS;
+  if (ttlMs <= 0) return;
+  const nextUntil = Date.now() + ttlMs;
+  const currentUntil = intradayBlockedUntilBySymbol.get(symbol) ?? 0;
+  if (nextUntil <= currentUntil) return;
+  intradayBlockedUntilBySymbol.set(symbol, nextUntil);
+  console.warn('[AGGS] intraday aggregates blocked', {
+    symbol,
+    ttlMs,
+    reason
+  });
+}
+
+function normalizeBars(bars: StoredAggregateBar[]): NormalizedAggregateBar[] {
+  return bars
+    .slice()
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map(bar => ({
+      t: new Date(bar.timestamp).toISOString(),
+      o: bar.open,
+      h: bar.high,
+      l: bar.low,
+      c: bar.close,
+      v: bar.volume ?? 0,
+      vw: typeof bar.vwap === 'number' ? bar.vwap : null,
+      n: typeof bar.transactions === 'number' ? bar.transactions : null
+    }));
+}
+
+function aggregateMinuteBars(bars: StoredAggregateBar[], targetMultiplier: number): StoredAggregateBar[] {
+  if (targetMultiplier <= 1 || !bars.length) return bars;
+  const bucketMs = targetMultiplier * TIMESPAN_MS.minute;
+  const sorted = bars.slice().sort((a, b) => a.timestamp - b.timestamp);
+  const buckets = new Map<number, StoredAggregateBar>();
+  for (const bar of sorted) {
+    const bucketStart = Math.floor(bar.timestamp / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketStart);
+    if (!existing) {
+      buckets.set(bucketStart, {
+        timestamp: bucketStart,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        vwap: bar.vwap ?? null,
+        transactions: bar.transactions ?? null
+      });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
+      existing.close = bar.close;
+      existing.volume = (existing.volume ?? 0) + (bar.volume ?? 0);
+      if (bar.vwap != null) existing.vwap = bar.vwap;
+      if (bar.transactions != null) {
+        existing.transactions = (existing.transactions ?? 0) + (bar.transactions ?? 0);
+      }
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function isWeekend(date: Date): boolean {
+  const day = date.getUTCDay();
+  return day === 0 || day === 6;
+}
+
+function alignToMarketClose(date: Date): Date {
+  const clone = new Date(date);
+  clone.setUTCHours(MARKET_CLOSE_UTC_HOUR, 0, 0, 0);
+  return clone;
+}
+
+function moveToPreviousBusinessDay(date: Date): Date {
+  const clone = new Date(date);
+  clone.setUTCHours(16, 0, 0, 0);
+  do {
+    clone.setUTCDate(clone.getUTCDate() - 1);
+  } while (isWeekend(clone));
+  return clone;
+}
+
+function deriveSessionClose(base: Date, status: MarketStatusSnapshot): Date {
+  const reference = new Date(base);
+  if (status.isHoliday || isWeekend(reference) || status.market === 'closed') {
+    return alignToMarketClose(moveToPreviousBusinessDay(reference));
+  }
+  return alignToMarketClose(reference);
+}
+
+function buildMarketState(status: MarketStatusSnapshot): MarketStatusSummary {
+  let state: MarketStatusSummary['state'] = 'unknown';
+  if (status.market === 'open') state = 'open';
+  else if (status.afterHours) state = 'after-hours';
+  else if (status.preMarket) state = 'pre-market';
+  else state = 'closed';
+  return {
+    state,
+    asOf: status.serverTime.toISOString(),
+    nextOpen: status.nextOpen ?? null,
+    nextClose: status.nextClose ?? null
+  };
+}
+
+function countAggregateGaps(
+  bars: StoredAggregateBar[],
+  expectedMs: number,
+  timespan: SupportedTimespan
+): number {
+  if (timespan === 'day' || bars.length < 2) return 0;
+  const sorted = bars.slice().sort((a, b) => a.timestamp - b.timestamp);
+  let gaps = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const diff = sorted[i].timestamp - sorted[i - 1].timestamp;
+    if (diff > expectedMs * 1.5) {
+      gaps += Math.max(0, Math.floor(diff / expectedMs) - 1);
+    }
+  }
+  return gaps;
+}
+
+function buildAggregateHealth(args: {
+  bars: StoredAggregateBar[];
+  timespan: SupportedTimespan;
+  multiplier: number;
+  marketClosed: boolean;
+  usingLastSession: boolean;
+  resultGranularity: AggregatesResponse['resultGranularity'];
+  cache: AggregatesResponse['cache'];
+  providerThrottled: boolean;
+  note?: string;
+  usedSnapshotFallback?: boolean;
+}): AggregateHealth {
+  const {
+    bars,
+    timespan,
+    multiplier,
+    marketClosed,
+    usingLastSession,
+    resultGranularity,
+    cache,
+    providerThrottled,
+    note,
+    usedSnapshotFallback
+  } = args;
+  let mode: AggregateHealth['mode'] = marketClosed ? 'FROZEN' : 'DEGRADED';
+  if (!marketClosed && !usingLastSession && resultGranularity === 'intraday' && cache === 'fresh') {
+    mode = 'LIVE';
+  } else if (!marketClosed && usingLastSession) {
+    mode = 'BACKFILLING';
+  }
+  let source: AggregateHealth['source'] = 'rest';
+  if (cache === 'hit' || resultGranularity === 'cache') {
+    source = 'cache';
+  }
+  if (usedSnapshotFallback) {
+    source = 'snapshot';
+  }
+  const expectedMs = TIMESPAN_MS[timespan] * multiplier;
+  const lastTimestamp = bars.at(-1)?.timestamp ?? null;
+  const lastUpdateMsAgo =
+    lastTimestamp != null ? Math.max(0, Date.now() - lastTimestamp) : null;
+  const gapsDetected = countAggregateGaps(bars, expectedMs, timespan);
+  const noteLower = note?.toLowerCase() ?? '';
+  return {
+    mode,
+    source,
+    lastUpdateMsAgo,
+    providerThrottled: providerThrottled || noteLower.includes('limit') || noteLower.includes('throttle'),
+    gapsDetected
+  };
+}
+
+// Determines which session windows to attempt (regular, after-hours, previous)
+// based on current market state. Helps the fetcher gracefully degrade.
+function buildSessionPlan(args: {
+  status: MarketStatusSnapshot;
+  durationMs: number;
+  timespan: SupportedTimespan;
+}): { attempts: SessionAttempt[]; marketClosed: boolean; afterHours: boolean } {
+  const { status, durationMs } = args;
+  const baseTime = status.serverTime;
+  const attempts: SessionAttempt[] = [];
+  const marketClosed = status.market !== 'open';
+  const afterHours = Boolean(status.afterHours);
+
+  const pushAttempt = (attempt: SessionAttempt) => {
+    const last = attempts.at(-1);
+    if (last && last.label === attempt.label && last.usingLastSession === attempt.usingLastSession) {
+      return;
+    }
+    attempts.push(attempt);
+  };
+
+  if (!marketClosed) {
+    pushAttempt({
+      label: 'regular',
+      fromDate: new Date(baseTime.getTime() - durationMs),
+      toDate: baseTime,
+      usingLastSession: false
+    });
+  } else if (afterHours) {
+    pushAttempt({
+      label: 'after-hours',
+      fromDate: new Date(baseTime.getTime() - durationMs),
+      toDate: baseTime,
+      usingLastSession: false
+    });
+  }
+
+  if (marketClosed || afterHours || status.isHoliday || status.isWeekend) {
+    const sessionClose = deriveSessionClose(baseTime, status);
+    pushAttempt({
+      label: 'previous-session',
+      fromDate: new Date(sessionClose.getTime() - durationMs),
+      toDate: sessionClose,
+      usingLastSession: true
+    });
+  }
+
+  if (!attempts.length) {
+    pushAttempt({
+      label: 'fallback',
+      fromDate: new Date(baseTime.getTime() - durationMs),
+      toDate: baseTime,
+      usingLastSession: marketClosed
+    });
+  }
+
+  return { attempts, marketClosed, afterHours };
+}
+
+// Helper that fetches bars for the given attempt + writes them to Mongo.
+async function fetchRemoteBars(args: {
+  ticker: string;
+  multiplier: number;
+  timespan: SupportedTimespan;
+  window: number;
+  attempt: SessionAttempt;
+}): Promise<StoredAggregateBar[]> {
+  const { ticker, multiplier, timespan, window, attempt } = args;
+  if ((timespan === 'minute' || timespan === 'hour') && isIntradayBlocked(ticker)) {
+    return [];
+  }
+  const from = formatDateOnly(attempt.fromDate);
+  const to = formatDateOnly(attempt.toDate);
+  try {
+    const remote = await getOptionAggregates(ticker, multiplier, timespan, window, from, to);
+    if (remote.results.length) {
+      await upsertAggregateBars(ticker, multiplier, timespan, remote.results, { source: 'massive' });
+    }
+    return remote.results;
+  } catch (error: any) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    const retryAfterHeader = axios.isAxiosError(error)
+      ? error.response?.headers?.['retry-after'] ?? error.response?.headers?.['Retry-After']
+      : undefined;
+    console.warn('[AGGS] intraday fetch failed', {
+      ticker,
+      timespan,
+      multiplier,
+      status,
+      message: error?.message
+    });
+    if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
+      blockIntradayAggs(ticker, { status });
+      return [];
+    }
+    if (status === 429 && (timespan === 'minute' || timespan === 'hour')) {
+      const retryAfterMs = parseRetryAfter(retryAfterHeader);
+      const ttlMs = retryAfterMs ?? MARKET_INTRADAY_RATE_LIMIT_TTL_MS;
+      blockIntradayAggs(ticker, { status }, ttlMs);
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * Entry point used by the router. Applies caching, fallback, and session-aware
+ * logic so callers always get a consistent candle set even when Massive is
+ * throttled. Returns normalized bars plus metadata for downstream UI.
+ */
+export async function resolveAggregates(params: AggregatesParams): Promise<AggregatesResponse> {
+  const ticker = params.ticker?.trim().toUpperCase();
+  if (!ticker) {
+    throw Object.assign(new Error('ticker is required'), { status: 400 });
+  }
+  const multiplier = Math.max(1, Number(params.multiplier) || 1);
+  assertTimespan(params.timespan);
+  const timespan: SupportedTimespan = params.timespan;
+  const window = Math.max(1, Number(params.window) || 1);
+  const inflightKey = `${ticker}:${multiplier}:${timespan}:${window}:${params.from ?? ''}:${params.to ?? ''}`;
+  const inflight = inflightAggregates.get(inflightKey);
+  if (inflight) {
+    return await inflight;
+  }
+
+  const run: Promise<AggregatesResponse> = (async () => {
+    const status = await getMarketStatusSnapshot();
+
+    const needsMinuteAggregation = timespan === 'minute' && multiplier > 1;
+    const baseMultiplier = needsMinuteAggregation ? 1 : multiplier;
+    const baseTimespan: SupportedTimespan = needsMinuteAggregation ? 'minute' : timespan;
+    const baseWindow = needsMinuteAggregation ? window * multiplier : window;
+
+    if (params.from || params.to) {
+      const remote = await getOptionAggregates(
+        ticker,
+        needsMinuteAggregation ? 1 : multiplier,
+        baseTimespan,
+        needsMinuteAggregation ? window * multiplier : window,
+        params.from ?? undefined,
+        params.to ?? undefined
+      );
+      if (remote.results.length) {
+        await upsertAggregateBars(ticker, needsMinuteAggregation ? 1 : multiplier, baseTimespan, remote.results, {
+          source: 'massive'
+        });
+      }
+      const finalBars = needsMinuteAggregation ? aggregateMinuteBars(remote.results, multiplier) : remote.results;
+      const trimmed = finalBars.length > window ? finalBars.slice(finalBars.length - window) : finalBars;
+      const normalized = normalizeBars(trimmed);
+      if (!normalized.length) {
+        throw Object.assign(new Error('Aggregates unavailable for requested range'), { status: 404 });
+      }
+      const health = buildAggregateHealth({
+        bars: trimmed,
+        timespan,
+        multiplier,
+        marketClosed: status.market !== 'open',
+        usingLastSession: false,
+        resultGranularity: 'intraday',
+        cache: 'fresh',
+        providerThrottled: false
+      });
+      return {
+        ticker,
+        interval: formatInterval(multiplier, timespan),
+        marketClosed: status.market !== 'open',
+        afterHours: Boolean(status.afterHours),
+        usingLastSession: false,
+        resultGranularity: 'intraday',
+        results: normalized,
+        health,
+        fetchedAt: new Date(),
+        cache: 'fresh',
+        marketStatus: buildMarketState(status)
+      };
+    }
+
+    const durationMs = TIMESPAN_MS[baseTimespan] * baseMultiplier * baseWindow;
+    const [cachedBars, sessionPlan] = await Promise.all([
+      getRecentAggregateBars(ticker, baseMultiplier, baseTimespan, baseWindow),
+      Promise.resolve(buildSessionPlan({ status, durationMs, timespan: baseTimespan }))
+    ]);
+
+    let selectedBars: StoredAggregateBar[] = [];
+    let granularity: AggregatesResponse['resultGranularity'] = 'intraday';
+    let usingLastSession = sessionPlan.marketClosed;
+    let note: string | undefined;
+    let cacheState: AggregatesResponse['cache'] = 'fresh';
+    let usedSnapshotFallback = false;
+    if (timespan !== 'day' && isIntradayBlocked(ticker)) {
+      note = note ?? 'Intraday aggregates unavailable; using fallback data.';
+    }
+
+    for (const attempt of sessionPlan.attempts) {
+      try {
+        const remoteBars = await fetchRemoteBars({
+          ticker,
+          multiplier: baseMultiplier,
+          timespan: baseTimespan,
+          window: baseWindow,
+          attempt
+        });
+        if (remoteBars.length) {
+          selectedBars = remoteBars;
+          usingLastSession = attempt.usingLastSession;
+          break;
+        }
+      } catch (error: any) {
+        note = error?.message ?? 'Failed to load live aggregates';
+      }
+    }
+
+    if (!selectedBars.length && cachedBars.length) {
+      selectedBars = cachedBars;
+      granularity = 'cache';
+      usingLastSession = true;
+      cacheState = 'hit';
+      note = note ?? 'Serving cached session due to upstream limits.';
+    }
+
+    if (!selectedBars.length && timespan !== 'day') {
+      try {
+        const dailyFallback = await getOptionAggregates(ticker, 1, 'day', Math.max(window, 5));
+        if (dailyFallback.results.length) {
+          selectedBars = dailyFallback.results;
+          granularity = 'daily';
+          usingLastSession = true;
+          note = note ?? 'No intraday data available; showing last daily session.';
+        }
+      } catch (error: any) {
+        note = note ?? error?.message ?? 'Failed to load daily aggregates';
+      }
+    }
+
+    if (!selectedBars.length) {
+      const snapshotSymbol = ticker.startsWith('O:') ? extractUnderlyingSymbol(ticker) : ticker;
+      if (snapshotSymbol) {
+        const snapshotBar = await buildSnapshotFallbackBar(snapshotSymbol);
+        if (snapshotBar) {
+          selectedBars = [snapshotBar];
+          granularity = 'daily';
+          usingLastSession = true;
+          cacheState = 'fresh';
+          note = note ?? 'Massive aggregates unavailable; displaying latest underlying snapshot.';
+          usedSnapshotFallback = true;
+        }
+      }
+    }
+
+    if (!selectedBars.length) {
+      throw Object.assign(new Error('Aggregates unavailable'), { status: 503 });
+    }
+
+    let finalBars = needsMinuteAggregation ? aggregateMinuteBars(selectedBars, multiplier) : selectedBars;
+    if (finalBars.length > window) {
+      finalBars = finalBars.slice(finalBars.length - window);
+    }
+    const normalized = normalizeBars(finalBars);
+    const health = buildAggregateHealth({
+      bars: finalBars,
+      timespan,
+      multiplier,
+      marketClosed: sessionPlan.marketClosed,
+      usingLastSession,
+      resultGranularity: granularity,
+      cache: cacheState,
+      providerThrottled: isIntradayBlocked(ticker),
+      note,
+      usedSnapshotFallback
+    });
+
+    return {
+      ticker,
+      interval: formatInterval(multiplier, timespan),
+      marketClosed: sessionPlan.marketClosed,
+      afterHours: sessionPlan.afterHours,
+      usingLastSession,
+      resultGranularity: granularity,
+      results: normalized,
+      health,
+      fetchedAt: new Date(),
+      cache: cacheState,
+      note,
+      marketStatus: buildMarketState(status)
+    };
+  })();
+
+  inflightAggregates.set(inflightKey, run);
+  try {
+    return await run;
+  } finally {
+    inflightAggregates.delete(inflightKey);
+  }
+}
+
+function extractUnderlyingSymbol(optionTicker: string): string | null {
+  const match = optionTicker.toUpperCase().match(/^O:([A-Z0-9\.]+)\d{6}[CP]/);
+  if (match) return match[1];
+  if (optionTicker?.startsWith('O:')) {
+    return optionTicker.slice(2).replace(/\d.*$/, '');
+  }
+  return optionTicker?.startsWith('O:') ? optionTicker.slice(2) : optionTicker;
+}
+
+async function buildSnapshotFallbackBar(underlying: string): Promise<StoredAggregateBar | null> {
+  try {
+    const snapshot: any = await getMassiveOptionsSnapshot(underlying);
+    const underlyingAsset = snapshot?.underlying_asset ?? snapshot?.underlying ?? snapshot ?? {};
+    const day = underlyingAsset?.day ?? {};
+    const lastQuote = underlyingAsset?.last_quote ?? {};
+    const lastTrade = underlyingAsset?.last_trade ?? {};
+    const price =
+      coerceNumber(lastQuote?.midpoint) ??
+      coerceNumber(lastQuote?.mid) ??
+      coerceNumber(lastTrade?.price) ??
+      coerceNumber(underlyingAsset?.price) ??
+      coerceNumber(day?.close);
+    if (price == null) return null;
+    const open = coerceNumber(day?.open) ?? price;
+    const high = coerceNumber(day?.high) ?? price;
+    const low = coerceNumber(day?.low) ?? price;
+    const close = coerceNumber(day?.close) ?? price;
+    const volume = coerceNumber(day?.volume) ?? coerceNumber(underlyingAsset?.volume) ?? 0;
+    const vwap = coerceNumber(day?.vwap);
+    return {
+      timestamp: Date.now(),
+      open,
+      high,
+      low,
+      close,
+      volume,
+      vwap,
+      transactions: null
+    };
+  } catch (error) {
+    console.warn('[AGGS] snapshot fallback failed', { underlying, error: (error as Error)?.message });
+    return null;
+  }
+}
+
+function coerceNumber(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}

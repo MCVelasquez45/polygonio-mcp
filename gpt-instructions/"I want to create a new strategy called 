@@ -1,0 +1,9 @@
+"I want to create a new strategy called the Opening Range Momentum Play.
+
+My hypothesis is that the first 5 minutes of the New York open sets the tone for the entire day. We should mark the high and low of that initial 5-minute range. If the price breaks above that high and stays there through the 15-minute and 30-minute candle closes, it shows real momentum and we should go bullish. If it breaks below, we go bearish.
+
+For the execution, since it's a day trade, I want to use 0-DTE options. I'm looking for a Delta around 0.25 to get good leverage without being too deep in the money.
+
+For risk management, I want a Stop Loss at 30% of the premium paid. I'll take profits once the position hits a 50% ROI. I'm going to risk 2% of my account on each trade.
+
+Essentially, we're just trying to catch that early morning breakout and ride it for the first couple of hours of the session."
