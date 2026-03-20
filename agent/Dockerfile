@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -23,4 +23,4 @@ RUN pip install --no-cache-dir .
 EXPOSE 5001
 
 # Run FastAPI for Agent
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "5001", "--reload", "--reload-exclude", ".venv"]
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "5001"]
