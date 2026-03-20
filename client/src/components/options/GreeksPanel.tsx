@@ -215,7 +215,7 @@ export function GreeksPanel({
       breakevenPct: breakevenPercent ?? null,
       contract: {
         symbol: contractSymbol,
-        type: contractType,
+        type: contractType as 'call' | 'put',
         strike: resolvedStrike ?? null,
         expiration: resolvedExpiration ?? null,
         price: resolvedPremium ?? null

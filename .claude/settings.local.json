@@ -39,7 +39,9 @@
       "Bash(.venv/bin/pip install:*)",
       "Bash(netstat -tlnp)",
       "Bash(ps:*)",
-      "Bash(npx ts-node -e \":*)"
+      "Bash(npx ts-node -e \":*)",
+      "Bash(npm run:*)",
+      "Bash(npm ls:*)"
     ]
   }
 }

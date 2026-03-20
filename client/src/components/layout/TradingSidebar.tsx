@@ -208,7 +208,7 @@ export function TradingSidebar({
           if ((result as any)?.error) hadErrors = true;
           const snapshots = Array.isArray((result as any)?.entries) ? (result as any).entries : [];
           if (snapshots.length) hadEntries = true;
-          snapshots.forEach(entry => {
+          snapshots.forEach((entry: any) => {
             if (entry?.ticker) {
               nextMap[entry.ticker.toUpperCase()] = entry;
             }
