@@ -75,6 +75,7 @@ coverage.xml
 
 # Environment variables
 .env
+.env.railway
 
 # Project-specific ignores
 .cursor/

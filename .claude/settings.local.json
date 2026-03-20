@@ -39,7 +39,10 @@
       "Bash(.venv/bin/pip install:*)",
       "Bash(netstat -tlnp)",
       "Bash(ps:*)",
-      "Bash(npx ts-node -e \":*)"
+      "Bash(npx ts-node -e \":*)",
+      "Bash(find /home/sirrele/projects/polygonio-mcp -maxdepth 2 -type f \\\\\\(-name *.json -o -name Dockerfile* -o -name *.yml -o -name *.yaml -o -name Procfile -o -name vercel.json -o -name railway.json -o -name .env* \\\\\\))",
+      "Bash(find /home/sirrele/projects/polygonio-mcp/agent -type f \\\\\\(-name *.py \\\\\\))",
+      "Bash(pip index:*)"
     ]
   }
 }

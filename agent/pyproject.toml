@@ -26,7 +26,7 @@ dependencies = [
   "opentelemetry-exporter-otlp",
   "sift-cli[anthropic] @ git+https://github.com/gitfitbro/sift.git",
   "pandas>=2.0",
-  "pandas_ta>=0.3.14b",
+  "pandas_ta>=0.4.67b0",
   "numpy>=1.24",
 ]
 

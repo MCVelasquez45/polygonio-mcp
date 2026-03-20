@@ -14,8 +14,8 @@ COPY . .
 # Build TS
 RUN npm run build
 
-# Expose port (default 3000)
-EXPOSE 3000
+# Expose port (Railway sets PORT dynamically)
+EXPOSE ${PORT:-3000}
 
 # Start command
 CMD ["npm", "start"]
