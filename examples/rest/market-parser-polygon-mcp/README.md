@@ -35,8 +35,8 @@ A simple Python CLI for natural language financial queries using the [Polygon.io
 
 3. **Create a `.env` file in the same directory as `market_parser_demo.py`:**
     ```
-    POLYGON_API_KEY=your_polygon_api_key_here
-    ANTHROPIC_API_KEY=your_anthropic_api_key_here
+    POLYGON_API_KEY=<polygon-api-key>
+    ANTHROPIC_API_KEY=<anthropic-api-key>
     ```
     Both keys are required for the CLI to work.
 
@@ -83,8 +83,8 @@ Be speficific in your prompt. The better the prompt - the better the response.
 - **Missing API Key:**  
   If you see an error about `POLYGON_API_KEY` or `ANTHROPIC_API_KEY`, make sure your `.env` file is in the same directory and contains both keys:
   ```
-  POLYGON_API_KEY=your_polygon_api_key_here
-  ANTHROPIC_API_KEY=your_anthropic_api_key_here
+  POLYGON_API_KEY=<polygon-api-key>
+  ANTHROPIC_API_KEY=<anthropic-api-key>
   ```
 
 - **Dependencies:**  
