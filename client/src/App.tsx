@@ -498,7 +498,6 @@ function App() {
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
-  const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const chartFocusRef = useRef<{ symbol: string | null; timeframe: string; sessionMode: ChartSessionMode } | null>(
     null
   );
@@ -1301,11 +1300,6 @@ function App() {
           limit: selectedExpiration ? 200 : 150,
           expiration: selectedExpiration ?? undefined
         });
-        console.log('[CLIENT] options chain response', {
-          ticker: normalizedTicker,
-          expirations: response?.expirations?.length ?? 0,
-          sample: response?.expirations?.[0]
-        });
         if (!cancelled) {
           const groups = Array.isArray(response.expirations) ? response.expirations : [];
           if (!groups.length) {
@@ -2088,11 +2082,10 @@ function App() {
     (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
       selectionSourceRef.current = source;
       setSelectedLeg(leg);
-      if (leg) {
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-      }
+      // NOTE: do NOT clear chart bars/indicators here. The chart tracks the
+      // underlying equity (chartDataSymbol), which is unchanged when only the
+      // selected contract changes. The chart-focus effect already resets bars
+      // whenever the chart symbol or timeframe actually changes.
       if (source === 'user') {
         setContractSelection(null);
       }

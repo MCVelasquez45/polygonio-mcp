@@ -124,24 +124,32 @@ export const http = axios.create({
   baseURL: API_BASE_URL,
 });
 
+// Verbose request/response logging is opt-in: it floods the console (and leaks
+// payloads) under live market traffic. Enable with VITE_DEBUG_HTTP=true.
+const HTTP_DEBUG = import.meta.env.VITE_DEBUG_HTTP === 'true';
+
 http.interceptors.request.use(config => {
   config.baseURL = getActiveBaseUrl();
-  console.log('[CLIENT] HTTP request', {
-    method: config.method,
-    url: config.url,
-    data: config.data,
-    baseURL: config.baseURL
-  });
+  if (HTTP_DEBUG) {
+    console.log('[CLIENT] HTTP request', {
+      method: config.method,
+      url: config.url,
+      data: config.data,
+      baseURL: config.baseURL
+    });
+  }
   return config;
 });
 
 http.interceptors.response.use(
   response => {
-    console.log('[CLIENT] HTTP response', {
-      url: response.config.url,
-      status: response.status,
-      data: response.data,
-    });
+    if (HTTP_DEBUG) {
+      console.log('[CLIENT] HTTP response', {
+        url: response.config.url,
+        status: response.status,
+        data: response.data,
+      });
+    }
     return response;
   },
   async error => {

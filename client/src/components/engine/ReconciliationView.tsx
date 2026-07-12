@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DemoDataBadge } from '../shared/DemoDataBadge';
 
 type PositionRecord = {
   symbol: string;
@@ -49,7 +50,9 @@ export function ReconciliationView({ isOpen, onClose }: Props) {
       <div className="reconciliation-modal">
         <div className="modal-header">
           <div className="header-title">
-            <h3>📑 END-OF-DAY RECONCILIATION</h3>
+            <h3>
+              📑 END-OF-DAY RECONCILIATION <DemoDataBadge note="Positions and trades shown here are illustrative — this view is not connected to the broker yet." />
+            </h3>
             <span className="date">Date: {new Date().toLocaleDateString()}</span>
           </div>
           <button className="close-btn" onClick={onClose}>×</button>
