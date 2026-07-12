@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import type { QuoteSnapshot, TradePrint, OptionContractDetail } from '../../types/market';
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import type { QuoteSnapshot, OptionContractDetail } from '../../types/market';
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { getBrokerAccount, submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
+import { useLiveQuote } from '../../lib/liveMarketStore';
 
 type Props = {
   contract?: OptionContractDetail | null;
-  quote?: QuoteSnapshot | null;
-  trades: TradePrint[];
   isLoading: boolean;
   label?: string;
   spotPrice?: number | null;
@@ -81,10 +80,10 @@ function resolveDefaultLegPrice(
   return null;
 }
 
-export function OrderTicketPanel({
+// memo: the ticket subscribes to its own contract's live quote via the store —
+// unrelated app renders should not re-render the order form.
+export const OrderTicketPanel = memo(function OrderTicketPanel({
   contract,
-  quote,
-  trades,
   isLoading,
   label,
   spotPrice,
@@ -94,6 +93,8 @@ export function OrderTicketPanel({
   autoSubmit = false,
   onOrderSubmitted
 }: Props) {
+  // Live + REST-fallback quotes both land in the shared store.
+  const quote: QuoteSnapshot | null = useLiveQuote(contract?.ticker ?? null);
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
   const [timeInForce, setTimeInForce] = useState<'day' | 'gtc'>('day');
@@ -713,4 +714,4 @@ export function OrderTicketPanel({
       )}
     </section>
   );
-}
+});

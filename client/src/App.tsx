@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
 import { getSharedSocket } from './lib/socket';
+import {
+  publishQuote,
+  publishTrade,
+  replaceTradeHistory,
+  removeSymbols as removeLiveSymbols,
+} from './lib/liveMarketStore';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
@@ -450,8 +456,6 @@ function App() {
   const [chartAnalysisError, setChartAnalysisError] = useState<string | null>(null);
   const [chartAnalysisUpdatedAt, setChartAnalysisUpdatedAt] = useState<number | null>(null);
 
-  const [quote, setQuote] = useState<QuoteSnapshot | null>(null);
-  const [trades, setTrades] = useState<TradePrint[]>([]);
   const [underlyingSnapshot, setUnderlyingSnapshot] = useState<WatchlistSnapshot | null>(null);
   const underlyingSnapshotRef = useRef<WatchlistSnapshot | null>(null);
 
@@ -515,13 +519,11 @@ function App() {
   const lastChecklistRefreshRef = useRef(0);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
-  const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
-  const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
+  // Tick timestamps are refs, not state: only the fallback logic reads them,
+  // and holding them as state re-rendered the whole app on every market tick.
   const lastLiveQuoteAtRef = useRef<number | null>(null);
   const lastLiveTradeAtRef = useRef<number | null>(null);
   const socketRef = useRef<Socket | null>(null);
-  const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
-  const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
   const [contractSelection, setContractSelection] = useState<ContractSelectionResult | null>(null);
@@ -744,14 +746,6 @@ function App() {
     autoContractSelectionKeyRef.current = null;
   }, [autoContractSelection, autoSubmitOrders, autoScannerEnabled]);
 
-  useEffect(() => {
-    lastLiveQuoteAtRef.current = lastLiveQuoteAt;
-  }, [lastLiveQuoteAt]);
-
-  useEffect(() => {
-    lastLiveTradeAtRef.current = lastLiveTradeAt;
-  }, [lastLiveTradeAt]);
-
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
   // Reset derived state when the user changes tickers (fresh bars, selection, etc.).
@@ -828,10 +822,11 @@ function App() {
     const handleQuote = (payload: any) => {
       const normalized = normalizeLiveQuote(payload);
       if (!normalized) return;
-      setLiveChainQuotes((prev: Record<string, QuoteSnapshot>) => ({ ...prev, [normalized.ticker]: normalized }));
+      // Publish into the live store: only panels rendering this symbol
+      // re-render. No App state is touched on the hot tick path.
+      publishQuote(normalized);
       if (activeSymbol && normalized.ticker === activeSymbol) {
-        setQuote(normalized);
-        setLastLiveQuoteAt(Date.now());
+        lastLiveQuoteAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
       }
     };
@@ -840,13 +835,9 @@ function App() {
       const normalized = normalizeLiveTrade(payload);
       if (!normalized) return;
       if (!normalized.ticker) return;
-      setLiveChainTrades((prev: Record<string, TradePrint>) => ({ ...prev, [normalized.ticker]: normalized }));
+      publishTrade(normalized);
       if (activeSymbol && normalized.ticker === activeSymbol) {
-        setTrades((prev: TradePrint[]) => {
-          if (prev.length > 0 && prev[0]?.id === normalized.id) return prev;
-          return [normalized, ...prev].slice(0, MAX_TRADE_HISTORY);
-        });
-        setLastLiveTradeAt(Date.now());
+        lastLiveTradeAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
       }
     };
@@ -1355,8 +1346,6 @@ function App() {
   useEffect(() => {
     setSelectedLeg(null);
     setContractDetail(null);
-    setQuote(null);
-    setTrades([]);
     setMarketError(null);
     setChainExpirations([]);
     setChainUnderlyingPrice(null);
@@ -1874,10 +1863,8 @@ function App() {
 
   useEffect(() => {
     if (!activeContractSymbol) {
-      setQuote(null);
-      setTrades([]);
-      setLastLiveQuoteAt(null);
-      setLastLiveTradeAt(null);
+      lastLiveQuoteAtRef.current = null;
+      lastLiveTradeAtRef.current = null;
       lastSnapshotSymbolRef.current = null;
       return;
     }
@@ -1895,8 +1882,10 @@ function App() {
           marketApi.getQuote(symbol, controller.signal),
         ]);
         if (!cancelled) {
-          setTrades((tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
-          setQuote(quotePayload);
+          // REST snapshots land in the same live store the socket feeds, so
+          // panels have one source of truth regardless of transport.
+          replaceTradeHistory(symbol, (tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
+          publishQuote({ ...quotePayload, ticker: symbol });
           if (reason === 'fallback') {
             console.debug('[CLIENT] fallback snapshot refreshed', { symbol, trades: tradesPayload.trades?.length ?? 0 });
           }
@@ -2024,42 +2013,49 @@ function App() {
     }
   }
 
+  // Stable handlers so memoized children don't re-render on unrelated updates.
+  const handleSidebarSelectTicker = useCallback((next: string, snapshot?: WatchlistSnapshot | null) => {
+    const normalized = next.toUpperCase();
+    setTicker(normalized);
+    // Selecting a new underlying legitimately resets the chart; the focus
+    // effect will re-request candles for the new symbol.
+    setBars([]);
+    setIndicators(undefined);
+    setMarketSessionMeta(null);
+    setSelectedLeg(null);
+    setContractDetail(null);
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+    if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
+      const referenceContract = snapshot.referenceContract.toUpperCase();
+      pendingSelectionRef.current.contract = referenceContract;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
+      setDesiredContract(referenceContract);
+    } else if (normalized.startsWith('O:')) {
+      pendingSelectionRef.current.contract = normalized;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+      setDesiredContract(normalized);
+    } else {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+    setSidebarOpen(false);
+  }, []);
+
+  const handleSidebarSnapshotUpdate = useCallback((ticker: string, snapshot?: WatchlistSnapshot | null) => {
+    if (!ticker) return;
+    if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+  }, [normalizedTicker]);
+
   // Sidebar component handles watchlist interactions + ticker selection.
   const sidebar = (
     <TradingSidebar
       selectedTicker={normalizedTicker}
-      onSelectTicker={(next, snapshot) => {
-        const normalized = next.toUpperCase();
-        setTicker(normalized);
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-        setSelectedLeg(null);
-        setContractDetail(null);
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-        if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
-          const referenceContract = snapshot.referenceContract.toUpperCase();
-          pendingSelectionRef.current.contract = referenceContract;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
-          setDesiredContract(referenceContract);
-        } else if (normalized.startsWith('O:')) {
-          pendingSelectionRef.current.contract = normalized;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-          setDesiredContract(normalized);
-        } else {
-          pendingSelectionRef.current.contract = null;
-          pendingSelectionRef.current.expiration = null;
-          setDesiredContract(null);
-        }
-        setSidebarOpen(false);
-      }}
-      onSnapshotUpdate={(ticker, snapshot) => {
-        if (!ticker) return;
-        if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-      }}
+      onSelectTicker={handleSidebarSelectTicker}
+      onSnapshotUpdate={handleSidebarSnapshotUpdate}
       onWatchlistChange={handleWatchlistChange}
       onRequestAutoSelect={handleContractSelectionRequest}
       autoSelectDisabled={contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed}
@@ -2111,10 +2107,60 @@ function App() {
     setDesiredContract(null);
   }, []);
 
+  const handleTimeframeChange = useCallback((value: string) => {
+    setTimeframe(value as TimeframeKey);
+  }, []);
+
+  const handleOrderSubmitted = useCallback((ticker: string, side: string, qty: number, price: number) => {
+    console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
+    // Future: add to visual journaling history
+  }, []);
+
+  const handleHeaderTickerSubmit = useCallback((value: string) => {
+    const normalized = value.trim().toUpperCase();
+    if (!normalized) return;
+    setTicker(normalized);
+    setSelectedLeg(null);
+    setContractDetail(null);
+    if (normalized.startsWith('O:')) {
+      pendingSelectionRef.current.contract = normalized;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+      setDesiredContract(normalized);
+    } else {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarOpen(prev => !prev);
+  }, []);
+
+  const handleToggleSettings = useCallback(() => {
+    setSettingsOpen(prev => !prev);
+  }, []);
+
+  // Scanner rows and Lab panels jump the workspace to a symbol's trading view.
+  const handleWorkspaceTickerSelect = useCallback((value: string) => {
+    setTicker(value);
+    setView('trading');
+  }, []);
+
   // Prefer the latest chain price for Greeks panel, fall back to watchlist snapshot.
   const greeksUnderlyingPrice =
     chainUnderlyingPrice ??
     (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying' ? underlyingSnapshot.price ?? null : null);
+
+  // Stable object identity so the memoized ChartPanel doesn't re-render on
+  // every App render (a fresh object literal would defeat React.memo).
+  const chartFallbackChange = useMemo(
+    () =>
+      underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
+        ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
+        : undefined,
+    [underlyingSnapshot]
+  );
 
   // Determine the best available underlying price for options chain calculations.
   const resolvedUnderlyingPrice = useMemo(() => {
@@ -2331,9 +2377,6 @@ function App() {
   const fedEvent = deskInsight?.fedEvent ?? null;
   const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
   const deskInsightUpdatedLabel = deskInsightUpdatedAt ? new Date(deskInsightUpdatedAt).toLocaleTimeString() : null;
-  const activeContractKey = activeContractSymbol?.toUpperCase() ?? null;
-  const activeLiveQuote = activeContractKey ? liveChainQuotes[activeContractKey] : null;
-  const activeLiveTrade = activeContractKey ? liveChainTrades[activeContractKey] : null;
 
   // Subscribe to a near-the-money strip so the chain shows live prices.
   useEffect(() => {
@@ -2363,16 +2406,7 @@ function App() {
       }
     });
     if (removed.length) {
-      setLiveChainQuotes((prev: Record<string, any>) => {
-        const next = { ...prev };
-        removed.forEach(symbol => delete next[symbol]);
-        return next;
-      });
-      setLiveChainTrades((prev: Record<string, any>) => {
-        const next = { ...prev };
-        removed.forEach(symbol => delete next[symbol]);
-        return next;
-      });
+      removeLiveSymbols(removed);
     }
     liveChainSymbolsRef.current = nextSymbols;
   }, [
@@ -2446,7 +2480,7 @@ function App() {
           data={bars}
           indicators={indicators}
           isLoading={chartLoading}
-          onTimeframeChange={value => setTimeframe(value as TimeframeKey)}
+          onTimeframeChange={handleTimeframeChange}
           sessionMode={chartSessionMode}
           onSessionModeChange={setChartSessionMode}
           onRunAnalysis={handleChartAnalysisRun}
@@ -2460,11 +2494,7 @@ function App() {
               ? underlyingSnapshot.price ?? null
               : null
           }
-          fallbackChange={
-            underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
-              ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
-              : undefined
-          }
+          fallbackChange={chartFallbackChange}
           sessionMeta={marketSessionMeta}
           markers={tradeMarkers}
         />
@@ -2547,15 +2577,11 @@ function App() {
           selectionDisabled={!contractSelectionAllowed}
           analysisRequestId={contractAnalysisRequestId}
           analysisDisabled={!contractAnalysisAllowed}
-          liveQuote={activeLiveQuote}
-          liveTrade={activeLiveTrade}
         />
       </div>
       <div className="lg:col-span-1 min-h-[26rem] min-w-0">
         <OrderTicketPanel
           contract={contractDetail}
-          quote={quote}
-          trades={trades}
           isLoading={false}
           label={displayTicker}
           spotPrice={resolvedUnderlyingPrice}
@@ -2563,10 +2589,7 @@ function App() {
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
           autoSubmit={autoSubmitOrders}
-          onOrderSubmitted={(ticker, side, qty, price) => {
-            console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
-            // Future: add to visual journaling history
-          }}
+          onOrderSubmitted={handleOrderSubmitted}
         />
       </div>
       <div className="lg:col-span-3 min-w-0">
@@ -2586,8 +2609,6 @@ function App() {
           onExpirationChange={handleExpirationChange}
           selectedContract={selectedLeg}
           onContractSelect={handleContractSelection}
-          liveQuotes={liveChainQuotes}
-          liveTrades={liveChainTrades}
           selectedContractDetail={contractDetail}
           preferredSide={preferredOptionSide}
           onRequestAnalysis={handleContractAnalysisRequest}
@@ -2601,29 +2622,14 @@ function App() {
     <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
       <TradingHeader
         selectedTicker={normalizedTicker}
-        onTickerSubmit={value => {
-          const normalized = value.trim().toUpperCase();
-          if (!normalized) return;
-          setTicker(normalized);
-          setSelectedLeg(null);
-          setContractDetail(null);
-          if (normalized.startsWith('O:')) {
-            pendingSelectionRef.current.contract = normalized;
-            pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-            setDesiredContract(normalized);
-          } else {
-            pendingSelectionRef.current.contract = null;
-            pendingSelectionRef.current.expiration = null;
-            setDesiredContract(null);
-          }
-        }}
+        onTickerSubmit={handleHeaderTickerSubmit}
         onAddToWatchlist={addTickerToWatchlist}
         currentView={view}
         onViewChange={setView}
-        onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+        onToggleSidebar={handleToggleSidebar}
         onToggleChat={handleToggleChat}
         isChatOpen={isChatOpen}
-        onToggleSettings={() => setSettingsOpen(prev => !prev)}
+        onToggleSettings={handleToggleSettings}
         isSettingsOpen={settingsOpen}
         chatDisabled={!chatAllowed}
       />
@@ -2867,10 +2873,7 @@ function App() {
           {view === 'dashboard' ? (
             <Dashboard
               socket={socketRef.current}
-              onTickerSelect={(ticker) => {
-                setTicker(ticker);
-                setView('trading');
-              }}
+              onTickerSelect={handleWorkspaceTickerSelect}
             />
           ) : (
             <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
@@ -2903,10 +2906,7 @@ function App() {
                     onRunScan={handleScannerRefresh}
                     runDisabled={!watchlistSymbols.length || !scannerAllowed}
                     aiDisabled={!scannerAllowed}
-                    onTickerSelect={value => {
-                      setTicker(value);
-                      setView('trading');
-                    }}
+                    onTickerSelect={handleWorkspaceTickerSelect}
                   />
                 </div>
               )}

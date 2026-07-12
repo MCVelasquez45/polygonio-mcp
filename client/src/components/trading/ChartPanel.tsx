@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { AggregateBar, IndicatorBundle } from '../../types/market';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { Lock, TrendingDown, TrendingUp } from 'lucide-react';
@@ -74,7 +75,9 @@ function joinDetails(parts: Array<string | null | undefined>) {
   return filtered.length ? filtered.join(' · ') : null;
 }
 
-export function ChartPanel({
+// memo: the chart chrome recomputes ~30 derived values per render; only bar
+// data and its own controls should trigger that, not unrelated app renders.
+export const ChartPanel = memo(function ChartPanel({
   ticker,
   timeframe,
   data,
@@ -272,4 +275,4 @@ export function ChartPanel({
       {sessionMeta?.note && <p className="text-[11px] text-gray-500">{sessionMeta.note}</p>}
     </section>
   );
-}
+});

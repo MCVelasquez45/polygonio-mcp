@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { OptionContractDetail, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import type { OptionContractDetail, OptionLeg, QuoteSnapshot } from '../../types/market';
 import { analysisApi } from '../../api';
 import type { ContractExplanationResult, ContractSelectionResult, DeskInsight } from '../../api/analysis';
 import { PieChart, Pie, Cell } from 'recharts';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
 import { formatExpirationDate } from '../../utils/expirations';
+import { useLiveQuote, useLiveTrade } from '../../lib/liveMarketStore';
 
 const metrics = [
   { key: 'delta', label: 'Delta' },
@@ -28,8 +29,6 @@ type Props = {
   selectionDisabled?: boolean;
   analysisRequestId?: number;
   analysisDisabled?: boolean;
-  liveQuote?: QuoteSnapshot | null;
-  liveTrade?: TradePrint | null;
 };
 
 type RiskSlice = {
@@ -54,7 +53,9 @@ function isAbortError(error: any): boolean {
   return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
 }
 
-export function GreeksPanel({
+// memo: this panel subscribes to its own contract's live ticks via the store —
+// unrelated app renders should not recompute the risk profile or pie chart.
+export const GreeksPanel = memo(function GreeksPanel({
   contract,
   leg,
   label,
@@ -66,11 +67,12 @@ export function GreeksPanel({
   selectionDisabled,
   analysisRequestId,
   analysisDisabled,
-  liveQuote,
-  liveTrade
 }: Props) {
   const displayName = label ?? contract?.ticker ?? leg?.ticker ?? 'Select a contract';
   const contractSymbol = contract?.ticker ?? leg?.ticker ?? null;
+  // Live prices for the selected contract come straight from the shared store.
+  const liveQuote = useLiveQuote(contractSymbol);
+  const liveTrade = useLiveTrade(contractSymbol);
   const underlyingSymbol = contract?.underlying ?? leg?.underlying ?? null;
   const resolvedExpiration = contract?.expiration ?? leg?.expiration ?? null;
   const resolvedStrike = typeof contract?.strike === 'number' ? contract.strike : leg?.strike ?? null;
@@ -529,7 +531,7 @@ export function GreeksPanel({
       )}
     </section>
   );
-}
+});
 
 function resolveGreekValue(
   contract: OptionContractDetail | null | undefined,

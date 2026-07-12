@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -96,7 +96,9 @@ type Props = {
   autoSelectDisabled?: boolean;
 };
 
-export function TradingSidebar({
+// memo: the sidebar runs its own 60s snapshot poll; the rest of the app's
+// renders (chart bars, selections) should not re-render the watchlist.
+export const TradingSidebar = memo(function TradingSidebar({
   selectedTicker,
   onSelectTicker,
   onSnapshotUpdate,
@@ -503,4 +505,4 @@ export function TradingSidebar({
       </div>
     </div>
   );
-}
+});

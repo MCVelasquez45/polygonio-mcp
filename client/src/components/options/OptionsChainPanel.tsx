@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { OptionChainExpirationGroup, OptionContractDetail, OptionLeg, QuoteSnapshot, TradePrint } from '../../types/market';
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
+import type { OptionChainExpirationGroup, OptionContractDetail, OptionLeg } from '../../types/market';
 import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
 import { computeExpirationDte, formatExpirationDate } from '../../utils/expirations';
+import { useLiveQuotes, useLiveTrades } from '../../lib/liveMarketStore';
 
 type Props = {
   ticker: string;
@@ -14,8 +15,6 @@ type Props = {
   onExpirationChange: (value: string | null) => void;
   selectedContract?: OptionLeg | null;
   onContractSelect: (leg: OptionLeg | null) => void;
-  liveQuotes?: Record<string, QuoteSnapshot>;
-  liveTrades?: Record<string, TradePrint>;
   selectedContractDetail?: OptionContractDetail | null;
   preferredSide?: 'call' | 'put' | null;
   onRequestAnalysis?: () => void;
@@ -53,7 +52,9 @@ const CHAIN_COLUMNS: ChainColumn[] = [
   { key: 'openInterest', label: 'Open Interest', minWidth: '120px', align: 'right', formatter: value => formatCount(value) }
 ];
 
-export function OptionsChainPanel({
+// memo: live ticks re-render this panel via the store subscription below —
+// the rest of the app's renders should not re-render the chain table.
+export const OptionsChainPanel = memo(function OptionsChainPanel({
   ticker,
   groups,
   underlyingPrice,
@@ -64,13 +65,14 @@ export function OptionsChainPanel({
   onExpirationChange,
   selectedContract,
   onContractSelect,
-  liveQuotes,
-  liveTrades,
   selectedContractDetail,
   preferredSide,
   onRequestAnalysis,
   analysisDisabled,
 }: Props) {
+  // Live prices come straight from the shared store, not through App state.
+  const liveQuotes = useLiveQuotes();
+  const liveTrades = useLiveTrades();
   const [optionType, setOptionType] = useState<'calls' | 'puts'>('calls');
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableBodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -442,7 +444,7 @@ export function OptionsChainPanel({
       </div>
     </section>
   );
-}
+});
 
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (

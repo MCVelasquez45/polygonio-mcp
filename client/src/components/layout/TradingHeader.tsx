@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { Briefcase, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
 
 type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
@@ -24,7 +24,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'dashboard', label: 'The Lab', icon: <LayoutDashboard className="h-4 w-4" /> },
 ];
 
-export function TradingHeader({
+export const TradingHeader = memo(function TradingHeader({
   selectedTicker,
   onTickerSubmit,
   onAddToWatchlist,
@@ -162,4 +162,4 @@ export function TradingHeader({
       </div>
     </header>
   );
-}
+});
