@@ -39,6 +39,10 @@ node_modules/
 /server/.env
 /client/.env
 
+# Dev platform runtime artifacts
+/dev/logs/
+/dev/.runtime/
+
 # PyInstaller
 *.manifest
 *.spec
@@ -75,7 +79,12 @@ coverage.xml
 
 # Environment variables
 .env
+.env.*
 .env.railway
+!.env.example
+!**/.env.example
+!**/.env_example
+!**/env.example
 
 # Project-specific ignores
 .cursor/
@@ -83,3 +92,10 @@ coverage.xml
 scripts/
 .log
 .DS_Store
+
+# Re-include required tooling files that the broad rules above would ignore.
+# (server/scripts is needed by the `predev` port guard; .python-version pins
+#  the screener's Python runtime — both must be in the repo.)
+!server/scripts/
+!server/scripts/assert-port-free.js
+!python-screener-service/.python-version
