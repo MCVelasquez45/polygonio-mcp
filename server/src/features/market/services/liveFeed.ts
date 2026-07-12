@@ -14,12 +14,15 @@ let wsClientOptions: MassiveWsClient | null = null;
 let wsClientStocks: MassiveWsClient | null = null;
 
 // Options Config
-const MASSIVE_WS_URL_OPTIONS = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.polygon.io/options';
+// Default to Massive's WebSocket host. The env override is preserved for
+// compatibility, but the fallback must be Massive (not Polygon) since this
+// project standardizes on Massive and the API key is a Massive credential.
+const MASSIVE_WS_URL_OPTIONS = process.env.MASSIVE_OPTIONS_WS_URL ?? 'wss://socket.massive.com/options';
 const MASSIVE_WS_CHANNELS_OPTIONS = process.env.MASSIVE_OPTIONS_WS_CHANNELS ?? 'T,Q';
 const MASSIVE_WS_AGG_CHANNELS_OPTIONS = process.env.MASSIVE_OPTIONS_WS_AGG_CHANNELS ?? 'AM,A';
 
 // Stocks Config (New)
-const MASSIVE_WS_URL_STOCKS = process.env.MASSIVE_STOCKS_WS_URL ?? 'wss://socket.polygon.io/stocks';
+const MASSIVE_WS_URL_STOCKS = process.env.MASSIVE_STOCKS_WS_URL ?? 'wss://socket.massive.com/stocks';
 const MASSIVE_WS_CHANNELS_STOCKS = process.env.MASSIVE_STOCKS_WS_CHANNELS ?? 'T,Q';
 const MASSIVE_WS_AGG_CHANNELS_STOCKS = process.env.MASSIVE_STOCKS_WS_AGG_CHANNELS ?? 'AM,A';
 
