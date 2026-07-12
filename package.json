@@ -1,0 +1,39 @@
+{
+  "name": "polygonio-mcp-dev",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-Trader development platform. Registry-driven orchestrator + control commands (dev/).",
+  "type": "module",
+  "scripts": {
+    "dev": "node dev/dev.mjs --profile=full",
+    "dev:all": "node dev/dev.mjs --profile=full",
+    "dev:full": "node dev/dev.mjs --profile=full",
+    "dev:core": "node dev/dev.mjs --profile=core",
+    "dev:frontend": "node dev/dev.mjs --profile=frontend",
+    "dev:backend": "node dev/dev.mjs --profile=backend",
+    "dev:mcp": "node dev/dev.mjs --profile=mcp",
+    "dev:workers": "node dev/dev.mjs --profile=workers",
+    "dev:research": "node dev/dev.mjs --profile=research",
+    "dev:trading": "node dev/dev.mjs --profile=trading",
+    "dev:analytics": "node dev/dev.mjs --profile=analytics",
+    "dev:list": "node dev/dev.mjs --list",
+    "dev:plan": "node dev/dev.mjs --dry-run",
+    "doctor": "node dev/commands/doctor.mjs",
+    "status": "node dev/commands/status.mjs",
+    "dashboard": "node dev/commands/dashboard.mjs",
+    "logs": "node dev/commands/logs.mjs",
+    "health": "node dev/commands/health.mjs",
+    "ports": "node dev/commands/ports.mjs",
+    "graph": "node dev/commands/graph.mjs",
+    "clean": "node dev/commands/clean.mjs",
+    "stop": "node dev/commands/stop.mjs",
+    "restart": "node dev/commands/restart.mjs",
+    "test:dev": "node --test dev/test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

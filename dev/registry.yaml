@@ -1,0 +1,193 @@
+# =============================================================================
+# AI-Trader Service Registry  —  the single source of truth for local dev
+# -----------------------------------------------------------------------------
+# `npm run dev` and every control command (doctor/status/health/…) read this
+# file. To bring a new service under the platform you only need to (1) add its
+# folder and (2) add an entry here. No code changes anywhere.
+#
+# ── Per-service fields ───────────────────────────────────────────────────────
+#   id            : stable identifier (defaults to the map key).
+#   displayName   : human label shown in dashboards.
+#   category      : one of: mcp | backend | frontend | worker | analytics |
+#                   realtime | infra. Used by profiles and grouping.
+#   description   : one line describing what the service does.
+#   tags          : free-form labels used by profiles (e.g. trading, research).
+#   command       : shell command to run (REQUIRED).
+#   cwd           : working directory relative to repo root. Default ".".
+#   enabled       : false keeps the entry but never starts it. Default true.
+#   port          : primary TCP port (conflict detection + tcp health).
+#   ports         : additional ports to reserve/report (optional list).
+#   priority      : ordering tie-breaker with no dependency edge (lower first).
+#   dependsOn     : services that must be ready first.
+#   dependencyMode: lenient (default) | strict.
+#   env           : extra env vars merged over the parent environment.
+#   envFile       : path (repo-relative) to the service's .env, for `doctor`.
+#   requiredEnv   : env var names `doctor` verifies are present.
+#   color         : log-prefix color; auto-assigned if omitted.
+#   health:
+#     type        : http | tcp | log | none.
+#     url/expect  : for http.   match: regex for log.   timeoutMs/intervalMs.
+#   restart:
+#     policy      : on-failure (default) | always | never.
+#     maxRetries / backoffMs / resetAfterMs.
+#
+# ── Profiles ─────────────────────────────────────────────────────────────────
+# Profiles are named selectors over the registry. A profile's services plus
+# their transitive dependencies are started. Selector keys: `all`, `ids`,
+# `categories`, `tags` (a service matches if ANY selector matches).
+# =============================================================================
+
+defaults:
+  dependencyMode: lenient
+  health:
+    timeoutMs: 60000
+    intervalMs: 500
+  restart:
+    policy: on-failure
+    maxRetries: 5
+    backoffMs: 1000
+    resetAfterMs: 30000
+
+profiles:
+  core:       { categories: [backend, frontend, mcp] }
+  frontend:   { ids: [frontend] }
+  backend:    { categories: [backend] }
+  mcp:        { categories: [mcp] }
+  workers:    { categories: [worker] }
+  research:   { tags: [research] }
+  trading:    { tags: [trading] }
+  analytics:  { tags: [analytics] }
+  full:       { all: true }
+
+services:
+  # ───────────────────────────── MCP / AI tier ──────────────────────────────
+  python-mcp:
+    displayName: Python MCP (Agent)
+    category: mcp
+    description: FastAPI MCP server exposing Polygon market tools to the agent.
+    tags: [ai, research, mcp]
+    cwd: agent
+    command: uv run uvicorn api:app --reload --port 5001
+    port: 5001
+    priority: 10
+    color: magenta
+    envFile: agent/.env
+    requiredEnv: [POLYGON_API_KEY]
+    env:
+      PYTHONUNBUFFERED: "1"
+    health:
+      type: http
+      url: http://127.0.0.1:5001/openapi.json
+
+  # ───────────────────────────── Analytics tier ─────────────────────────────
+  screener:
+    displayName: Options Screener
+    category: analytics
+    description: Python service for options screening and strategy backtests.
+    tags: [research, analytics, options]
+    cwd: python-screener-service
+    # setuptools<81 provides pkg_resources, which the pinned polygon-api-client
+    # still imports (removed from setuptools>=81). Python is pinned to 3.12 via
+    # python-screener-service/.python-version (the code uses 3.10+ syntax).
+    command: uv run --with-requirements requirements.txt --with "setuptools<81" uvicorn main:app --reload --port 8001
+    port: 8001
+    priority: 10
+    color: blue
+    envFile: python-screener-service/.env
+    requiredEnv: [POLYGON_API_KEY]
+    env:
+      PYTHONUNBUFFERED: "1"
+    health:
+      type: http
+      url: http://127.0.0.1:8001/openapi.json
+      timeoutMs: 180000   # first run resolves deps via uv
+
+  # ───────────────────────────── Backend tier ───────────────────────────────
+  backend:
+    displayName: Backend API (Gateway)
+    category: backend
+    description: Express + TypeScript API, websocket hub, MongoDB Atlas gateway.
+    tags: [api, core, trading]
+    cwd: server
+    command: npm run dev
+    port: 4000
+    priority: 20
+    color: green
+    dependsOn: [python-mcp]
+    envFile: server/.env
+    requiredEnv: [MONGO_URI, MASSIVE_API_KEY, OPENAI_API_KEY, APCA_API_KEY_ID, APCA_API_SECRET_KEY]
+    health:
+      type: http
+      url: http://localhost:4000/health
+      expect: 200
+
+  # ───────────────────────────── Frontend tier ──────────────────────────────
+  frontend:
+    displayName: Frontend (Vite)
+    category: frontend
+    description: React + Vite market dashboard.
+    tags: [ui, core]
+    cwd: client
+    command: npm run dev
+    port: 5173
+    priority: 40
+    color: cyan
+    dependsOn: [backend]
+    envFile: client/.env
+    health:
+      type: http
+      url: http://localhost:5173/
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Placeholder entries (disabled) — these show the pattern for the remaining
+  # services on the road to ~33. Flip `enabled: true` and set a real command
+  # when each one lands. They participate in profiles/graph/validation already.
+  # ═══════════════════════════════════════════════════════════════════════════
+  options-worker:
+    displayName: Options Worker
+    category: worker
+    description: Background worker evaluating options strategies / covered calls.
+    tags: [trading, workers]
+    enabled: false
+    cwd: server
+    command: npm run worker:options
+    priority: 30
+    color: yellow
+    dependsOn: [backend]
+    health:
+      type: log
+      match: "worker ready|listening for jobs"
+    restart:
+      policy: always
+
+  websocket-gateway:
+    displayName: WebSocket Gateway
+    category: realtime
+    description: Dedicated realtime market-data fan-out gateway.
+    tags: [realtime, trading]
+    enabled: false
+    cwd: server
+    command: npm run ws:gateway
+    port: 4100
+    priority: 30
+    color: brightBlue
+    dependsOn: [backend]
+    health:
+      type: tcp
+
+  scheduler:
+    displayName: Scheduler
+    category: worker
+    description: Cron-style scheduler for periodic ingestion and maintenance.
+    tags: [workers]
+    enabled: false
+    cwd: server
+    command: npm run scheduler
+    priority: 50
+    color: brightMagenta
+    dependsOn: [backend]
+    health:
+      type: log
+      match: "scheduler started"
+    restart:
+      policy: always
