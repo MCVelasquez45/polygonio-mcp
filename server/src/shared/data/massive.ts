@@ -1,5 +1,7 @@
 import axios from 'axios';
+import { isRetryableMassiveError, resolveMassiveRetryDelayMs } from './massiveRetry';
 // Handles authenticated + rate-limited access to Massive.com's API, with caching + retry logic.
+// Retry policy is centralized in ./massiveRetry so it stays consistent with massiveProvider.ts.
 
 const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY;
 const MASSIVE_BASE_URL = process.env.MASSIVE_BASE_URL || 'https://api.massive.com';
@@ -55,7 +57,6 @@ const requestQueue: QueueTask<any>[] = [];
 let activeRequests = 0;
 let nextAvailableTimestamp = Date.now();
 let scheduledDrain: NodeJS.Timeout | null = null;
-const retryableStatusCodes = new Set([429, 500, 502, 503, 504]);
 
 function normalizeAggTimestamp(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -152,48 +153,6 @@ function scheduleRequest<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
-function parseRetryAfter(header: any): number | null {
-  if (header == null) return null;
-  if (typeof header === 'number' && Number.isFinite(header)) {
-    return header * 1000;
-  }
-  if (typeof header === 'string') {
-    const seconds = Number(header);
-    if (!Number.isNaN(seconds)) {
-      return seconds * 1000;
-    }
-    const date = new Date(header);
-    if (!Number.isNaN(date.getTime())) {
-      const delta = date.getTime() - Date.now();
-      if (delta > 0) return delta;
-    }
-  }
-  return null;
-}
-
-function shouldRetry(error: unknown, attempt: number) {
-  if (attempt >= MASSIVE_MAX_RETRIES) return false;
-  if (!axios.isAxiosError(error)) return false;
-  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-    return true;
-  }
-  const status = error.response?.status;
-  if (status === 429) return false;
-  return typeof status === 'number' && retryableStatusCodes.has(status);
-}
-
-function resolveRetryDelay(error: unknown, attempt: number) {
-  const header =
-    (axios.isAxiosError(error) && (error.response?.headers?.['retry-after'] ?? error.response?.headers?.['Retry-After'])) ||
-    undefined;
-  const headerDelay = parseRetryAfter(header);
-  if (typeof headerDelay === 'number' && headerDelay > 0) {
-    return Math.min(headerDelay, MASSIVE_RETRY_MAX_MS);
-  }
-  const backoff = MASSIVE_RETRY_BASE_MS * Math.pow(2, Math.max(0, attempt));
-  return Math.min(backoff, MASSIVE_RETRY_MAX_MS);
-}
-
 /**
  * Generic Massive GET helper. Handles parameter normalization, request
  * deduping, caching, and automatic retries with exponential backoff. Most
@@ -268,9 +227,12 @@ async function executeMassiveRequest<T>(
     });
     return (data as any) ?? {};
   } catch (error) {
-    if (shouldRetry(error, attempt)) {
+    if (isRetryableMassiveError(error, attempt, MASSIVE_MAX_RETRIES)) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      const delayMs = resolveRetryDelay(error, attempt);
+      const delayMs = resolveMassiveRetryDelayMs(error, attempt, {
+        baseMs: MASSIVE_RETRY_BASE_MS,
+        maxMs: MASSIVE_RETRY_MAX_MS
+      });
       console.warn('[MASSIVE] request failed, retrying', {
         path,
         status,

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { isRetryableMassiveError, resolveMassiveRetryDelayMs } from '../../shared/data/massiveRetry';
 
 export type MassiveTimespan = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
 
@@ -35,6 +36,8 @@ const MASSIVE_TIMEOUT_MS = Math.max(1_000, Number(process.env.MASSIVE_TIMEOUT_MS
 const MASSIVE_CACHE_TTL_MS = Math.max(1_000, Number(process.env.MASSIVE_BACKTEST_CACHE_TTL_MS ?? 60_000));
 const MASSIVE_MAX_RETRIES = Math.max(0, Number(process.env.MASSIVE_BACKTEST_MAX_RETRIES ?? 2));
 const MASSIVE_MAX_PAGES = Math.max(1, Number(process.env.MASSIVE_BACKTEST_MAX_PAGES ?? 20));
+const MASSIVE_RETRY_BASE_MS = Math.max(100, Number(process.env.MASSIVE_RETRY_BASE_MS ?? 500));
+const MASSIVE_RETRY_MAX_MS = Math.max(MASSIVE_RETRY_BASE_MS, Number(process.env.MASSIVE_RETRY_MAX_MS ?? 5_000));
 
 const client = axios.create({
   baseURL: MASSIVE_BASE_URL,
@@ -66,21 +69,6 @@ function setCachedBars(key: string, value: NormalizedMarketBar[]) {
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function parseRetryAfter(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value * 1000;
-  }
-  if (typeof value === 'string') {
-    const seconds = Number(value);
-    if (Number.isFinite(seconds)) return seconds * 1000;
-    const parsedDate = Date.parse(value);
-    if (Number.isFinite(parsedDate)) {
-      return Math.max(parsedDate - Date.now(), 0);
-    }
-  }
-  return null;
 }
 
 function assertApiKey() {
@@ -165,9 +153,14 @@ async function requestAggregatesPage(
     });
     return data ?? {};
   } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 429 && attempt < MASSIVE_MAX_RETRIES) {
-      const retryAfterMs = parseRetryAfter(error.response.headers?.['retry-after'] ?? error.response.headers?.['Retry-After']) ?? 1_000;
-      await delay(retryAfterMs);
+    // Shared authoritative retry policy: 429 (honoring Retry-After) + transient
+    // 5xx / network timeouts. See shared/data/massiveRetry.ts.
+    if (isRetryableMassiveError(error, attempt, MASSIVE_MAX_RETRIES)) {
+      const delayMs = resolveMassiveRetryDelayMs(error, attempt, {
+        baseMs: MASSIVE_RETRY_BASE_MS,
+        maxMs: MASSIVE_RETRY_MAX_MS
+      });
+      await delay(delayMs);
       return requestAggregatesPage(url, params, attempt + 1);
     }
 
