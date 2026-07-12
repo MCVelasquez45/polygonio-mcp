@@ -6,10 +6,11 @@ type Props = {
   sessionId?: string;
   strategyId?: string;
   symbol?: string;
+  canAdmin?: boolean;
   onPromote?: () => void;
 };
 
-export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPromote }: Props) {
+export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', canAdmin = false, onPromote }: Props) {
   const [report, setReport] = useState<FuturesPromotionReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +18,11 @@ export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPro
 
   useEffect(() => {
     if (!sessionId || !strategyId) return;
+    if (!canAdmin) {
+      setReport(null);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     futuresApi
@@ -37,10 +43,14 @@ export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPro
     return () => {
       cancelled = true;
     };
-  }, [sessionId, strategyId]);
+  }, [canAdmin, sessionId, strategyId]);
 
   const handlePromote = async () => {
     if (!sessionId || !strategyId || !report || report.status !== 'eligible') return;
+    if (!canAdmin) {
+      setError('Promotion requires admin access.');
+      return;
+    }
     setDeploying(true);
     try {
       await futuresApi.deployFuturesSession({ sessionId, strategyId, symbol });
@@ -55,6 +65,10 @@ export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPro
 
   const handleRecheck = async () => {
     if (!sessionId || !strategyId) return;
+    if (!canAdmin) {
+      setError('Promotion checks require admin access.');
+      return;
+    }
     setLoading(true);
     try {
       const nextReport = await futuresApi.runFuturesPromotionCheck(sessionId, strategyId);
@@ -79,16 +93,17 @@ export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPro
           </div>
         </div>
         <div className="header-actions">
-          <button className="btn-recheck" disabled={!sessionId || !strategyId || loading} onClick={handleRecheck}>
+          <button className="btn-recheck" disabled={!canAdmin || !sessionId || !strategyId || loading} onClick={handleRecheck}>
             {loading ? 'Rechecking…' : 'Recheck'}
           </button>
-          <button className="btn-promote" disabled={!report || report.status !== 'eligible' || deploying} onClick={handlePromote}>
+          <button className="btn-promote" disabled={!canAdmin || !report || report.status !== 'eligible' || deploying} onClick={handlePromote}>
             {deploying ? 'Deploying…' : 'Promote to Engine'}
           </button>
         </div>
       </div>
 
       {(!sessionId || !strategyId) && <div className="notice">Start a paper session before running promotion checks.</div>}
+      {!canAdmin && <div className="notice">Promotion actions require admin access.</div>}
       {error && <div className="notice error">⚠ {error}</div>}
 
       <div className="section">

@@ -2,15 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { futuresApi } from '../../api';
 import { getApiBaseUrl } from '../../api/http';
+import { getSocketAuth } from '../../api/auth';
 import { ReconciliationView } from './ReconciliationView';
 import type { FuturesEngineState } from '../../types/futures';
 
 type Props = {
   sessionId?: string;
   strategyId?: string;
+  canAdmin?: boolean;
 };
 
-export function EngineRoomDashboard({ sessionId }: Props) {
+export function EngineRoomDashboard({ sessionId, canAdmin = false }: Props) {
   const [showReconciliation, setShowReconciliation] = useState(false);
   const [engineStatus, setEngineStatus] = useState<FuturesEngineState | null>(null);
   const [sessionStatus, setSessionStatus] = useState<'running' | 'paused' | 'stopped' | null>(null);
@@ -32,7 +34,7 @@ export function EngineRoomDashboard({ sessionId }: Props) {
   }, []);
 
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'], auth: getSocketAuth() });
 
     const handleEngineUpdate = () => {
       futuresApi.getFuturesEngineStatus().then(setEngineStatus).catch(() => undefined);
@@ -70,7 +72,13 @@ export function EngineRoomDashboard({ sessionId }: Props) {
         </div>
         <div className="header-right">
           <button className="btn-secondary" onClick={() => setShowReconciliation(true)}>📋 EOD Recon</button>
-          <button className="btn-emergency" onClick={() => sessionId && futuresApi.controlFuturesPaperSession(sessionId, 'emergency_stop').then(() => setSessionStatus('stopped'))}>EMERGENCY STOP</button>
+          <button
+            className="btn-emergency"
+            disabled={!canAdmin || !sessionId}
+            onClick={() => sessionId && futuresApi.controlFuturesPaperSession(sessionId, 'emergency_stop').then(() => setSessionStatus('stopped'))}
+          >
+            EMERGENCY STOP
+          </button>
         </div>
       </div>
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { runAgentScan } from '../../api/agent';
 import { getApiBaseUrl } from '../../api/http';
+import { getSocketAuth } from '../../api/auth';
 
 type ScannerSignal = {
   strategyId: string;
@@ -58,7 +59,8 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
 
   useEffect(() => {
     const socket = io(socketUrl, {
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      auth: getSocketAuth()
     });
     socketRef.current = socket;
 

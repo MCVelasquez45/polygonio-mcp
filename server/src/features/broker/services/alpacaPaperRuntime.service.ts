@@ -1,4 +1,5 @@
 import type { Server as SocketServer } from 'socket.io';
+import { SOCKET_ROOMS } from '../../../shared/auth';
 import { AlpacaPaperSessionModel } from '../models/alpacaPaperSession.model';
 import { LabStrategyModel } from '../../handoff/models/strategyModel';
 import {
@@ -204,7 +205,7 @@ function createAlpacaTimer(runtime: AlpacaRuntimeState, intervalMs: number) {
               },
             } as any);
 
-            io?.emit('alpaca:paper:order', {
+            io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:order', {
               sessionId: runtime.sessionId,
               type: 'close',
               side: runtime.signalPosition === 1 ? 'sell' : 'buy',
@@ -268,7 +269,7 @@ function createAlpacaTimer(runtime: AlpacaRuntimeState, intervalMs: number) {
               },
             } as any);
 
-            io?.emit('alpaca:paper:order', {
+            io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:order', {
               sessionId: runtime.sessionId,
               type: 'open',
               side,
@@ -331,7 +332,7 @@ function createAlpacaTimer(runtime: AlpacaRuntimeState, intervalMs: number) {
             payload: { reason: 'max daily loss breached', dailyPnl: session.state.dailyPnl },
           } as any);
 
-          io?.emit('alpaca:paper:risk', {
+          io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:risk', {
             sessionId: runtime.sessionId,
             status: 'paused',
             reason: 'max daily loss breached',
@@ -352,7 +353,7 @@ function createAlpacaTimer(runtime: AlpacaRuntimeState, intervalMs: number) {
       await session.save();
 
       // 9. Broadcast state update
-      io?.emit('alpaca:paper:update', {
+      io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:update', {
         sessionId: runtime.sessionId,
         symbol: runtime.symbol,
         state: session.state,
@@ -481,7 +482,7 @@ export async function startAlpacaPaperSession(input: StartAlpacaPaperInput) {
 
   console.log(`[ALPACA-PAPER] Started session ${sessionId} for ${symbol} (${warmupBars.length} warmup bars, ${intervalSeconds}s interval)`);
 
-  io?.emit('alpaca:paper:started', {
+  io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:started', {
     sessionId,
     strategyId: input.strategyId,
     strategyName: input.strategyName,
@@ -549,7 +550,7 @@ export async function controlAlpacaPaperSession(
 
   await session.save();
 
-  io?.emit('alpaca:paper:update', {
+  io?.to(SOCKET_ROOMS.trader).emit('alpaca:paper:update', {
     sessionId,
     symbol: session.symbol,
     state: session.state,

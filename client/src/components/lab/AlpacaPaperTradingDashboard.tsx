@@ -2,16 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { alpacaApi } from '../../api';
 import { getApiBaseUrl } from '../../api/http';
+import { getSocketAuth } from '../../api/auth';
 import type { AlpacaPaperSession } from '../../api/alpaca';
 
 type Props = {
   sessionId: string;
   strategyId?: string;
   strategyName?: string;
+  canTrade?: boolean;
   onBack?: () => void;
 };
 
-export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyName, onBack }: Props) {
+export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyName, canTrade = false, onBack }: Props) {
   const [session, setSession] = useState<AlpacaPaperSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyNam
 
   // Real-time updates via Socket.IO
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'], auth: getSocketAuth() });
 
     const handleUpdate = (payload: any) => {
       if (payload?.sessionId !== sessionId) return;
@@ -72,6 +74,10 @@ export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyNam
   }, [sessionId]);
 
   const handleControl = async (action: 'pause' | 'resume' | 'stop') => {
+    if (!canTrade) {
+      setError('Paper trading controls require trader access.');
+      return;
+    }
     try {
       const updated = await alpacaApi.controlAlpacaPaperSession(sessionId, action);
       setSession(updated);
@@ -97,7 +103,7 @@ export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyNam
     return (session?.orders ?? []).slice(-10).reverse();
   }, [session?.orders]);
 
-  const controlsDisabled = !session;
+  const controlsDisabled = !canTrade || !session;
   const isRunning = session?.status === 'running';
   const isPaused = session?.status === 'paused';
 
@@ -141,6 +147,7 @@ export function AlpacaPaperTradingDashboard({ sessionId, strategyId, strategyNam
       </div>
 
       {loading && <div className="notice">Loading Alpaca paper session...</div>}
+      {!canTrade && <div className="notice">Paper trading controls require trader access.</div>}
       {error && <div className="notice error">{error}</div>}
 
       <div className="metrics-grid">

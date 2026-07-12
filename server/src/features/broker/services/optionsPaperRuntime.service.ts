@@ -16,6 +16,7 @@
  */
 
 import type { Server as SocketServer } from 'socket.io';
+import { SOCKET_ROOMS } from '../../../shared/auth';
 import { OptionsPaperSessionModel } from '../models/optionsPaperSession.model';
 import { LabStrategyModel } from '../../handoff/models/strategyModel';
 import {
@@ -207,7 +208,7 @@ function createOptionsTick(runtime: RuntimeState, intervalMs: number) {
           console.log(`[OPTIONS-PAPER] Entering analysis phase at ${etTime} ET`);
         } else {
           // Still waiting — broadcast wait status so dashboard can show progress
-          io?.emit('options:paper:waiting', {
+          io?.to(SOCKET_ROOMS.trader).emit('options:paper:waiting', {
             sessionId: runtime.sessionId,
             phase: 'pre_analysis',
             currentTimeET: etTime,
@@ -234,7 +235,7 @@ function createOptionsTick(runtime: RuntimeState, intervalMs: number) {
         session.regime.lastClassifiedAt = now.toISOString();
         session.regime.tickerChanges = regimeResult.details.tickerChanges as any;
 
-        io?.emit('options:paper:regime', {
+        io?.to(SOCKET_ROOMS.trader).emit('options:paper:regime', {
           sessionId: runtime.sessionId,
           regime: regimeResult,
         });
@@ -249,7 +250,7 @@ function createOptionsTick(runtime: RuntimeState, intervalMs: number) {
               reason: calendarCheck.reason,
               regime: regimeResult.regime,
             });
-            io?.emit('options:paper:update', {
+            io?.to(SOCKET_ROOMS.trader).emit('options:paper:update', {
               sessionId: runtime.sessionId,
               state: session.state,
               spread: session.spread,
@@ -363,7 +364,7 @@ function createOptionsTick(runtime: RuntimeState, intervalMs: number) {
                 alpacaOrderId: orderId,
               });
 
-              io?.emit('options:paper:order', {
+              io?.to(SOCKET_ROOMS.trader).emit('options:paper:order', {
                 sessionId: runtime.sessionId,
                 type: 'entry',
                 spread,
@@ -530,7 +531,7 @@ function createOptionsTick(runtime: RuntimeState, intervalMs: number) {
       await session.save();
 
       // Broadcast
-      io?.emit('options:paper:update', {
+      io?.to(SOCKET_ROOMS.trader).emit('options:paper:update', {
         sessionId: runtime.sessionId,
         state: session.state,
         spread: session.spread,
@@ -591,7 +592,7 @@ async function closeSpread(session: any, runtime: RuntimeState, reason: string) 
     } as any);
 
     pushEvent(session, 'spread_closed', { reason, pnl: session.spread.unrealizedPnl, orderId });
-    io?.emit('options:paper:order', { sessionId: runtime.sessionId, type: 'close', reason, orderId });
+    io?.to(SOCKET_ROOMS.trader).emit('options:paper:order', { sessionId: runtime.sessionId, type: 'close', reason, orderId });
     console.log(`[OPTIONS-PAPER] Closed spread: ${reason}, P&L=$${session.spread.unrealizedPnl.toFixed(2)}`);
   } catch (err: any) {
     pushEvent(session, 'close_error', { reason, error: err?.message });
@@ -800,7 +801,7 @@ export async function startOptionsPaperSession(input: StartInput) {
     `(entry ${entryWindow?.start_time ?? '14:00'}-${entryWindow?.end_time ?? '14:30'} ET, ${intervalSeconds}s interval)`,
   );
 
-  io?.emit('options:paper:started', {
+  io?.to(SOCKET_ROOMS.trader).emit('options:paper:started', {
     sessionId,
     strategyId: input.strategyId,
     strategyName: input.strategyName,
@@ -856,7 +857,7 @@ export async function controlOptionsPaperSession(
   pushEvent(session, `session_${action}`, { action });
   await session.save();
 
-  io?.emit('options:paper:update', {
+  io?.to(SOCKET_ROOMS.trader).emit('options:paper:update', {
     sessionId,
     state: session.state,
     spread: session.spread,

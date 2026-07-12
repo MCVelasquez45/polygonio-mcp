@@ -2,16 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { futuresApi } from '../../api';
 import { getApiBaseUrl } from '../../api/http';
+import { getSocketAuth } from '../../api/auth';
 import type { FuturesPaperSession } from '../../types/futures';
 
 type Props = {
   sessionId?: string;
   strategyId?: string;
   strategyName?: string;
+  canTrade?: boolean;
   onRequestPromotion?: () => void;
 };
 
-export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onRequestPromotion }: Props) {
+export function PaperTradingDashboard({ sessionId, strategyId, strategyName, canTrade = false, onRequestPromotion }: Props) {
   const [session, setSession] = useState<FuturesPaperSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
   }, [sessionId]);
 
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'], auth: getSocketAuth() });
     const handleMarketUpdate = (payload: any) => {
       if (!sessionId || payload?.sessionId !== sessionId) return;
       setSession(prev => (prev ? { ...prev, state: payload.state, status: payload.status } : prev));
@@ -70,10 +72,14 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
     };
   }, [sessionId]);
 
-  const controlsDisabled = !sessionId || !session;
+  const controlsDisabled = !canTrade || !sessionId || !session;
 
   const handleControl = async (action: 'pause' | 'resume' | 'stop' | 'emergency_stop') => {
     if (!sessionId) return;
+    if (!canTrade) {
+      setError('Paper trading controls require trader access.');
+      return;
+    }
     try {
       const updated = await futuresApi.controlFuturesPaperSession(sessionId, action);
       setSession(updated);
@@ -105,6 +111,7 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
 
       {loading && <div className="notice">Loading paper session...</div>}
       {!sessionId && <div className="notice">Run a futures backtest to initialize a paper session.</div>}
+      {!canTrade && <div className="notice">Paper trading controls require trader access.</div>}
       {error && <div className="notice error">⚠ {error}</div>}
 
       <div className="metrics-grid">

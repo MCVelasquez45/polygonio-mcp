@@ -1,4 +1,5 @@
 import type { Server as SocketServer } from 'socket.io';
+import { SOCKET_ROOMS } from '../../../shared/auth';
 import {
   FuturesEngineSessionModel,
   FuturesPaperSessionModel,
@@ -155,13 +156,13 @@ async function persistStateAndBroadcast(sessionId: string, payload: { eventType:
   const now = Date.now();
   updateHealth(session.symbol, now, session.status);
 
-  io?.emit('futures:market:update', {
+  io?.to(SOCKET_ROOMS.trader).emit('futures:market:update', {
     sessionId,
     symbol: session.symbol,
     state: session.state,
     status: session.status
   });
-  io?.emit('futures:position:update', {
+  io?.to(SOCKET_ROOMS.trader).emit('futures:position:update', {
     sessionId,
     symbol: session.symbol,
     position: session.state.position,
@@ -171,7 +172,7 @@ async function persistStateAndBroadcast(sessionId: string, payload: { eventType:
       daily: session.state.dailyPnl
     }
   });
-  io?.emit('futures:risk:update', {
+  io?.to(SOCKET_ROOMS.trader).emit('futures:risk:update', {
     sessionId,
     symbol: session.symbol,
     riskUtilizationPct: session.state.riskUtilizationPct,
@@ -223,7 +224,7 @@ function createSessionTimer(runtime: RuntimeSessionState) {
         openedAt: new Date().toISOString()
       } as any;
 
-      io?.emit('futures:order:filled', {
+      io?.to(SOCKET_ROOMS.trader).emit('futures:order:filled', {
         sessionId: runtime.sessionId,
         symbol: session.symbol,
         side,
@@ -248,7 +249,7 @@ function createSessionTimer(runtime: RuntimeSessionState) {
             reason: 'volume_crossover'
           }
         } as any);
-        io?.emit('futures:roll:event', {
+        io?.to(SOCKET_ROOMS.trader).emit('futures:roll:event', {
           sessionId: runtime.sessionId,
           symbol: session.symbol,
           fromContract,
@@ -266,7 +267,7 @@ function createSessionTimer(runtime: RuntimeSessionState) {
         timestamp: new Date().toISOString(),
         payload: { reason: 'max daily loss breached', riskUtilizationPct: session.state.riskUtilizationPct }
       } as any);
-      io?.emit('futures:risk:update', {
+      io?.to(SOCKET_ROOMS.trader).emit('futures:risk:update', {
         sessionId: runtime.sessionId,
         symbol: session.symbol,
         status: 'paused',
@@ -386,7 +387,7 @@ function createStrategyTimer(runtime: RuntimeSessionState) {
 
         const exitSide = runtime.signalPosition === 1 ? 'short' : 'long'; // closing = opposite
 
-        io?.emit('futures:order:filled', {
+        io?.to(SOCKET_ROOMS.trader).emit('futures:order:filled', {
           sessionId: runtime.sessionId,
           symbol: session.symbol,
           side: exitSide,
@@ -418,7 +419,7 @@ function createStrategyTimer(runtime: RuntimeSessionState) {
           openedAt: now.toISOString(),
         } as any;
 
-        io?.emit('futures:order:filled', {
+        io?.to(SOCKET_ROOMS.trader).emit('futures:order:filled', {
           sessionId: runtime.sessionId,
           symbol: session.symbol,
           side: entrySide,
@@ -472,7 +473,7 @@ function createStrategyTimer(runtime: RuntimeSessionState) {
         timestamp: now.toISOString(),
         payload: { reason: 'max daily loss breached', riskUtilizationPct: session.state.riskUtilizationPct },
       } as any);
-      io?.emit('futures:risk:update', {
+      io?.to(SOCKET_ROOMS.trader).emit('futures:risk:update', {
         sessionId: runtime.sessionId,
         symbol: session.symbol,
         status: 'paused',
@@ -606,7 +607,7 @@ export async function startFuturesPaperSession(input: StartSessionInput) {
 
   updateHealth(input.symbol, Date.now(), 'running');
 
-  io?.emit('futures:session:started', {
+  io?.to(SOCKET_ROOMS.trader).emit('futures:session:started', {
     sessionId,
     strategyId: input.strategyId,
     strategyName: input.strategyName,
@@ -664,7 +665,7 @@ export async function controlFuturesPaperSession(
   await session.save();
 
   if (action === 'stop' || action === 'emergency_stop') {
-    io?.emit('futures:engine:update', { sessionId, status: 'stopped', action });
+    io?.to(SOCKET_ROOMS.admin).emit('futures:engine:update', { sessionId, status: 'stopped', action });
   }
 
   return session.toObject();
@@ -740,7 +741,7 @@ export async function generateFuturesPromotionReport(sessionId: string, strategy
     generatedAt: new Date()
   });
 
-  io?.emit('futures:gate:update', {
+  io?.to(SOCKET_ROOMS.admin).emit('futures:gate:update', {
     sessionId,
     strategyId,
     status,
@@ -785,7 +786,7 @@ export async function deployFuturesSessionToEngine(args: { sessionId: string; st
   } as any;
   await doc.save();
 
-  io?.emit('futures:engine:update', {
+  io?.to(SOCKET_ROOMS.admin).emit('futures:engine:update', {
     sessionId: args.sessionId,
     strategyId: args.strategyId,
     symbol: args.symbol,

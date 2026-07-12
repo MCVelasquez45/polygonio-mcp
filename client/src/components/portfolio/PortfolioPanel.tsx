@@ -35,6 +35,7 @@ const INSIGHT_TTL_MS = 60 * 60 * 1000;
 type Props = {
   aiEnabled?: boolean;
   sentimentEnabled?: boolean;
+  canTrade?: boolean;
 };
 
 function toNumber(value: string | number | null | undefined, fallback = 0) {
@@ -153,7 +154,7 @@ function buildPositionInsight(position: PositionView) {
   };
 }
 
-export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Props) {
+export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, canTrade = false }: Props) {
   const [positions, setPositions] = useState<PositionView[]>([]);
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [accountSummary, setAccountSummary] = useState<{ buyingPower: number; equity: number; cash: number }>({
@@ -181,6 +182,15 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const insightsAllowed = aiEnabled && sentimentEnabled;
 
   const loadPortfolio = useCallback(async () => {
+    if (!canTrade) {
+      setPositions([]);
+      setOrders([]);
+      setError('Broker portfolio access requires trader access.');
+      setOrdersError(null);
+      setLoading(false);
+      setOrdersLoading(false);
+      return;
+    }
     setLoading(true);
     setOrdersLoading(true);
     setError(null);
@@ -253,7 +263,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
       setLoading(false);
       setOrdersLoading(false);
     }
-  }, []);
+  }, [canTrade]);
 
   const handleRefreshInsights = useCallback(() => {
     if (!insightsAllowed) {
@@ -393,6 +403,10 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const handleClosePosition = useCallback(
     async (position: PositionView) => {
       if (closingSymbol) return;
+      if (!canTrade) {
+        setError('Closing positions requires trader access.');
+        return;
+      }
       if (isMarketOpen === false) {
         setError('Options market orders are only allowed during market hours.');
         return;
@@ -426,7 +440,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
         setClosingSymbol(null);
       }
     },
-    [closingSymbol, isMarketOpen, loadPortfolio]
+    [canTrade, closingSymbol, isMarketOpen, loadPortfolio]
   );
 
   const totalPnl = useMemo(() => positions.reduce((sum, row) => sum + row.unrealizedPnl, 0), [positions]);
@@ -480,6 +494,11 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
         </p>
       </div>
       {error && <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2">{error}</div>}
+      {!canTrade && (
+        <div className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
+          Broker positions and order actions are available to trader and admin roles.
+        </div>
+      )}
       {loading && <p className="text-sm text-gray-400">Loading Alpaca account…</p>}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -548,7 +567,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
                 type="button"
                 onClick={() => handleClosePosition(pos)}
                 className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-40"
-                disabled={closingSymbol === pos.symbol || isMarketOpen === false}
+                disabled={!canTrade || closingSymbol === pos.symbol || isMarketOpen === false}
               >
                 {closingSymbol === pos.symbol ? 'Closing…' : 'Close Position'}
               </button>

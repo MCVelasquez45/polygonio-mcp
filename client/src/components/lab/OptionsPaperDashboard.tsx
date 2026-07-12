@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { alpacaApi } from '../../api';
 import { getApiBaseUrl } from '../../api/http';
+import { getSocketAuth } from '../../api/auth';
 import type { OptionsPaperSession } from '../../api/alpaca';
 
 type Props = {
   sessionId: string;
   strategyId?: string;
   strategyName?: string;
+  canTrade?: boolean;
   onBack?: () => void;
 };
 
@@ -37,7 +39,7 @@ function tickerColor(changePct: number): string {
   return '#ef4444';
 }
 
-export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, onBack }: Props) {
+export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, canTrade = false, onBack }: Props) {
   const [session, setSession] = useState<OptionsPaperSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, onB
 
   // Real-time updates via Socket.IO
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'], auth: getSocketAuth() });
 
     const handleUpdate = (payload: any) => {
       if (payload?.sessionId !== sessionId) return;
@@ -115,6 +117,10 @@ export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, onB
   }, [sessionId]);
 
   const handleControl = async (action: 'pause' | 'resume' | 'stop') => {
+    if (!canTrade) {
+      setError('Options paper controls require trader access.');
+      return;
+    }
     try {
       const updated = await alpacaApi.controlOptionsPaperSession(sessionId, action);
       setSession(updated);
@@ -135,7 +141,7 @@ export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, onB
 
   const currentPhaseIdx = PHASES.indexOf(session?.state?.phase ?? 'pre_analysis');
 
-  const controlsDisabled = !session;
+  const controlsDisabled = !canTrade || !session;
   const isRunning = session?.status === 'running';
   const isPaused = session?.status === 'paused';
   const isStopped = session?.status === 'stopped' || session?.status === 'expired';
@@ -183,6 +189,7 @@ export function OptionsPaperDashboard({ sessionId, strategyId, strategyName, onB
       </div>
 
       {loading && <div className="notice">Loading options paper session...</div>}
+      {!canTrade && <div className="notice">Options paper controls require trader access.</div>}
       {error && <div className="notice error">{error}</div>}
 
       {/* ── Phase Indicator ── */}

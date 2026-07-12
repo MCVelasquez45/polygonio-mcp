@@ -16,13 +16,22 @@ type Metrics = {
 type Props = {
   backtestId?: string;
   strategyId?: string;
+  canTrade?: boolean;
   onDeployToPaper?: (sessionId: string, sessionType: 'equity' | 'options') => void;
   onClose?: () => void;
   onApplySuggestions?: (suggestions: AiSuggestion[]) => void;
   onIterateAndRerun?: (suggestions: AiSuggestion[]) => void;
 };
 
-export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, onClose, onApplySuggestions, onIterateAndRerun }: Props) {
+export function BacktestResultsPanel({
+  backtestId,
+  strategyId,
+  canTrade = false,
+  onDeployToPaper,
+  onClose,
+  onApplySuggestions,
+  onIterateAndRerun
+}: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -270,6 +279,10 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
   const handleDeployToAlpacaPaper = async () => {
     const sid = strategyId ?? backtest?.strategyId;
     if (!sid) return;
+    if (!canTrade) {
+      alert('Starting paper trading requires trader access.');
+      return;
+    }
     setIsDeploying(true);
 
     // Find the version label linked to this backtest
@@ -326,7 +339,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
         </div>
         <div className="header-actions">
           <button className="btn-secondary" onClick={onClose}>Close</button>
-          <button className="btn-primary" onClick={() => setShowDeployModal(true)}>Deploy to Paper</button>
+          <button className="btn-primary" onClick={() => setShowDeployModal(true)} disabled={!canTrade}>Deploy to Paper</button>
         </div>
       </div>
 
@@ -834,7 +847,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
               <button className="btn-secondary" onClick={() => setShowDeployModal(false)} disabled={isDeploying}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleDeployToAlpacaPaper} disabled={isDeploying || (!isOptionsStrategy && !deploySymbol)}>
+              <button className="btn-primary" onClick={handleDeployToAlpacaPaper} disabled={!canTrade || isDeploying || (!isOptionsStrategy && !deploySymbol)}>
                 {isDeploying ? 'Starting...' : isOptionsStrategy ? 'Start Options Paper Trading' : 'Start Paper Trading'}
               </button>
             </div>

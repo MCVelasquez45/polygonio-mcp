@@ -14,6 +14,8 @@ type Props = {
   afterHours?: boolean;
   nextOpen?: string | null;
   autoSubmit?: boolean;
+  canTrade?: boolean;
+  authRole?: string;
   onOrderSubmitted?: (ticker: string, side: string, qty: number, price: number) => void;
 };
 
@@ -92,6 +94,8 @@ export function OrderTicketPanel({
   afterHours,
   nextOpen,
   autoSubmit = false,
+  canTrade = false,
+  authRole = 'viewer',
   onOrderSubmitted
 }: Props) {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -131,6 +135,11 @@ export function OrderTicketPanel({
   }, [marketClosed, orderType]);
 
   useEffect(() => {
+    if (!canTrade) {
+      setBuyingPower(null);
+      setBuyingPowerLoading(false);
+      return;
+    }
     let cancelled = false;
     setBuyingPowerLoading(true);
     getBrokerAccount()
@@ -148,7 +157,7 @@ export function OrderTicketPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canTrade]);
 
   const markPrice = useMemo(() => {
     if (quote?.midpoint) return quote.midpoint;
@@ -213,6 +222,7 @@ export function OrderTicketPanel({
     (!requiresStop || stopValue != null) &&
     (!requiresTrail || trailValueNum != null) &&
     !insufficientFunds &&
+    canTrade &&
     !submitting;
 
   function buildOrderDraft(): OrderDraft | null {
@@ -275,7 +285,7 @@ export function OrderTicketPanel({
 
   async function handleSubmit() {
     const draft = buildOrderDraft();
-    if (!draft) return;
+    if (!draft || !canTrade) return;
     setSubmitting(true);
     setSubmissionResult(null);
     try {
@@ -297,7 +307,7 @@ export function OrderTicketPanel({
 
   // Auto-submit logic
   useEffect(() => {
-    if (!autoSubmit || !contract?.ticker || submitting || submissionResult) return;
+    if (!autoSubmit || !canTrade || !contract?.ticker || submitting || submissionResult) return;
     if (autoSubmitAttemptedRef.current === contract.ticker) return;
 
     // Check if we have everything we need to submit
@@ -306,7 +316,7 @@ export function OrderTicketPanel({
       autoSubmitAttemptedRef.current = contract.ticker;
       handleSubmit();
     }
-  }, [autoSubmit, contract?.ticker, canSubmit, submitting, submissionResult]);
+  }, [autoSubmit, canTrade, contract?.ticker, canSubmit, submitting, submissionResult]);
 
   useEffect(() => {
     if (contract?.ticker !== autoSubmitAttemptedRef.current) {
@@ -342,6 +352,12 @@ export function OrderTicketPanel({
                 Next open {formatCountdown(nextOpen) ?? `on ${new Date(nextOpen).toLocaleString()}`}.
               </p>
             )}
+          </div>
+        )}
+
+        {!canTrade && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Broker actions require trader access. Current role: {authRole}.
           </div>
         )}
 

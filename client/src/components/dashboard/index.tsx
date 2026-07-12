@@ -31,9 +31,19 @@ type Props = {
   apiBase?: string;
   onTickerSelect?: (ticker: string) => void;
   socket?: Socket | null;
+  authRole?: 'viewer' | 'trader' | 'admin';
+  canTrade?: boolean;
+  canAdmin?: boolean;
 };
 
-export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }: Props) {
+export function Dashboard({
+  apiBase = getApiBaseUrl(),
+  onTickerSelect,
+  socket,
+  authRole = 'viewer',
+  canTrade = false,
+  canAdmin = false
+}: Props) {
   const [activePanel, setActivePanel] = useState('lab-strategies');
   const [lastActivePanel, setLastActivePanel] = useState('lab-strategies');
   const [showCreationWizard, setShowCreationWizard] = useState(false);
@@ -61,6 +71,10 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
   };
 
   const handleCreateStrategy = () => {
+    if (!canAdmin) {
+      toast.error(`Strategy creation requires admin access. Current role: ${authRole}.`);
+      return;
+    }
     setShowCreationWizard(true);
   };
 
@@ -383,6 +397,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           <BacktestResultsPanel
             backtestId={backtestResultsId || undefined}
             strategyId={selectedStrategyId || undefined}
+            canTrade={canTrade}
             onDeployToPaper={(sessionId, sessionType) => {
               setAlpacaPaperSessionId(sessionId);
               setAlpacaSessionType(sessionType);
@@ -421,6 +436,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             sessionId={alpacaPaperSessionId}
             strategyId={selectedStrategyId || undefined}
             strategyName={selectedStrategy?.name}
+            canTrade={canTrade}
             onBack={() => setActivePanel(selectedStrategyId ? 'lab-paper-history' : 'lab-backtest-results')}
           />
         ) : alpacaPaperSessionId ? (
@@ -428,6 +444,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             sessionId={alpacaPaperSessionId}
             strategyId={selectedStrategyId || undefined}
             strategyName={selectedStrategy?.name}
+            canTrade={canTrade}
             onBack={() => setActivePanel(selectedStrategyId ? 'lab-paper-history' : 'lab-backtest-results')}
           />
         ) : (
@@ -435,6 +452,7 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             sessionId={paperSessionId || undefined}
             strategyId={selectedStrategyId || undefined}
             strategyName={selectedStrategy?.name}
+            canTrade={canTrade}
             onRequestPromotion={() => setActivePanel('lab-promotion')}
           />
         );
@@ -444,11 +462,12 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             sessionId={paperSessionId || undefined}
             strategyId={selectedStrategyId || undefined}
             symbol={selectedStrategy?.futuresConfig?.contract ?? 'ES'}
+            canAdmin={canAdmin}
             onPromote={() => setActivePanel('live')}
           />
         );
       case 'live':
-        return <EngineRoomDashboard sessionId={paperSessionId || undefined} strategyId={selectedStrategyId || undefined} />;
+        return <EngineRoomDashboard sessionId={paperSessionId || undefined} strategyId={selectedStrategyId || undefined} canAdmin={canAdmin} />;
       case 'monitoring-perf':
         return <PerformanceReviewDashboard />;
       case 'monitoring-ab':
