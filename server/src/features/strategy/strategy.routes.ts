@@ -8,6 +8,7 @@ import { parseStrategyInput, validateStructuredStrategy } from './parser/nlpPars
 import { StrategyModel } from './models/strategyModel';
 import { StrategyVersionModel } from './models/strategyVersionModel';
 import { BacktestRunModel } from './models/backtestRunModel';
+import { requireAdmin } from '../../shared/auth';
 import {
   assertStrategySourceType,
   assertStructuredStrategy,
@@ -186,7 +187,7 @@ function applyExtractionMetadata(strategy: StructuredStrategy, body: Record<stri
   return strategy;
 }
 
-router.post('/compile', async (req, res) => {
+router.post('/compile', requireAdmin, async (req, res) => {
   try {
     const body = parseRequestBody(req.body);
     let parsedStrategy = resolveStructuredStrategy(body);
@@ -205,7 +206,7 @@ router.post('/compile', async (req, res) => {
     const sequencedStrategy = await StrategyModel.findByIdAndUpdate(
       strategy._id,
       { $inc: { versionSequence: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!sequencedStrategy) {
@@ -253,7 +254,7 @@ router.post('/compile', async (req, res) => {
   }
 });
 
-router.post('/compile-extracted', async (req, res) => {
+router.post('/compile-extracted', requireAdmin, async (req, res) => {
   try {
     const body = parseRequestBody(req.body);
     const name = readOptionalString(body.name) ?? 'Extracted Strategy';
@@ -360,7 +361,7 @@ router.post('/compile-extracted', async (req, res) => {
         $inc: { versionSequence: 1 },
         tradingMethod: tradingMethod,
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!sequencedStrategy) {
@@ -400,7 +401,7 @@ router.post('/compile-extracted', async (req, res) => {
   }
 });
 
-router.post('/backtest', async (req, res) => {
+router.post('/backtest', requireAdmin, async (req, res) => {
   try {
     const body = parseRequestBody(req.body);
     const versionId = readObjectId(body.versionId, 'versionId');

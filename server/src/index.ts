@@ -28,6 +28,7 @@ import {
 import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
 import { initAlpacaPaperRuntime } from './features/broker/services/alpacaPaperRuntime.service';
 import { initOptionsPaperRuntime } from './features/broker/services/optionsPaperRuntime.service';
+import { authenticateSocket, joinAuthorizedSocketRooms } from './shared/auth';
 
 const app = express();
 app.use(cors());
@@ -79,9 +80,19 @@ app.use((error: any, req: express.Request, res: express.Response, _next: express
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const httpServer = createServer(app);
 
+httpServer.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`[SERVER] Port ${PORT} is already in use — another backend instance is likely running.`);
+    console.error(`[SERVER] Find it with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN`);
+    process.exit(1);
+  }
+  throw error;
+});
+
 const io = new SocketIOServer(httpServer, {
   cors: { origin: '*' }
 });
+io.use(authenticateSocket);
 app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
@@ -90,8 +101,9 @@ initAlpacaPaperRuntime(io);
 initOptionsPaperRuntime(io);
 
 io.on('connection', socket => {
-  console.log('[SERVER] WebSocket client connected:', socket.id);
-  socket.emit('connected', { msg: 'WebSocket connected' });
+  joinAuthorizedSocketRooms(socket);
+  console.log('[SERVER] WebSocket client connected:', socket.id, socket.data.user?.role);
+  socket.emit('connected', { msg: 'WebSocket connected', role: socket.data.user?.role });
   registerLiveFeedHandlers(socket);
   registerChartHubHandlers(socket);
 

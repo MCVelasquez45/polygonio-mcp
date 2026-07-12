@@ -4,6 +4,7 @@ import { EngineStrategyModel } from '../handoff/models/strategyModel';
 import { screenerScheduler } from './services/screenerScheduler';
 
 import { io } from '../../index';
+import { requireAdmin } from '../../shared/auth';
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ const router = express.Router();
  * Webhook to receive screener results from external agents (e.g. Python Agent)
  * and broadcast them to the UI.
  */
-router.post('/hooks/screener-result', (req, res) => {
+router.post('/hooks/screener-result', requireAdmin, (req, res) => {
   try {
     const { opportunities, strategyName = 'AI Agent Scan' } = req.body;
 
@@ -101,7 +102,7 @@ router.get('/strategies/:id', async (req, res) => {
  * POST /api/engine/strategies/:id/trigger
  * Manually trigger a screener strategy execution.
  */
-router.post('/strategies/:id/trigger', async (req, res) => {
+router.post('/strategies/:id/trigger', requireAdmin, async (req, res) => {
   try {
     const strategyId = req.params.id;
 
@@ -141,7 +142,7 @@ router.post('/strategies/:id/trigger', async (req, res) => {
  * PATCH /api/engine/strategies/:id/status
  * Update strategy status (pause/resume).
  */
-router.patch('/strategies/:id/status', async (req, res) => {
+router.patch('/strategies/:id/status', requireAdmin, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -154,7 +155,7 @@ router.patch('/strategies/:id/status', async (req, res) => {
     const strategy = await EngineStrategyModel.findByIdAndUpdate(
       req.params.id,
       { status },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!strategy) {

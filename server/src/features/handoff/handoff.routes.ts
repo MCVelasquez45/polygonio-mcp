@@ -1,13 +1,14 @@
 import express from 'express';
 import { HandoffRequestModel } from './models/handoffModel';
 import { LabStrategyModel, EngineStrategyModel } from './models/strategyModel';
+import { requireAdmin, requireTrader } from '../../shared/auth';
 
 const router = express.Router();
 
 // --- Lab Routes ---
 
 // Create Handoff Request
-router.post('/request', async (req, res) => {
+router.post('/request', requireTrader, async (req, res) => {
   try {
     const { strategyId, engineConfig, validationProof, requesterId } = req.body;
 
@@ -39,10 +40,15 @@ router.post('/request', async (req, res) => {
 // --- Engine Room Routes ---
 
 // List Handoff Requests
-router.get('/requests', async (req, res) => {
+router.get('/requests', requireAdmin, async (req, res) => {
   try {
-    const { status } = req.query;
-    const filter = status ? { status } : {};
+    const allowedStatuses = ['pending', 'approved', 'rejected', 'deployed'] as const;
+    type HandoffStatus = (typeof allowedStatuses)[number];
+    const status =
+      typeof req.query.status === 'string' && (allowedStatuses as readonly string[]).includes(req.query.status)
+        ? (req.query.status as HandoffStatus)
+        : undefined;
+    const filter: { status?: HandoffStatus } = status ? { status } : {};
     const requests = await HandoffRequestModel.find(filter)
       .populate('strategyId') // Include strategy details
       .sort({ createdAt: -1 });
@@ -53,7 +59,7 @@ router.get('/requests', async (req, res) => {
 });
 
 // Approve Request -> Create Engine Strategy
-router.post('/approve', async (req, res) => {
+router.post('/approve', requireAdmin, async (req, res) => {
   try {
     const { requestId, approverId } = req.body;
 

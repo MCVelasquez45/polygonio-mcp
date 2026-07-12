@@ -2,11 +2,12 @@ import express from 'express';
 import axios from 'axios';
 import { LabStrategyModel, StrategyVersionModel } from '../handoff/models/strategyModel';
 import { getContractSpec } from '../futures/services/contractSpecs.service';
+import { requireAdmin } from '../../shared/auth';
 
 const router = express.Router();
 
 // Create a new Lab strategy
-router.post('/strategy/create', async (req, res) => {
+router.post('/strategy/create', requireAdmin, async (req, res) => {
   try {
     const { name, description, strategyType, ownerId, modelConfig, screenerConfig, zonexiConfig, futuresConfig } = req.body;
 
@@ -108,7 +109,7 @@ router.get('/strategy/:id', async (req, res) => {
 });
 
 // Update strategy — supports full field updates
-router.patch('/strategy/:id', async (req, res) => {
+router.patch('/strategy/:id', requireAdmin, async (req, res) => {
   try {
     const {
       name, description, status, backtestResults,
@@ -129,7 +130,7 @@ router.patch('/strategy/:id', async (req, res) => {
     const strategy = await LabStrategyModel.findByIdAndUpdate(
       req.params.id,
       update,
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!strategy) {
@@ -143,7 +144,7 @@ router.patch('/strategy/:id', async (req, res) => {
 });
 
 // Archive a strategy (soft delete — keeps data, hides from active list)
-router.post('/strategy/:id/archive', async (req, res) => {
+router.post('/strategy/:id/archive', requireAdmin, async (req, res) => {
   try {
     const strategy = await LabStrategyModel.findById(req.params.id);
     if (!strategy) {
@@ -158,7 +159,7 @@ router.post('/strategy/:id/archive', async (req, res) => {
 });
 
 // Unarchive a strategy
-router.post('/strategy/:id/unarchive', async (req, res) => {
+router.post('/strategy/:id/unarchive', requireAdmin, async (req, res) => {
   try {
     const strategy = await LabStrategyModel.findById(req.params.id);
     if (!strategy) {
@@ -173,7 +174,7 @@ router.post('/strategy/:id/unarchive', async (req, res) => {
 });
 
 // Delete a strategy (permanent — also cleans up related sessions)
-router.delete('/strategy/:id', async (req, res) => {
+router.delete('/strategy/:id', requireAdmin, async (req, res) => {
   try {
     const strategy = await LabStrategyModel.findByIdAndDelete(req.params.id);
     if (!strategy) {
@@ -347,7 +348,7 @@ router.get('/strategy/:id/versions/compare', async (req, res) => {
 });
 
 // Revert strategy to a specific version
-router.post('/strategy/:id/versions/:versionNumber/revert', async (req, res) => {
+router.post('/strategy/:id/versions/:versionNumber/revert', requireAdmin, async (req, res) => {
   try {
     const version = await StrategyVersionModel.findOne({
       strategyId: req.params.id,
@@ -366,7 +367,7 @@ router.post('/strategy/:id/versions/:versionNumber/revert', async (req, res) => 
     if (snapshot.futuresConfig) update.futuresConfig = snapshot.futuresConfig;
     if (snapshot.modelConfig) update.modelConfig = snapshot.modelConfig;
 
-    const strategy = await LabStrategyModel.findByIdAndUpdate(req.params.id, update, { new: true });
+    const strategy = await LabStrategyModel.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
     if (!strategy) {
       return res.status(404).json({ error: 'Strategy not found' });
     }
@@ -378,7 +379,7 @@ router.post('/strategy/:id/versions/:versionNumber/revert', async (req, res) => 
 });
 
 // Apply AI suggestions to a strategy
-router.post('/strategy/:id/apply-suggestions', async (req, res) => {
+router.post('/strategy/:id/apply-suggestions', requireAdmin, async (req, res) => {
   try {
     const { suggestions } = req.body;
     if (!Array.isArray(suggestions) || suggestions.length === 0) {

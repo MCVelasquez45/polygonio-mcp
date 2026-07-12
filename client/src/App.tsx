@@ -16,6 +16,15 @@ import { GamificationVision } from './components/gamification/GamificationVision
 import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
 import { getApiBaseUrl } from './api/http';
+import {
+  canAdmin as roleCanAdmin,
+  canTrade as roleCanTrade,
+  getAuthSnapshot,
+  getSocketAuth,
+  setAuthRole,
+  setAuthToken,
+  type AuthRole
+} from './api/auth';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -488,12 +497,17 @@ function App() {
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
   const [autoSubmitOrders, setAutoSubmitOrders] = useState(() => readStoredBoolean(AUTO_SUBMIT_ORDERS_KEY, false));
   const [autoScannerEnabled, setAutoScannerEnabled] = useState(() => readStoredBoolean(AUTO_SCANNER_ENABLED_KEY, false));
+  const [authSnapshot, setAuthSnapshot] = useState(getAuthSnapshot);
+  const [settingsAuthToken, setSettingsAuthToken] = useState(() => getAuthSnapshot().token);
+  const [settingsAuthRole, setSettingsAuthRole] = useState<AuthRole>(() => getAuthSnapshot().role);
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
   const contractSelectionAllowed = aiEnabled && aiContractSelectionEnabled;
   const contractAnalysisAllowed = aiEnabled && aiContractAnalysisEnabled;
   const scannerAllowed = aiEnabled && aiScannerEnabled;
   const chatAllowed = aiEnabled && aiChatEnabled;
   const chartAnalysisAllowed = aiEnabled && aiChartAnalysisEnabled;
+  const traderAccess = roleCanTrade(authSnapshot.role);
+  const adminAccess = roleCanAdmin(authSnapshot.role);
   const useRegularHours = chartSessionMode === 'regular';
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
@@ -607,6 +621,18 @@ function App() {
     }
     setIsChatOpen((prev: boolean) => !prev);
   }, [chatAllowed]);
+
+  const handleApplyAuthSettings = useCallback(() => {
+    setAuthToken(settingsAuthToken);
+    setAuthRole(settingsAuthRole);
+    const nextSnapshot = getAuthSnapshot();
+    setAuthSnapshot(nextSnapshot);
+    setSettingsAuthToken(nextSnapshot.token);
+    setSettingsAuthRole(nextSnapshot.role);
+    if (socketRef.current?.connected) {
+      socketRef.current.disconnect();
+    }
+  }, [settingsAuthRole, settingsAuthToken]);
 
   const handleAiLimit = useCallback((error: any) => {
     if (error?.response?.status !== 429) return false;
@@ -727,7 +753,7 @@ function App() {
     } catch {
       // ignore persistence failures
     }
-  }, [autoContractSelection]);
+  }, [autoContractSelection, autoScannerEnabled, autoSubmitOrders]);
 
   useEffect(() => {
     if (!chatAllowed && isChatOpen) {
@@ -745,6 +771,12 @@ function App() {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
   }, [autoContractSelection, autoSubmitOrders, autoScannerEnabled]);
+
+  useEffect(() => {
+    if (!traderAccess && autoSubmitOrders) {
+      setAutoSubmitOrders(false);
+    }
+  }, [autoSubmitOrders, traderAccess]);
 
   useEffect(() => {
     lastLiveQuoteAtRef.current = lastLiveQuoteAt;
@@ -771,6 +803,7 @@ function App() {
       transports: isMixedContent ? ['polling'] : ['websocket', 'polling'],
       upgrade: !isMixedContent,
       withCredentials: false,
+      auth: getSocketAuth(),
       path: '/socket.io',
       timeout: 10_000,
       reconnection: true,
@@ -820,7 +853,7 @@ function App() {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
     };
-  }, []);
+  }, [authSnapshot.token]);
 
   // Manage live feed events for the active contract + near-the-money strip.
   useEffect(() => {
@@ -2581,7 +2614,9 @@ function App() {
           marketClosed={marketSessionMeta?.marketClosed}
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
-          autoSubmit={autoSubmitOrders}
+          autoSubmit={traderAccess ? autoSubmitOrders : false}
+          canTrade={traderAccess}
+          authRole={authSnapshot.role}
           onOrderSubmitted={(ticker, side, qty, price) => {
             console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
             // Future: add to visual journaling history
@@ -2658,7 +2693,7 @@ function App() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Settings</p>
-                <h2 className="text-lg font-semibold">AI Request Controls</h2>
+                <h2 className="text-lg font-semibold">Platform Settings</h2>
               </div>
               <button
                 type="button"
@@ -2669,6 +2704,37 @@ function App() {
               </button>
             </div>
             <div className="space-y-4 text-sm text-gray-300">
+              <div className="rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <span>
+                    <span className="block text-sm font-semibold text-white">Access Control</span>
+                    <span className="block text-xs text-gray-500">Current role: {authSnapshot.role}</span>
+                  </span>
+                  <select
+                    value={settingsAuthRole}
+                    onChange={event => setSettingsAuthRole(event.target.value as AuthRole)}
+                    className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-white"
+                  >
+                    <option value="viewer">viewer</option>
+                    <option value="trader">trader</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+                <input
+                  type="password"
+                  value={settingsAuthToken}
+                  onChange={event => setSettingsAuthToken(event.target.value)}
+                  placeholder="Bearer token"
+                  className="w-full rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-white"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyAuthSettings}
+                  className="rounded-full border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/10"
+                >
+                  Apply Access
+                </button>
+              </div>
               <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
                 <span>
                   <span className="block text-sm font-semibold text-white">Enable AI features</span>
@@ -2843,9 +2909,9 @@ function App() {
                 </span>
                 <input
                   type="checkbox"
-                  checked={autoSubmitOrders}
+                  checked={traderAccess && autoSubmitOrders}
                   onChange={event => setAutoSubmitOrders(event.target.checked)}
-                  disabled={!aiEnabled}
+                  disabled={!aiEnabled || !traderAccess}
                   className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
                 />
               </label>
@@ -2888,6 +2954,9 @@ function App() {
           ) : view === 'dashboard' ? (
             <Dashboard
               socket={socketRef.current}
+              authRole={authSnapshot.role}
+              canTrade={traderAccess}
+              canAdmin={adminAccess}
               onTickerSelect={(ticker) => {
                 setTicker(ticker);
                 setView('trading');
@@ -2933,7 +3002,7 @@ function App() {
               )}
               {view === 'portfolio' && (
                 <div className="pb-24">
-                  <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+                  <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} canTrade={traderAccess} />
                 </div>
               )}
             </div>

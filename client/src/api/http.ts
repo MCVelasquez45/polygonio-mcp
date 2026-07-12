@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAuthToken } from './auth';
 
 const DEFAULT_API_PORT = '4000';
 const DEV_SERVER_PORTS = new Set(['5173', '5174', '3000']);
@@ -126,6 +127,11 @@ export const http = axios.create({
 
 http.interceptors.request.use(config => {
   config.baseURL = getActiveBaseUrl();
+  const token = getAuthToken();
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
   console.log('[CLIENT] HTTP request', {
     method: config.method,
     url: config.url,

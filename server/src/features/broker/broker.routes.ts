@@ -20,6 +20,7 @@ import {
   listOptionsPaperSessions,
   controlOptionsPaperSession,
 } from './services/optionsPaperRuntime.service';
+import { requireTrader } from '../../shared/auth';
 
 const router = Router();
 
@@ -29,6 +30,8 @@ const ALLOWED_POSITION_INTENTS = new Set(['buy_to_open', 'buy_to_close', 'sell_t
 
 let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
+
+router.use(requireTrader);
 
 // GET /api/broker/alpaca/account – fetches account snapshot (buying power, etc.).
 router.get('/alpaca/account', async (_req, res, next) => {

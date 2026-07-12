@@ -11,6 +11,7 @@ import {
   listFuturesPaperSessions,
   startFuturesPaperSession
 } from './services/paperRuntime.service';
+import { requireAdmin, requireTrader } from '../../shared/auth';
 
 const router = express.Router();
 
@@ -206,7 +207,7 @@ router.post('/backtest/stress-test', async (req, res) => {
   }
 });
 
-router.post('/paper/start', async (req, res) => {
+router.post('/paper/start', requireTrader, async (req, res) => {
   try {
     const body = req.body ?? {};
     const strategyId = String(body.strategyId ?? '').trim();
@@ -289,7 +290,7 @@ router.get('/paper/:sessionId', async (req, res) => {
   }
 });
 
-router.post('/paper/:sessionId/control', async (req, res) => {
+router.post('/paper/:sessionId/control', requireTrader, async (req, res) => {
   try {
     const action = req.body?.action as 'pause' | 'resume' | 'stop' | 'emergency_stop';
     if (!['pause', 'resume', 'stop', 'emergency_stop'].includes(action)) {
@@ -303,7 +304,7 @@ router.post('/paper/:sessionId/control', async (req, res) => {
   }
 });
 
-router.post('/promotion/check', async (req, res) => {
+router.post('/promotion/check', requireAdmin, async (req, res) => {
   try {
     const sessionId = String(req.body?.sessionId ?? '').trim();
     const strategyId = String(req.body?.strategyId ?? '').trim();
@@ -318,7 +319,7 @@ router.post('/promotion/check', async (req, res) => {
   }
 });
 
-router.post('/deploy', async (req, res) => {
+router.post('/deploy', requireAdmin, async (req, res) => {
   try {
     const sessionId = String(req.body?.sessionId ?? '').trim();
     const strategyId = String(req.body?.strategyId ?? '').trim();
@@ -343,7 +344,7 @@ router.get('/status', async (_req, res) => {
   }
 });
 
-router.post('/strategy/create', async (req, res) => {
+router.post('/strategy/create', requireAdmin, async (req, res) => {
   try {
     const body = req.body ?? {};
     const name = String(body.name ?? '').trim();
