@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
+import { getSharedSocket } from './lib/socket';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
@@ -14,7 +15,6 @@ import { ChatDock } from './components/chat/ChatDock';
 import { Dashboard } from './components/dashboard';
 import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
 import { computeExpirationDte } from './utils/expirations';
-import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -759,61 +759,40 @@ function App() {
   // Request chart focus updates over the socket (server-owned candles).
   // Establish Socket.IO connection for live Massive feed.
   useEffect(() => {
-    const baseUrl = getApiBaseUrl();
-    const parsed = typeof window !== 'undefined' ? new URL(baseUrl, window.location.href) : null;
-    const isMixedContent =
-      typeof window !== 'undefined' &&
-      window.location.protocol === 'https:' &&
-      parsed?.protocol === 'http:';
-    const socket = io(baseUrl, {
-      transports: isMixedContent ? ['polling'] : ['websocket', 'polling'],
-      upgrade: !isMixedContent,
-      withCredentials: false,
-      path: '/socket.io',
-      timeout: 10_000,
-      reconnection: true,
-      reconnectionDelay: 1_000,
-      reconnectionDelayMax: 5_000
-    });
+    // Attach to the app-wide shared socket. The connection itself outlives this
+    // component; we only own our listeners and subscriptions.
+    const socket = getSharedSocket();
     socketRef.current = socket;
 
-    const forcePolling = () => {
-      const opts = socket.io.opts;
-      if (opts.transports?.length === 1 && opts.transports[0] === 'polling') return;
-      opts.transports = ['polling'];
-      opts.upgrade = false;
-      if (socket.connected) {
-        socket.disconnect();
-      }
-      socket.connect();
-    };
-
-    socket.on('connect', () => {
+    const handleConnect = () => {
       setLiveSocketConnected(true);
-    });
-    socket.on('connect_error', (error: any) => {
-      const description =
-        typeof (error as { description?: unknown })?.description === 'string'
-          ? (error as { description?: string }).description
-          : undefined;
-      console.warn('[CLIENT] live feed connect error', {
-        message: error?.message,
-        ...(description ? { description } : {})
-      });
-      const shouldForcePolling = isMixedContent || String(error?.message ?? '').toLowerCase().includes('websocket');
-      if (shouldForcePolling) {
-        forcePolling();
-      }
-    });
-    socket.on('disconnect', () => {
+    };
+    const handleDisconnect = () => {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
-    });
-    socket.on('live:error', (payload: any) => {
+    };
+    const handleLiveError = (payload: any) => {
       console.warn('[CLIENT] live feed error', payload);
-    });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('live:error', handleLiveError);
+    if (socket.connected) {
+      setLiveSocketConnected(true);
+    }
+
     return () => {
-      socket.disconnect();
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('live:error', handleLiveError);
+      // Release everything this view subscribed to on the shared connection:
+      // residual near-the-money strip symbols and the chart focus.
+      liveChainSymbolsRef.current.forEach((symbol: string) => {
+        socket.emit('live:unsubscribe', { symbol });
+      });
+      liveChainSymbolsRef.current = new Set();
+      socket.emit('chart:focus', { symbol: null });
       socketRef.current = null;
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
@@ -1291,6 +1270,7 @@ function App() {
     let cancelled = false;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     let hasRetried = false;
+    const controller = new AbortController();
     async function loadChain() {
       setChainLoading(true);
       setChainError(null);
@@ -1299,7 +1279,7 @@ function App() {
           ticker: normalizedTicker,
           limit: selectedExpiration ? 200 : 150,
           expiration: selectedExpiration ?? undefined
-        });
+        }, controller.signal);
         if (!cancelled) {
           const groups = Array.isArray(response.expirations) ? response.expirations : [];
           if (!groups.length) {
@@ -1327,7 +1307,7 @@ function App() {
           }
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const status = error?.response?.status;
           const isNetworkError = !error?.response;
           if (status === 404 && selectedExpiration) {
@@ -1365,6 +1345,7 @@ function App() {
     loadChain();
     return () => {
       cancelled = true;
+      controller.abort();
       if (retryTimeout) {
         clearTimeout(retryTimeout);
       }
@@ -1409,6 +1390,7 @@ function App() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     setChainError(null);
     setAvailableExpirations([]);
     setSelectedExpiration(null);
@@ -1416,7 +1398,7 @@ function App() {
     setChainUnderlyingPrice(null);
     async function loadExpirations() {
       try {
-        const payload = await marketApi.getOptionExpirations(normalizedTicker);
+        const payload = await marketApi.getOptionExpirations(normalizedTicker, controller.signal);
         if (cancelled) return;
         const expirations = Array.isArray(payload?.expirations) ? payload.expirations : [];
         setAvailableExpirations(expirations);
@@ -1434,7 +1416,7 @@ function App() {
           setSelectedExpiration(null);
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load expirations';
           setChainError(message);
           setAvailableExpirations([]);
@@ -1445,6 +1427,7 @@ function App() {
     loadExpirations();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [normalizedTicker]);
 
@@ -1534,16 +1517,17 @@ function App() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     async function loadSnapshot() {
       try {
-        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker]);
+        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker], controller.signal);
         if (!cancelled) {
           const snapshot = payload.entries?.[0] ?? null;
           setUnderlyingSnapshot(snapshot);
           underlyingSnapshotRef.current = snapshot ?? null;
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           console.warn('Failed to load underlying snapshot', error);
           setUnderlyingSnapshot(null);
           underlyingSnapshotRef.current = null;
@@ -1553,6 +1537,7 @@ function App() {
     loadSnapshot();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [normalizedTicker]);
 
@@ -1586,8 +1571,9 @@ function App() {
     if (!needsGreeks && !needsIv && !needsOi) return;
 
     let cancelled = false;
+    const controller = new AbortController();
     marketApi
-      .getOptionContractDetail(symbol)
+      .getOptionContractDetail(symbol, controller.signal)
       .then(detail => {
         if (cancelled) return;
         const merged = mergeContractDetail(baseDetail, detail);
@@ -1595,11 +1581,12 @@ function App() {
         setContractDetail(merged);
       })
       .catch(error => {
-        if (cancelled) return;
+        if (cancelled || isAbortError(error)) return;
         console.warn('Failed to load contract details', error);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [selectedLeg]);
 
@@ -1897,14 +1884,15 @@ function App() {
     const symbol = activeContractSymbol.toUpperCase();
     let cancelled = false;
     let fetching = false;
+    const controller = new AbortController();
 
     const loadSnapshots = async (reason: 'initial' | 'fallback') => {
       if (cancelled || fetching) return;
       fetching = true;
       try {
         const [tradesPayload, quotePayload] = await Promise.all([
-          marketApi.getTrades(symbol),
-          marketApi.getQuote(symbol),
+          marketApi.getTrades(symbol, controller.signal),
+          marketApi.getQuote(symbol, controller.signal),
         ]);
         if (!cancelled) {
           setTrades((tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
@@ -1914,7 +1902,7 @@ function App() {
           }
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load market snapshots';
           setMarketError(message);
         }
@@ -1948,6 +1936,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(interval);
     };
   }, [

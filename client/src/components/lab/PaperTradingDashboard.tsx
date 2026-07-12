@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { io } from 'socket.io-client';
 import { futuresApi } from '../../api';
-import { getApiBaseUrl } from '../../api/http';
+import { getSharedSocket } from '../../lib/socket';
 import type { FuturesPaperSession } from '../../types/futures';
 
 type Props = {
@@ -37,7 +36,8 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
   }, [sessionId]);
 
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    // Listen on the app-wide shared socket; do not open a private connection.
+    const socket = getSharedSocket();
     const handleMarketUpdate = (payload: any) => {
       if (!sessionId || payload?.sessionId !== sessionId) return;
       setSession(prev => (prev ? { ...prev, state: payload.state, status: payload.status } : prev));
@@ -66,7 +66,6 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
     return () => {
       socket.off('futures:market:update', handleMarketUpdate);
       socket.off('futures:position:update', handlePositionUpdate);
-      socket.disconnect();
     };
   }, [sessionId]);
 

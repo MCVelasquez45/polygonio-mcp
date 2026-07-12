@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { runAgentScan } from '../../api/agent';
-import { getApiBaseUrl } from '../../api/http';
+import { getSharedSocket } from '../../lib/socket';
 
 type ScannerSignal = {
   strategyId: string;
@@ -26,6 +26,7 @@ type ScannerSignal = {
 };
 
 type Props = {
+  /** @deprecated Signals arrive on the app-wide shared socket; this prop is ignored. */
   socketUrl?: string;
   maxSignals?: number;
   onTickerSelect?: (ticker: string) => void;
@@ -48,7 +49,7 @@ function formatTime(dateStr: string): string {
   });
 }
 
-export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 20, onTickerSelect }: Props) {
+export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) {
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastSignalTime, setLastSignalTime] = useState<Date | null>(null);
@@ -57,34 +58,38 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    const socket = io(socketUrl, {
-      transports: ['websocket', 'polling']
-    });
+    // Listen on the app-wide shared socket; do not open a private connection.
+    const socket = getSharedSocket();
     socketRef.current = socket;
 
-    socket.on('connect', () => {
-      console.log('[ScannerResults] Socket connected');
+    const handleConnect = () => {
       setConnected(true);
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[ScannerResults] Socket disconnected');
+    };
+    const handleDisconnect = () => {
       setConnected(false);
-    });
-
-    socket.on('screener_signal', (signal: ScannerSignal) => {
-      console.log('[ScannerResults] Received signal:', signal);
+    };
+    const handleSignal = (signal: ScannerSignal) => {
       setSignals(prev => {
         const updated = [signal, ...prev].slice(0, maxSignals);
         return updated;
       });
       setLastSignalTime(new Date());
-    });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('screener_signal', handleSignal);
+    if (socket.connected) {
+      setConnected(true);
+    }
 
     return () => {
-      socket.disconnect();
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('screener_signal', handleSignal);
+      socketRef.current = null;
     };
-  }, [socketUrl, maxSignals]);
+  }, [maxSignals]);
 
   const clearSignals = () => {
     setSignals([]);
