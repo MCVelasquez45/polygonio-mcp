@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
 import { AUTOMATION_ENV } from '../automation.constants';
 import { LiveTradingBlockedError } from '../automation.errors';
+import { AutomationEventModel } from '../models/automationEvent.model';
+import { AutomationSessionModel } from '../models/automationSession.model';
+import { BrokerOrderModel } from '../models/brokerOrder.model';
+import { OrderIntentModel } from '../models/orderIntent.model';
 import { createAlpacaPaperBrokerAdapter } from './alpacaPaperBrokerAdapter.service';
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
@@ -55,6 +59,20 @@ export function isAutomationReady(): boolean {
     mongoose.connection?.readyState === 1 &&
     reconciliation != null &&
     reconciliation.status !== 'FAILED'
+  );
+}
+
+/** Await every automation index build (unique constraints are load-bearing). */
+export async function ensureAutomationIndexes(): Promise<void> {
+  const models = [AutomationSessionModel, OrderIntentModel, BrokerOrderModel, AutomationEventModel];
+  // Phase 2B models are loaded lazily to keep 2A boot lean.
+  const [{ TradeCandidateModel }, { ContractSelectionModel }, { RiskDecisionModel }] = await Promise.all([
+    import('../models/tradeCandidate.model'),
+    import('../models/contractSelection.model'),
+    import('../models/riskDecision.model'),
+  ]);
+  await Promise.all(
+    [...models, TradeCandidateModel, ContractSelectionModel, RiskDecisionModel].map(model => model.init())
   );
 }
 
@@ -135,6 +153,11 @@ export async function initializeAutomation(
     event: 'AUTOMATION_INITIALIZING',
     payload: { broker: adapter.describe() },
   });
+
+  // The idempotency guarantees (unique idempotencyKey, unique candidate bar
+  // key) DEPEND on their indexes existing. Await index builds before any
+  // evaluation or readiness — Model.init() resolves when indexes are built.
+  await ensureAutomationIndexes();
 
   // Startup reconciliation MUST complete before readiness.
   const report = await runStartupReconciliation(adapter);

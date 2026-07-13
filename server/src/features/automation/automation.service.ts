@@ -85,3 +85,50 @@ export async function reconcileNow(): Promise<ReconciliationReport> {
   const adapter = runtime.adapter ?? resolveBrokerAdapter();
   return runStartupReconciliation(adapter);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2B: decision-pipeline reads + guarded evaluate-bar
+// ---------------------------------------------------------------------------
+
+export async function getSessionCandidates(id: string, limit = 100) {
+  assertMongo();
+  await getSession(id);
+  const { TradeCandidateModel } = await import('./models/tradeCandidate.model');
+  return TradeCandidateModel.find({ automationSessionId: id })
+    .sort({ barTimestamp: -1 })
+    .limit(Math.min(Math.max(limit, 1), 500))
+    .lean();
+}
+
+export async function getSessionContractSelections(id: string, limit = 50) {
+  assertMongo();
+  await getSession(id);
+  const { ContractSelectionModel } = await import('./models/contractSelection.model');
+  return ContractSelectionModel.find({ automationSessionId: id })
+    .sort({ createdAt: -1 })
+    .limit(Math.min(Math.max(limit, 1), 200))
+    .lean();
+}
+
+export async function getSessionRiskDecisions(id: string, limit = 100) {
+  assertMongo();
+  await getSession(id);
+  const { RiskDecisionModel } = await import('./models/riskDecision.model');
+  return RiskDecisionModel.find({ automationSessionId: id })
+    .sort({ createdAt: -1 })
+    .limit(Math.min(Math.max(limit, 1), 500))
+    .lean();
+}
+
+/**
+ * Evaluate one closed bar for a session. Fixtures are only honored when the
+ * controller has verified the explicit test/dev gate; this function never
+ * submits anything to a broker.
+ */
+export async function evaluateBar(id: string, fixture?: import('./services/closedBarProcessor.service').EvaluateBarFixture) {
+  assertMongo();
+  const runtime = getAutomationRuntime();
+  const adapter = runtime.adapter ?? resolveBrokerAdapter();
+  const { processClosedBar } = await import('./services/closedBarProcessor.service');
+  return processClosedBar(id, adapter, fixture);
+}

@@ -30,6 +30,9 @@ export type IntentTimeInForce = 'day' | 'gtc';
 
 export type OrderIntentStatus =
   | 'CREATED'
+  // Phase 2B: risk-approved by the deterministic pipeline; execution is
+  // deferred to Phase 2C. Never submitted by any Phase 2A/2B code path.
+  | 'APPROVED_AWAITING_EXECUTION'
   | 'SUBMITTING'
   | 'SUBMITTED'
   | 'BROKER_REJECTED'

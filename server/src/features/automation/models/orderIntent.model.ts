@@ -49,6 +49,7 @@ export interface OrderIntentDocument extends Document {
 
 const INTENT_STATUSES: OrderIntentStatus[] = [
   'CREATED',
+  'APPROVED_AWAITING_EXECUTION',
   'SUBMITTING',
   'SUBMITTED',
   'BROKER_REJECTED',

@@ -19,6 +19,12 @@ let mongod = null;
 export async function startTestMongo() {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri(), { dbName: 'automation-test' });
+  // Unique constraints are load-bearing; make index builds deterministic in
+  // tests exactly like initializeAutomation does in production.
+  const { ensureAutomationIndexes } = await import(
+    '../dist/features/automation/services/sessionRecovery.service.js'
+  );
+  await ensureAutomationIndexes();
   return mongod;
 }
 
@@ -55,6 +61,19 @@ export async function loadDist() {
     mockBroker,
     alpacaAdapter,
     errors,
+    // Phase 2B
+    config2b,
+    candidateModel,
+    selectionModel,
+    riskModel,
+    indicators2b,
+    marketData2b,
+    strategy2b,
+    selector2b,
+    risk2b,
+    sizing2b,
+    reset2b,
+    processor2b,
   ] = await Promise.all([
     import('../dist/features/automation/models/automationSession.model.js'),
     import('../dist/features/automation/models/orderIntent.model.js'),
@@ -68,6 +87,18 @@ export async function loadDist() {
     import('../dist/features/automation/services/mockPaperBrokerAdapter.service.js'),
     import('../dist/features/automation/services/alpacaPaperBrokerAdapter.service.js'),
     import('../dist/features/automation/automation.errors.js'),
+    import('../dist/features/automation/automation.config.js'),
+    import('../dist/features/automation/models/tradeCandidate.model.js'),
+    import('../dist/features/automation/models/contractSelection.model.js'),
+    import('../dist/features/automation/models/riskDecision.model.js'),
+    import('../dist/features/automation/services/indicatorAdapter.service.js'),
+    import('../dist/features/automation/services/automationMarketData.service.js'),
+    import('../dist/features/automation/services/strategyEvaluator.service.js'),
+    import('../dist/features/automation/services/optionSelector.service.js'),
+    import('../dist/features/automation/services/riskEngine.service.js'),
+    import('../dist/features/automation/services/positionSizing.service.js'),
+    import('../dist/features/automation/services/sessionDailyReset.service.js'),
+    import('../dist/features/automation/services/closedBarProcessor.service.js'),
   ]);
   return {
     ...sessionModel,
@@ -82,6 +113,18 @@ export async function loadDist() {
     ...mockBroker,
     ...alpacaAdapter,
     ...errors,
+    ...config2b,
+    ...candidateModel,
+    ...selectionModel,
+    ...riskModel,
+    ...indicators2b,
+    ...marketData2b,
+    ...strategy2b,
+    ...selector2b,
+    ...risk2b,
+    ...sizing2b,
+    ...reset2b,
+    ...processor2b,
   };
 }
 

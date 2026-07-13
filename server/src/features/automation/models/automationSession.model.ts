@@ -21,6 +21,10 @@ export interface AutomationSessionDocument extends Document {
   consecutiveLossCount: number;
   dailyRealizedPnl: number;
   currentDrawdown: number;
+  // Phase 2B daily-reset bookkeeping (exchange trading day, never local midnight)
+  startingDayEquity: number | null;
+  dailyLossBudget: number | null;
+  lastResetTradingDate: string | null;
   reconciliationStatus: ReconciliationStatus;
   lastReconciledAt: Date | null;
   pauseReason: string | null;
@@ -62,6 +66,9 @@ const AutomationSessionSchema = new Schema<AutomationSessionDocument>(
     consecutiveLossCount: { type: Number, required: true, default: 0 },
     dailyRealizedPnl: { type: Number, required: true, default: 0 },
     currentDrawdown: { type: Number, required: true, default: 0 },
+    startingDayEquity: { type: Number, default: null },
+    dailyLossBudget: { type: Number, default: null },
+    lastResetTradingDate: { type: String, default: null },
     reconciliationStatus: {
       type: String,
       enum: ['PENDING', 'CLEAN', 'MISMATCH', 'MANUAL_REVIEW', 'FAILED'],
