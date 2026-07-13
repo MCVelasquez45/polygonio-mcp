@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { getStrategyConfig, REASON, type AutomationStrategyConfig } from '../automation.config';
-import { MongoUnavailableError, NotFoundError } from '../automation.errors';
+import { AutomationError, MongoUnavailableError, NotFoundError } from '../automation.errors';
 import { AutomationSessionModel, type AutomationSessionDocument } from '../models/automationSession.model';
 import { ContractSelectionModel, type ContractSelectionDocument } from '../models/contractSelection.model';
 import { OrderIntentModel, type OrderIntentDocument } from '../models/orderIntent.model';
@@ -56,8 +56,14 @@ function assertMongo(): void {
   if (mongoose.connection?.readyState !== 1) throw new MongoUnavailableError();
 }
 
-async function persistCandidate(
+/**
+ * Persist one trade candidate for (session, underlying, closed bar), exactly
+ * once. Exported for the Phase 2.6 universe processor, which evaluates many
+ * underlyings per session — the underlying is always explicit, never implied.
+ */
+export async function persistTradeCandidate(
   session: AutomationSessionDocument,
+  underlying: string,
   config: AutomationStrategyConfig,
   barTimestamp: Date,
   fields: Partial<TradeCandidateDocument> & { status: TradeCandidateStatus; reasonCodes: string[] }
@@ -67,7 +73,7 @@ async function persistCandidate(
   const existing = await TradeCandidateModel.findOne({
     automationSessionId: String(session._id),
     strategyVersionId: session.strategyVersionId,
-    underlying: session.underlying,
+    underlying,
     barTimestamp,
   });
   if (existing) {
@@ -84,7 +90,7 @@ async function persistCandidate(
     const candidate = await TradeCandidateModel.create({
       automationSessionId: String(session._id),
       strategyVersionId: session.strategyVersionId,
-      underlying: session.underlying,
+      underlying,
       barTimestamp,
       signalDirection: fields.signalDirection ?? null,
       status: fields.status,
@@ -102,7 +108,7 @@ async function persistCandidate(
       const existing = await TradeCandidateModel.findOne({
         automationSessionId: String(session._id),
         strategyVersionId: session.strategyVersionId,
-        underlying: session.underlying,
+        underlying,
         barTimestamp,
       });
       if (existing) {
@@ -131,9 +137,20 @@ export async function processClosedBar(
   fixture?: EvaluateBarFixture
 ): Promise<ProcessResult> {
   assertMongo();
-  const config = getStrategyConfig();
   const session = await AutomationSessionModel.findById(sessionId);
   if (!session) throw new NotFoundError(`Automation session ${sessionId}`);
+  // Symbol-agnostic: the session's underlying drives every data fetch here —
+  // never an env default, never a hardcoded ticker. Universe sessions (no
+  // single underlying) are evaluated via processUniverseTick instead.
+  const underlying = session.underlying;
+  if (!underlying) {
+    throw new AutomationError(
+      'AUTOMATION_SESSION_NO_UNDERLYING',
+      `Session ${sessionId} has no single underlying — evaluate it with the universe pipeline`,
+      409
+    );
+  }
+  const config = getStrategyConfig(underlying);
   const now = fixture?.now ?? Date.now();
 
   // ---- session gates (recorded, never silently skipped) -------------------
@@ -181,7 +198,7 @@ export async function processClosedBar(
 
   // ---- ordered rejection recording ----------------------------------------
   const reject = async (status: TradeCandidateStatus, reasonCodes: string[], extras: Record<string, unknown> = {}) => {
-    const { candidate, duplicate } = await persistCandidate(session, config, barTimestamp, {
+    const { candidate, duplicate } = await persistTradeCandidate(session, underlying, config, barTimestamp, {
       status,
       reasonCodes,
       marketClockDecision: clockPayload,
@@ -256,7 +273,7 @@ export async function processClosedBar(
   });
 
   if (!evaluation.direction) {
-    const { candidate, duplicate } = await persistCandidate(session, config, barTimestamp, {
+    const { candidate, duplicate } = await persistTradeCandidate(session, underlying, config, barTimestamp, {
       status: 'NO_TRADE',
       reasonCodes: evaluation.reasonCodes,
       signalDirection: null,
@@ -279,7 +296,7 @@ export async function processClosedBar(
   }
 
   // ---- SIGNAL_FOUND candidate (single insert = the dedupe claim) -------------
-  const { candidate, duplicate } = await persistCandidate(session, config, barTimestamp, {
+  const { candidate, duplicate } = await persistTradeCandidate(session, underlying, config, barTimestamp, {
     status: 'SIGNAL_FOUND',
     reasonCodes: [],
     signalDirection: evaluation.direction,
@@ -310,7 +327,7 @@ export async function processClosedBar(
     automationSessionId: String(session._id),
     direction: evaluation.direction,
     optionSide: selectionResult.optionSide,
-    underlying: session.underlying,
+    underlying,
     underlyingPrice: chain.underlyingPrice,
     chainFetchedAt: new Date(chain.fetchedAt),
     filtersSnapshot: config.contract,
@@ -324,7 +341,7 @@ export async function processClosedBar(
     service: 'contract-selection',
     event: selectionResult.selected ? 'CONTRACT_SELECTED' : 'NO_CONTRACT_SELECTED',
     automationSessionId: String(session._id),
-    symbol: selectionResult.selected?.symbol ?? session.underlying,
+    symbol: selectionResult.selected?.symbol ?? underlying,
     payload: {
       considered: selectionResult.consideredCount,
       passed: selectionResult.passedCount,
@@ -391,7 +408,7 @@ export async function processClosedBar(
     const { intent, created } = await createOrderIntent({
       automationSessionId: String(session._id),
       strategyVersionId: session.strategyVersionId,
-      underlying: session.underlying,
+      underlying,
       signalDirection: 'BUY', // long calls (bullish) / long puts (bearish)
       closedBarTimestamp: barTimestamp,
       intentType: 'ENTRY',

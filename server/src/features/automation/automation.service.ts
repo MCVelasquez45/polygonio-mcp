@@ -24,7 +24,10 @@ export async function health(): Promise<AutomationHealth> {
 
 export type CreateSessionInput = {
   strategyVersionId: string;
-  underlying: string;
+  /** Single-symbol (Phase 2B) session. */
+  underlying?: string | null;
+  /** Universe (Phase 2.6) session: overrides AUTOMATION_UNDERLYINGS when set. */
+  universe?: string[] | null;
 };
 
 export async function createSession(input: CreateSessionInput) {
@@ -32,7 +35,8 @@ export async function createSession(input: CreateSessionInput) {
   const session = await AutomationSessionModel.create({
     mode: 'paper',
     strategyVersionId: input.strategyVersionId,
-    underlying: input.underlying.toUpperCase(),
+    underlying: input.underlying ? input.underlying.toUpperCase() : null,
+    universe: (input.universe ?? []).map(symbol => symbol.toUpperCase()),
     status: 'CREATED',
     healthStatus: 'UNAVAILABLE',
     reconciliationStatus: 'PENDING',
@@ -42,7 +46,11 @@ export async function createSession(input: CreateSessionInput) {
     event: 'SESSION_CREATED',
     automationSessionId: String(session._id),
     symbol: session.underlying,
-    payload: { strategyVersionId: session.strategyVersionId, mode: session.mode },
+    payload: {
+      strategyVersionId: session.strategyVersionId,
+      mode: session.mode,
+      universe: session.universe,
+    },
   });
   return session;
 }
@@ -131,4 +139,41 @@ export async function evaluateBar(id: string, fixture?: import('./services/close
   const adapter = runtime.adapter ?? resolveBrokerAdapter();
   const { processClosedBar } = await import('./services/closedBarProcessor.service');
   return processClosedBar(id, adapter, fixture);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.6: configurable trading universe
+// ---------------------------------------------------------------------------
+
+/** The configured universe (dashboard: "current universe"). Config-only, no I/O. */
+export async function getUniverse() {
+  const { getUniverseConfig } = await import('./automation.config');
+  return getUniverseConfig();
+}
+
+/** Persisted universe evaluations (dashboard: eligibility, ranking, selection). */
+export async function getSessionUniverseEvaluations(id: string, limit = 20) {
+  assertMongo();
+  await getSession(id);
+  const { UniverseEvaluationModel } = await import('./models/universeEvaluation.model');
+  return UniverseEvaluationModel.find({ automationSessionId: id })
+    .sort({ evaluatedAt: -1 })
+    .limit(Math.min(Math.max(limit, 1), 100))
+    .lean();
+}
+
+/**
+ * Evaluate the whole configured universe for a session. Fixtures are only
+ * honored when the controller has verified the explicit test/dev gate; this
+ * function never submits anything to a broker.
+ */
+export async function evaluateUniverse(
+  id: string,
+  fixture?: import('./services/universeTickProcessor.service').UniverseTickFixture
+) {
+  assertMongo();
+  const runtime = getAutomationRuntime();
+  const adapter = runtime.adapter ?? resolveBrokerAdapter();
+  const { processUniverseTick } = await import('./services/universeTickProcessor.service');
+  return processUniverseTick(id, adapter, fixture);
 }

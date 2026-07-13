@@ -3,7 +3,8 @@ import { REASON } from '../automation.config';
 import type { SignalDirection } from '../models/tradeCandidate.model';
 import type { IndicatorSnapshot } from './indicatorAdapter.service';
 
-// The SPY 5-minute deterministic strategy (spy-5m-momentum-v1).
+// The 5-minute deterministic momentum strategy (momentum-5m-v1).
+// Symbol-agnostic: identical rule logic runs for every configured underlying.
 //
 // Pure function: (indicators, config, context) → direction | NO_TRADE with
 // explicit reason codes for every failed condition. There is NO AI fallback

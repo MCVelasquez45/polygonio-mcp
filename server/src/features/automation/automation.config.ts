@@ -1,9 +1,13 @@
 // Phase 2B strategy configuration. All thresholds are configurable via env
 // with the documented defaults below. A resolved snapshot of this config is
 // persisted onto every trade candidate so decisions are reproducible.
+//
+// Phase 2.6: the strategy is symbol-agnostic. The underlying is ALWAYS
+// supplied by the caller (session or universe evaluation) — no ticker symbol
+// is hardcoded anywhere in automation source.
 
 export type AutomationStrategyConfig = {
-  strategyKey: 'spy-5m-momentum-v1';
+  strategyKey: 'momentum-5m-v1';
   underlying: string;
   barTimeframeMinutes: number;
   /** Bars required before any evaluation (indicator warm-up + continuity). */
@@ -57,11 +61,17 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
-/** Resolve the active strategy configuration (env overrides + defaults). */
-export function getStrategyConfig(): AutomationStrategyConfig {
+/**
+ * Resolve the active strategy configuration (env overrides + defaults) for a
+ * specific underlying. When no underlying is passed, the first configured
+ * universe symbol is used; with no configuration at all, underlying is ''
+ * and every data gate fails closed. NO ticker is hardcoded here.
+ */
+export function getStrategyConfig(underlying?: string): AutomationStrategyConfig {
+  const resolved = underlying?.trim() || getUniverseConfig().symbols[0] || '';
   return {
-    strategyKey: 'spy-5m-momentum-v1',
-    underlying: process.env.AUTOMATION_UNDERLYING?.toUpperCase() || 'SPY',
+    strategyKey: 'momentum-5m-v1',
+    underlying: resolved.toUpperCase(),
     barTimeframeMinutes: 5,
     minBarHistory: envNumber('AUTOMATION_MIN_BAR_HISTORY', 30),
     barFreshnessMaxAgeMs: envNumber('AUTOMATION_BAR_FRESHNESS_MS', 10 * 60_000),
@@ -104,6 +114,62 @@ export function getStrategyConfig(): AutomationStrategyConfig {
       maxPositionCostPct: envNumber('AUTOMATION_MAX_POSITION_COST_PCT', 0.05),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.6 — configurable trading universe
+// ---------------------------------------------------------------------------
+
+/** Equity/ETF symbol shape: 1-10 chars, letters with optional dots. */
+export const UNIVERSE_SYMBOL_PATTERN = /^[A-Z][A-Z.]{0,9}$/;
+
+export type UniverseConfig = {
+  /** Ordered, deduped, validated symbols. Empty when nothing is configured. */
+  symbols: string[];
+  /** Configured entries that failed symbol validation (recorded, skipped). */
+  invalidSymbols: string[];
+  source: 'AUTOMATION_UNDERLYINGS' | 'AUTOMATION_UNDERLYING' | 'unconfigured';
+};
+
+/**
+ * Parse a comma-separated symbol list deterministically: trim, uppercase,
+ * dedupe preserving first occurrence, and split valid from invalid entries.
+ */
+export function parseUniverseSymbols(raw: string | null | undefined): {
+  symbols: string[];
+  invalidSymbols: string[];
+} {
+  const symbols: string[] = [];
+  const invalidSymbols: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of String(raw ?? '').split(',')) {
+    const symbol = entry.trim().toUpperCase();
+    if (!symbol) continue;
+    if (seen.has(symbol)) continue;
+    seen.add(symbol);
+    if (UNIVERSE_SYMBOL_PATTERN.test(symbol)) symbols.push(symbol);
+    else invalidSymbols.push(symbol);
+  }
+  return { symbols, invalidSymbols };
+}
+
+/**
+ * The configured trading universe. Configuration is the ONLY source of
+ * candidate symbols: AUTOMATION_UNDERLYINGS (comma-separated), falling back
+ * to the legacy single-symbol AUTOMATION_UNDERLYING. There is deliberately no
+ * in-code default list — an unconfigured universe is empty and the engine
+ * records UNIVERSE_NOT_CONFIGURED instead of trading.
+ */
+export function getUniverseConfig(): UniverseConfig {
+  const multi = process.env.AUTOMATION_UNDERLYINGS;
+  if (multi != null && multi.trim() !== '') {
+    return { ...parseUniverseSymbols(multi), source: 'AUTOMATION_UNDERLYINGS' };
+  }
+  const legacy = process.env.AUTOMATION_UNDERLYING;
+  if (legacy != null && legacy.trim() !== '') {
+    return { ...parseUniverseSymbols(legacy), source: 'AUTOMATION_UNDERLYING' };
+  }
+  return { symbols: [], invalidSymbols: [], source: 'unconfigured' };
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +227,15 @@ export const REASON = {
   NOT_TRADABLE: 'NOT_TRADABLE',
   NO_CONTRACT_PASSED_FILTERS: 'NO_CONTRACT_PASSED_FILTERS',
   EMPTY_OPTION_CHAIN: 'EMPTY_OPTION_CHAIN',
+  // universe (Phase 2.6)
+  UNIVERSE_NOT_CONFIGURED: 'UNIVERSE_NOT_CONFIGURED',
+  UNIVERSE_SYMBOL_INVALID: 'UNIVERSE_SYMBOL_INVALID',
+  SYMBOL_DATA_UNAVAILABLE: 'SYMBOL_DATA_UNAVAILABLE',
+  SYMBOL_CHAIN_UNAVAILABLE: 'SYMBOL_CHAIN_UNAVAILABLE',
+  SYMBOL_CHAIN_ILLIQUID: 'SYMBOL_CHAIN_ILLIQUID',
+  SYMBOL_EVALUATION_ERROR: 'SYMBOL_EVALUATION_ERROR',
+  NO_ELIGIBLE_SYMBOLS: 'NO_ELIGIBLE_SYMBOLS',
+  OPPORTUNITY_NOT_SELECTED: 'OPPORTUNITY_NOT_SELECTED',
   // risk engine
   RISK_MONGO_UNAVAILABLE: 'RISK_MONGO_UNAVAILABLE',
   RISK_AUTOMATION_NOT_READY: 'RISK_AUTOMATION_NOT_READY',

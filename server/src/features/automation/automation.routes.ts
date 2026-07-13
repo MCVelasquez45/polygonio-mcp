@@ -7,8 +7,11 @@ import {
   getSessionEvents,
   getSessionOrders,
   getSessionRiskDecisions,
+  getSessionUniverseEvaluations,
   getSessions,
+  getUniverse,
   postEvaluateBar,
+  postEvaluateUniverse,
   postReconcile,
   postSession,
 } from './automation.controller';
@@ -31,3 +34,7 @@ automationRouter.get('/sessions/:id/candidates', getSessionCandidates);
 automationRouter.get('/sessions/:id/contract-selections', getSessionContractSelections);
 automationRouter.get('/sessions/:id/risk-decisions', getSessionRiskDecisions);
 automationRouter.post('/sessions/:id/evaluate-bar', postEvaluateBar);
+// Phase 2.6 — configurable trading universe (dashboard + guarded evaluate)
+automationRouter.get('/universe', getUniverse);
+automationRouter.get('/sessions/:id/universe-evaluations', getSessionUniverseEvaluations);
+automationRouter.post('/sessions/:id/evaluate-universe', postEvaluateUniverse);

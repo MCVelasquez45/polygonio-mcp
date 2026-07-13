@@ -13,10 +13,18 @@ import type {
 export interface AutomationSessionDocument extends Document {
   mode: AutomationMode;
   strategyVersionId: string;
-  underlying: string;
+  /** Single-symbol (Phase 2B) sessions. Null for universe (Phase 2.6) sessions. */
+  underlying: string | null;
+  /**
+   * Phase 2.6: per-session universe override. When empty, the universe comes
+   * from configuration (AUTOMATION_UNDERLYINGS) at evaluation time.
+   */
+  universe: string[];
   status: AutomationSessionStatus;
   healthStatus: SessionHealthStatus;
   lastProcessedClosedBarTs: Date | null;
+  /** Phase 2.6: last processed closed bar per universe symbol. */
+  lastProcessedBars: { symbol: string; barTimestamp: Date }[];
   dailyTradeCount: number;
   consecutiveLossCount: number;
   dailyRealizedPnl: number;
@@ -53,7 +61,8 @@ const AutomationSessionSchema = new Schema<AutomationSessionDocument>(
   {
     mode: { type: String, enum: ['paper'], required: true, default: 'paper' },
     strategyVersionId: { type: String, required: true },
-    underlying: { type: String, required: true, uppercase: true, trim: true },
+    underlying: { type: String, default: null, uppercase: true, trim: true },
+    universe: { type: [String], default: [] },
     status: { type: String, enum: SESSION_STATUSES, required: true, default: 'CREATED', index: true },
     healthStatus: {
       type: String,
@@ -62,6 +71,16 @@ const AutomationSessionSchema = new Schema<AutomationSessionDocument>(
       default: 'UNAVAILABLE',
     },
     lastProcessedClosedBarTs: { type: Date, default: null },
+    // Array (not a map) so symbols containing dots (BRK.B) are safe as data.
+    lastProcessedBars: {
+      type: [
+        new Schema(
+          { symbol: { type: String, required: true }, barTimestamp: { type: Date, required: true } },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
     dailyTradeCount: { type: Number, required: true, default: 0 },
     consecutiveLossCount: { type: Number, required: true, default: 0 },
     dailyRealizedPnl: { type: Number, required: true, default: 0 },

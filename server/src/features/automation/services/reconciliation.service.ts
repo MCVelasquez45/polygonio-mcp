@@ -179,14 +179,17 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
     for (const position of brokerPositions) {
       const symbol = position.symbol.toUpperCase().replace(/^O:/, '');
       if (intentSymbols.has(symbol)) continue;
+      // A session owns a symbol via its single underlying OR its universe.
       const owningSessions = sessions.filter(session =>
-        symbol.startsWith(session.underlying.toUpperCase())
+        [session.underlying, ...(session.universe ?? [])]
+          .filter((entry): entry is string => Boolean(entry))
+          .some(entry => symbol.startsWith(entry.toUpperCase()))
       );
       if (!owningSessions.length) continue; // not on any automation underlying → manual trading, ignore
       for (const session of owningSessions) {
         mismatches.push({
           kind: 'ORPHANED_BROKER_POSITION',
-          detail: `Broker position ${position.symbol} (${position.qty}) has no local intent for session underlying ${session.underlying}`,
+          detail: `Broker position ${position.symbol} (${position.qty}) has no local intent for session symbols ${session.underlying ?? (session.universe ?? []).join(',')}`,
           automationSessionId: String(session._id),
           symbol: position.symbol,
           resolution: 'SESSION_PAUSED',

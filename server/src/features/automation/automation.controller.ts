@@ -31,20 +31,39 @@ export async function postReconcile(_req: Request, res: Response, next: NextFunc
   }
 }
 
+const SYMBOL_INPUT_PATTERN = /^[A-Za-z.]{1,10}$/;
+
 export async function postSession(req: Request, res: Response, next: NextFunction) {
   try {
-    const { strategyVersionId, underlying } = req.body ?? {};
+    const { strategyVersionId, underlying, universe } = req.body ?? {};
     if (typeof strategyVersionId !== 'string' || !strategyVersionId.trim()) {
       res.status(400).json({ error: 'strategyVersionId is required' });
       return;
     }
-    if (typeof underlying !== 'string' || !/^[A-Za-z.]{1,10}$/.test(underlying.trim())) {
+    const hasUnderlying = underlying != null;
+    const hasUniverse = universe != null;
+    if (!hasUnderlying && !hasUniverse) {
+      res.status(400).json({ error: 'either underlying (single symbol) or universe (symbol list) is required' });
+      return;
+    }
+    if (hasUnderlying && (typeof underlying !== 'string' || !SYMBOL_INPUT_PATTERN.test(underlying.trim()))) {
       res.status(400).json({ error: 'underlying must be a 1-10 letter symbol' });
       return;
     }
+    if (hasUniverse) {
+      const valid =
+        Array.isArray(universe) &&
+        universe.length > 0 &&
+        universe.every(entry => typeof entry === 'string' && SYMBOL_INPUT_PATTERN.test(entry.trim()));
+      if (!valid) {
+        res.status(400).json({ error: 'universe must be a non-empty array of 1-10 letter symbols' });
+        return;
+      }
+    }
     const session = await automationService.createSession({
       strategyVersionId: strategyVersionId.trim(),
-      underlying: underlying.trim(),
+      underlying: hasUnderlying ? underlying.trim() : null,
+      universe: hasUniverse ? universe.map((entry: string) => entry.trim()) : null,
     });
     res.status(201).json(session);
   } catch (error) {
@@ -167,6 +186,64 @@ export async function postEvaluateBar(req: Request, res: Response, next: NextFun
       riskDecision: result.riskDecision,
       orderIntent: result.orderIntent,
     });
+  } catch (error) {
+    handleError(error, res, next);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.6 — configurable trading universe
+// ---------------------------------------------------------------------------
+
+/** Dashboard: the configured universe (symbols come ONLY from configuration). */
+export async function getUniverse(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await automationService.getUniverse());
+  } catch (error) {
+    handleError(error, res, next);
+  }
+}
+
+/** Dashboard: persisted evaluations — eligibility, rejections, ranking, selection. */
+export async function getSessionUniverseEvaluations(req: Request, res: Response, next: NextFunction) {
+  try {
+    const limit = Number(req.query.limit ?? 20);
+    res.json(
+      await automationService.getSessionUniverseEvaluations(req.params.id, Number.isFinite(limit) ? limit : 20)
+    );
+  } catch (error) {
+    handleError(error, res, next);
+  }
+}
+
+/**
+ * Development/test-controlled universe evaluation, guarded exactly like
+ * evaluate-bar: endpoint gated by AUTOMATION_EVALUATE_BAR_ENABLED, fixtures
+ * gated by NODE_ENV=test / AUTOMATION_ALLOW_FIXTURES. Never submits.
+ */
+export async function postEvaluateUniverse(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!evaluateBarEnabled()) {
+      res.status(403).json({
+        error: 'evaluate-universe is disabled. Set AUTOMATION_EVALUATE_BAR_ENABLED=true in development.',
+        code: 'AUTOMATION_EVALUATE_BAR_DISABLED',
+      });
+      return;
+    }
+    const rawFixture = req.body?.fixture;
+    if (rawFixture != null && !fixturesAllowed()) {
+      res.status(403).json({
+        error: 'fixtures are only accepted under NODE_ENV=test or AUTOMATION_ALLOW_FIXTURES=true',
+        code: 'AUTOMATION_FIXTURES_DISABLED',
+      });
+      return;
+    }
+    if (rawFixture != null && typeof rawFixture.symbols !== 'object') {
+      res.status(400).json({ error: 'universe fixture requires symbols{} keyed by underlying' });
+      return;
+    }
+    const result = await automationService.evaluateUniverse(req.params.id, rawFixture ?? undefined);
+    res.status(200).json({ evaluation: result.evaluation, orderIntent: result.orderIntent });
   } catch (error) {
     handleError(error, res, next);
   }

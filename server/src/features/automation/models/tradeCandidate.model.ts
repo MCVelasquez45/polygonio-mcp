@@ -12,7 +12,10 @@ export type TradeCandidateStatus =
   | 'CLOCK_REJECTED'
   | 'DUPLICATE_SUPPRESSED'
   | 'RISK_REJECTED'
-  | 'RISK_APPROVED';
+  | 'RISK_APPROVED'
+  // Phase 2.6: a valid setup that ranked below the selected opportunity in a
+  // universe evaluation. Recorded, never traded.
+  | 'RANKED_NOT_SELECTED';
 
 export type SignalDirection = 'BULLISH' | 'BEARISH';
 
@@ -50,6 +53,7 @@ const CANDIDATE_STATUSES: TradeCandidateStatus[] = [
   'DUPLICATE_SUPPRESSED',
   'RISK_REJECTED',
   'RISK_APPROVED',
+  'RANKED_NOT_SELECTED',
 ];
 
 const TradeCandidateSchema = new Schema<TradeCandidateDocument>(

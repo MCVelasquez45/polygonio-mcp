@@ -74,6 +74,10 @@ export async function loadDist() {
     sizing2b,
     reset2b,
     processor2b,
+    // Phase 2.6
+    universeModel26,
+    universeService26,
+    universeProcessor26,
   ] = await Promise.all([
     import('../dist/features/automation/models/automationSession.model.js'),
     import('../dist/features/automation/models/orderIntent.model.js'),
@@ -99,6 +103,9 @@ export async function loadDist() {
     import('../dist/features/automation/services/positionSizing.service.js'),
     import('../dist/features/automation/services/sessionDailyReset.service.js'),
     import('../dist/features/automation/services/closedBarProcessor.service.js'),
+    import('../dist/features/automation/models/universeEvaluation.model.js'),
+    import('../dist/features/automation/services/marketUniverse.service.js'),
+    import('../dist/features/automation/services/universeTickProcessor.service.js'),
   ]);
   return {
     ...sessionModel,
@@ -125,6 +132,9 @@ export async function loadDist() {
     ...sizing2b,
     ...reset2b,
     ...processor2b,
+    ...universeModel26,
+    ...universeService26,
+    ...universeProcessor26,
   };
 }
 

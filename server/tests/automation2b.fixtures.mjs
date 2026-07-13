@@ -64,17 +64,19 @@ export function contract(overrides = {}) {
 /**
  * Chain with one clean winner plus one reject per filter dimension.
  * side: 'call' | 'put'. Put deltas are negative (abs() is filtered).
+ * Phase 2.6: `symbol` parameterizes the underlying — the SAME builder serves
+ * every configured universe symbol (defaults keep the 2B call sites working).
  */
-export function buildChain(side, { now = FIXTURE_NOW } = {}) {
+export function buildChain(side, { now = FIXTURE_NOW, symbol = 'SPY', winnerDelta = 0.6 } = {}) {
   const sign = side === 'call' ? 1 : -1;
-  const sym = (tag) => `SPY260724${side === 'call' ? 'C' : 'P'}00${tag}000`;
+  const sym = (tag) => `${symbol}260724${side === 'call' ? 'C' : 'P'}00${tag}000`;
   return {
-    underlying: 'SPY',
+    underlying: symbol,
     underlyingPrice: 500,
     fetchedAt: now - 10_000,
     contracts: [
       // the deterministic winner
-      contract({ symbol: sym('500'), type: side, strike: 500, delta: 0.6 * sign }),
+      contract({ symbol: sym('500'), type: side, strike: 500, delta: winnerDelta * sign }),
       // near-miss good contract (worse delta) — should rank second
       contract({ symbol: sym('505'), type: side, strike: 505, delta: 0.56 * sign }),
       // rejects — one per filter
@@ -87,7 +89,7 @@ export function buildChain(side, { now = FIXTURE_NOW } = {}) {
       contract({ symbol: sym('540'), type: side, strike: 540, bid: 0, ask: 0 }), // non-positive quote
       // opposite side contract that must be ignored entirely
       contract({
-        symbol: `SPY260724${side === 'call' ? 'P' : 'C'}00500000`,
+        symbol: `${symbol}260724${side === 'call' ? 'P' : 'C'}00500000`,
         type: side === 'call' ? 'put' : 'call',
         delta: -0.6 * sign,
       }),
@@ -96,16 +98,52 @@ export function buildChain(side, { now = FIXTURE_NOW } = {}) {
 }
 
 /** Chain where nothing passes (all wide spreads). */
-export function buildAllRejectChain(side, { now = FIXTURE_NOW } = {}) {
+export function buildAllRejectChain(side, { now = FIXTURE_NOW, symbol = 'SPY' } = {}) {
   return {
-    underlying: 'SPY',
+    underlying: symbol,
     underlyingPrice: 500,
     fetchedAt: now - 10_000,
     contracts: [
-      contract({ symbol: 'SPY260724C00500000', type: side, bid: 0.5, ask: 1.5, mid: 1.0 }),
-      contract({ symbol: 'SPY260724C00505000', type: side, strike: 505, bid: 0.4, ask: 1.4, mid: 0.9 }),
+      contract({ symbol: `${symbol}260724C00500000`, type: side, bid: 0.5, ask: 1.5, mid: 1.0 }),
+      contract({ symbol: `${symbol}260724C00505000`, type: side, strike: 505, bid: 0.4, ask: 1.4, mid: 0.9 }),
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.6 — universe fixtures. Symbols here are TEST DATA, chosen by each
+// test; nothing in automation source references them.
+// ---------------------------------------------------------------------------
+
+/**
+ * One universe symbol entry for a UniverseTickFixture. `kind` is the bar
+ * pattern ('bullish' | 'bearish' | 'mixed' | ...); options tune the chain:
+ *   { winnerDelta, incompleteChain, illiquidChain, failFetch }
+ */
+export function universeSymbol(symbol, kind, options = {}) {
+  const { now = FIXTURE_NOW, winnerDelta = 0.6, incompleteChain = false, illiquidChain = false, failFetch = false } = options;
+  if (failFetch) return { bars: [], chains: { call: null, put: null }, failFetch: true };
+  const build = (side) =>
+    illiquidChain ? buildAllRejectChain(side, { now, symbol }) : buildChain(side, { now, symbol, winnerDelta });
+  const withCompleteness = (chain) =>
+    incompleteChain ? { ...chain, completeness: { complete: false, pagesFetched: 1, truncated: true } } : chain;
+  return {
+    bars: buildBars(kind, { now }),
+    chains: { call: withCompleteness(build('call')), put: withCompleteness(build('put')) },
+  };
+}
+
+/**
+ * Build a UniverseTickFixture from { SYMBOL: kindOrSpec } where kindOrSpec is
+ * either a bar-pattern string or { kind, ...options }.
+ */
+export function universeFixtureFor(spec, { now = FIXTURE_NOW, account = FIXTURE_ACCOUNT } = {}) {
+  const symbols = {};
+  for (const [symbol, kindOrSpec] of Object.entries(spec)) {
+    const { kind, ...options } = typeof kindOrSpec === 'string' ? { kind: kindOrSpec } : kindOrSpec;
+    symbols[symbol] = universeSymbol(symbol, kind, { now, ...options });
+  }
+  return { universe: Object.keys(spec), symbols, account, now };
 }
 
 export const FIXTURE_ACCOUNT = { equity: 100_000, buyingPower: 50_000 };

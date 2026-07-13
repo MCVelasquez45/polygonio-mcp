@@ -65,14 +65,18 @@ export function isAutomationReady(): boolean {
 /** Await every automation index build (unique constraints are load-bearing). */
 export async function ensureAutomationIndexes(): Promise<void> {
   const models = [AutomationSessionModel, OrderIntentModel, BrokerOrderModel, AutomationEventModel];
-  // Phase 2B models are loaded lazily to keep 2A boot lean.
-  const [{ TradeCandidateModel }, { ContractSelectionModel }, { RiskDecisionModel }] = await Promise.all([
-    import('../models/tradeCandidate.model'),
-    import('../models/contractSelection.model'),
-    import('../models/riskDecision.model'),
-  ]);
+  // Phase 2B/2.6 models are loaded lazily to keep 2A boot lean.
+  const [{ TradeCandidateModel }, { ContractSelectionModel }, { RiskDecisionModel }, { UniverseEvaluationModel }] =
+    await Promise.all([
+      import('../models/tradeCandidate.model'),
+      import('../models/contractSelection.model'),
+      import('../models/riskDecision.model'),
+      import('../models/universeEvaluation.model'),
+    ]);
   await Promise.all(
-    [...models, TradeCandidateModel, ContractSelectionModel, RiskDecisionModel].map(model => model.init())
+    [...models, TradeCandidateModel, ContractSelectionModel, RiskDecisionModel, UniverseEvaluationModel].map(
+      model => model.init()
+    )
   );
 }
 

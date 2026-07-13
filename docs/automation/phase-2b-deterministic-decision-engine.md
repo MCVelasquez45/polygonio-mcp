@@ -53,7 +53,12 @@ The exact snapshot used for every candidate is persisted
 hand-computed fixtures (VWAP=12 on a 3-bar series, EMA(3)=2.25 on [1,2,3],
 RSI=100 on monotonic rise) and window-bounded values on the strategy fixtures.
 
-## Strategy conditions (spy-5m-momentum-v1)
+## Strategy conditions (momentum-5m-v1)
+
+> Phase 2.6 renamed the strategy key from `spy-5m-momentum-v1` to
+> `momentum-5m-v1`: the rules are unchanged but the engine is now
+> symbol-agnostic — see
+> [phase-2-6-configurable-universe.md](phase-2-6-configurable-universe.md).
 
 Bullish (ALL): close>VWAP · EMA9>EMA21 · 50≤RSI≤70 · volume>1.0×avg(20) ·
 no automation position · no unresolved automation order · dailyTradeCount<2.
