@@ -1,5 +1,5 @@
 import { agentAnalyze, type AiRequestMeta } from '../assistant/agentClient';
-import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../shared/data/massive';
+import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume, REQUEST_PRIORITY } from '../../shared/data/massive';
 import { getRecentAggregateBars } from '../market/services/aggregatesStore';
 
 type SentimentSnapshot = {
@@ -147,7 +147,7 @@ function summarizeShortVolume(payload: { results: any[] } | null): ShortVolumeSn
 
 async function buildDeskContext(symbol: string): Promise<DeskContext> {
   const [snapshot, dailyBars, minuteBars] = await Promise.all([
-    getMassiveOptionsSnapshot(symbol).catch(() => null),
+    getMassiveOptionsSnapshot(symbol, { priority: REQUEST_PRIORITY.SCANNER, cacheTtlMs: 30_000 }).catch(() => null),
     getRecentAggregateBars(symbol, 1, 'day', 10).catch(() => []),
     getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => [])
   ]);

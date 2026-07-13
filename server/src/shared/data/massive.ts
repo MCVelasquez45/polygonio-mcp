@@ -1,7 +1,77 @@
 import axios from 'axios';
-import { isRetryableMassiveError, resolveMassiveRetryDelayMs } from './massiveRetry';
+import { createHash } from 'node:crypto';
+import {
+  MassiveEntitlementError,
+  isEntitlementFailure,
+  isRetryableMassiveError,
+  resolveMassiveRetryDelayMs,
+} from './massiveRetry';
+import { computeDteEt } from '../time/tradingCalendar';
 // Handles authenticated + rate-limited access to Massive.com's API, with caching + retry logic.
 // Retry policy is centralized in ./massiveRetry so it stays consistent with massiveProvider.ts.
+
+// ---------------------------------------------------------------------------
+// Request priorities. Lower number = drained first. Risk exits and automation
+// decisions must never starve behind watchlist/background refreshes.
+// ---------------------------------------------------------------------------
+export const REQUEST_PRIORITY = {
+  CRITICAL_EXIT: 0,
+  OPEN_POSITION: 1,
+  AUTOMATION_DECISION: 2,
+  ACTIVE_CONTRACT: 3,
+  VISIBLE_UI: 4,
+  SCANNER: 5,
+  WATCHLIST: 6,
+  BACKGROUND: 7,
+} as const;
+
+export type RequestPriority = (typeof REQUEST_PRIORITY)[keyof typeof REQUEST_PRIORITY];
+
+const DEFAULT_PRIORITY: RequestPriority = REQUEST_PRIORITY.VISIBLE_UI;
+
+/** Short stable hash for correlating cursors/keys in logs without leaking them. */
+export function logHash(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return createHash('sha256').update(value).digest('hex').slice(0, 8);
+}
+
+// ---------------------------------------------------------------------------
+// Entitlement registry. Once Massive tells us an endpoint class is outside the
+// plan (HTTP 403 / NOT_AUTHORIZED body), we stop calling it for a long window
+// instead of burning rate-limit budget on requests that can never succeed.
+// ---------------------------------------------------------------------------
+const ENTITLEMENT_BLOCK_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.MASSIVE_ENTITLEMENT_BLOCK_TTL_MS ?? 6 * 60 * 60 * 1000)
+);
+
+type EntitlementBlock = { until: number; message: string; httpStatus: number | null };
+const entitlementBlocks = new Map<string, EntitlementBlock>();
+
+/** Endpoint class used for entitlement tracking: template-ish path prefix. */
+function endpointClassOf(path: string): string {
+  // /v2/aggs/ticker/SPY/range/5/minute/... → /v2/aggs/:ticker/range/:mult/:timespan
+  const parts = path.split('/').filter(Boolean);
+  if (parts[0] === 'v2' && parts[1] === 'aggs' && parts[2] === 'ticker') {
+    const isOption = (parts[3] ?? '').startsWith('O:');
+    const timespan = parts[6] ?? parts[4] ?? '';
+    return `/v2/aggs/${isOption ? 'options' : 'stocks'}/${timespan}`;
+  }
+  return `/${parts.slice(0, 3).join('/')}`;
+}
+
+export function getEntitlementBlocks(): Record<string, { until: string; message: string }> {
+  const now = Date.now();
+  const out: Record<string, { until: string; message: string }> = {};
+  for (const [key, block] of entitlementBlocks) {
+    if (block.until > now) out[key] = { until: new Date(block.until).toISOString(), message: block.message };
+  }
+  return out;
+}
+
+export function clearEntitlementBlocks() {
+  entitlementBlocks.clear();
+}
 
 const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY;
 const MASSIVE_BASE_URL = process.env.MASSIVE_BASE_URL || 'https://api.massive.com';
@@ -37,12 +107,16 @@ type MassiveResponse<T = any> = {
 
 type MassiveRequestOptions = {
   cacheTtlMs?: number;
+  /** Drain order in the shared request queue; defaults to VISIBLE_UI. */
+  priority?: RequestPriority;
 };
 
 type QueueTask<T> = {
   run: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
+  priority: RequestPriority;
+  seq: number;
 };
 
 type CacheEntry = {
@@ -54,9 +128,23 @@ type CacheEntry = {
 const responseCache = new Map<string, CacheEntry>();
 const inflightRequests = new Map<string, Promise<any>>();
 const requestQueue: QueueTask<any>[] = [];
+let queueSeq = 0;
 let activeRequests = 0;
 let nextAvailableTimestamp = Date.now();
 let scheduledDrain: NodeJS.Timeout | null = null;
+
+/** Pending request counts by priority (for the market-data health endpoint). */
+export function getPendingRequestsByPriority(): Record<string, number> {
+  const nameByValue = new Map<number, string>(
+    Object.entries(REQUEST_PRIORITY).map(([name, value]) => [value, name])
+  );
+  const counts: Record<string, number> = {};
+  for (const task of requestQueue) {
+    const name = nameByValue.get(task.priority) ?? String(task.priority);
+    counts[name] = (counts[name] ?? 0) + 1;
+  }
+  return counts;
+}
 
 function normalizeAggTimestamp(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -131,7 +219,16 @@ function drainQueue() {
     return;
   }
 
-  const task = requestQueue.shift();
+  // Priority drain: lowest priority value first, FIFO (seq) within a class.
+  let bestIndex = 0;
+  for (let i = 1; i < requestQueue.length; i += 1) {
+    const candidate = requestQueue[i];
+    const best = requestQueue[bestIndex];
+    if (candidate.priority < best.priority || (candidate.priority === best.priority && candidate.seq < best.seq)) {
+      bestIndex = i;
+    }
+  }
+  const task = requestQueue.splice(bestIndex, 1)[0];
   if (!task) return;
   activeRequests += 1;
   nextAvailableTimestamp = Date.now() + MASSIVE_MIN_INTERVAL_MS;
@@ -146,9 +243,10 @@ function drainQueue() {
     });
 }
 
-function scheduleRequest<T>(run: () => Promise<T>): Promise<T> {
+function scheduleRequest<T>(run: () => Promise<T>, priority: RequestPriority): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    requestQueue.push({ run, resolve, reject });
+    queueSeq += 1;
+    requestQueue.push({ run, resolve, reject, priority, seq: queueSeq });
     drainQueue();
   });
 }
@@ -172,6 +270,7 @@ export async function massiveGet<T = any>(
     typeof options?.cacheTtlMs === 'number' && options.cacheTtlMs >= 0
       ? options.cacheTtlMs
       : MASSIVE_DEFAULT_CACHE_TTL_MS;
+  const priority = options?.priority ?? DEFAULT_PRIORITY;
 
   const cachedEntry = responseCache.get(cacheKey);
   const now = Date.now();
@@ -179,11 +278,22 @@ export async function massiveGet<T = any>(
     return cachedEntry.value;
   }
 
+  // Entitlement-blocked endpoint classes fail fast without consuming queue or
+  // provider capacity — a plan limitation is not a transient error.
+  const endpointClass = endpointClassOf(path);
+  const block = entitlementBlocks.get(endpointClass);
+  if (block) {
+    if (block.until > now) {
+      throw new MassiveEntitlementError(path, block.httpStatus, block.message);
+    }
+    entitlementBlocks.delete(endpointClass);
+  }
+
   if (inflightRequests.has(cacheKey)) {
     return inflightRequests.get(cacheKey)! as Promise<T>;
   }
 
-  const requestPromise = scheduleRequest(() => executeMassiveRequest<T>(path, normalizedParams));
+  const requestPromise = scheduleRequest(() => executeMassiveRequest<T>(path, normalizedParams), priority);
 
   inflightRequests.set(cacheKey, requestPromise);
 
@@ -208,13 +318,43 @@ export async function massiveGet<T = any>(
   }
 }
 
+/** Log-safe copy of request params: cursors are replaced with a short hash. */
+function sanitizeParamsForLog(params: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key.toLowerCase() === 'cursor' && typeof value === 'string') {
+      out[key] = `#${logHash(value)}`;
+    } else if (key.toLowerCase() === 'apikey') {
+      continue;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function registerEntitlementBlock(path: string, httpStatus: number | null, message: string) {
+  const endpointClass = endpointClassOf(path);
+  entitlementBlocks.set(endpointClass, {
+    until: Date.now() + ENTITLEMENT_BLOCK_TTL_MS,
+    message,
+    httpStatus,
+  });
+  console.warn('[MASSIVE] endpoint class blocked by entitlement', {
+    endpointClass,
+    httpStatus,
+    blockTtlMs: ENTITLEMENT_BLOCK_TTL_MS,
+    message,
+  });
+}
+
 async function executeMassiveRequest<T>(
   path: string,
   normalizedParams: Record<string, any>,
   attempt: number = 0
 ): Promise<T> {
   try {
-    console.log('[MASSIVE] GET', path, normalizedParams, { attempt: attempt + 1 });
+    console.log('[MASSIVE] GET', path, sanitizeParamsForLog(normalizedParams), { attempt: attempt + 1 });
     const { data } = await client.get<MassiveResponse<T>>(path, {
       params: {
         apiKey: MASSIVE_API_KEY,
@@ -225,10 +365,23 @@ async function executeMassiveRequest<T>(
         'X-API-Key': MASSIVE_API_KEY
       }
     });
+    // Massive can report plan limits inside a 2xx body.
+    if (isEntitlementFailure(null, data)) {
+      const message = typeof (data as any)?.message === 'string' ? (data as any).message : 'NOT_AUTHORIZED';
+      registerEntitlementBlock(path, null, message);
+      throw new MassiveEntitlementError(path, null, message);
+    }
     return (data as any) ?? {};
   } catch (error) {
+    if (error instanceof MassiveEntitlementError) throw error;
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    if (isEntitlementFailure(status ?? null, axios.isAxiosError(error) ? error.response?.data : null)) {
+      const body = axios.isAxiosError(error) ? (error.response?.data as any) : null;
+      const message = typeof body?.message === 'string' ? body.message : 'plan does not include this data';
+      registerEntitlementBlock(path, status ?? null, message);
+      throw new MassiveEntitlementError(path, status ?? null, message);
+    }
     if (isRetryableMassiveError(error, attempt, MASSIVE_MAX_RETRIES)) {
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       const delayMs = resolveMassiveRetryDelayMs(error, attempt, {
         baseMs: MASSIVE_RETRY_BASE_MS,
         maxMs: MASSIVE_RETRY_MAX_MS
@@ -602,9 +755,9 @@ export async function listOptionConditions(params: { asset_class?: string; limit
   return Array.isArray(payload?.results) ? payload.results : payload?.conditions ?? [];
 }
 
-async function fetchReferenceContracts(
+export async function fetchReferenceContracts(
   params: Record<string, any>,
-  options: { maxPages?: number } = {}
+  options: { maxPages?: number; cacheTtlMs?: number; priority?: RequestPriority } = {}
 ) {
   const maxPages = Math.min(Math.max(options.maxPages ?? 1, 1), MASSIVE_REFERENCE_MAX_PAGES);
   const aggregated: any[] = [];
@@ -621,7 +774,10 @@ async function fetchReferenceContracts(
     if (cursor) {
       pageParams.cursor = cursor;
     }
-    const payload = await massiveGet('/v3/reference/options/contracts', pageParams, { cacheTtlMs: 60_000 });
+    const payload = await massiveGet('/v3/reference/options/contracts', pageParams, {
+      cacheTtlMs: options.cacheTtlMs ?? 60_000,
+      priority: options.priority,
+    });
     const pageResults = Array.isArray(payload?.results) ? payload.results : [];
     aggregated.push(...pageResults);
     nextCursor = extractCursor(payload?.next_url);
@@ -632,20 +788,22 @@ async function fetchReferenceContracts(
   return {
     results: aggregated,
     pagesFetched,
-    exhausted: !cursor
+    exhausted: !cursor,
+    nextCursor,
   };
 }
 
-async function fetchSnapshotOptions(
+export async function fetchSnapshotOptions(
   symbol: string,
   params: Record<string, any>,
-  options: { maxPages?: number } = {}
+  options: { maxPages?: number; cacheTtlMs?: number; priority?: RequestPriority } = {}
 ) {
   const maxPages = Math.min(Math.max(options.maxPages ?? MASSIVE_SNAPSHOT_MAX_PAGES, 1), MASSIVE_SNAPSHOT_MAX_PAGES);
   const aggregated: any[] = [];
   let pagesFetched = 0;
   let exhausted = true;
   let resolvedRoot: any = null;
+  let underlyingAsset: any = null;
 
   let nextRequest: { path: string; params: Record<string, any> } | null = {
     path: `/v3/snapshot/options/${symbol}`,
@@ -653,17 +811,21 @@ async function fetchSnapshotOptions(
   };
 
   while (nextRequest && pagesFetched < maxPages) {
-    console.log('[MASSIVE] snapshot request', { symbol, pagesFetched, request: nextRequest });
-    const payload = await massiveGet(nextRequest.path, nextRequest.params, { cacheTtlMs: 5_000 });
-    console.log('[MASSIVE] snapshot response summary', {
+    const payload = await massiveGet(nextRequest.path, nextRequest.params, {
+      cacheTtlMs: options.cacheTtlMs ?? 5_000,
+      priority: options.priority,
+    });
+    console.log('[MASSIVE] snapshot page', {
       symbol,
       page: pagesFetched + 1,
-      hasResults: Array.isArray(payload?.results) ? payload.results.length : null,
-      hasOptions: Array.isArray(payload?.options) ? payload.options.length : null,
-      nextUrl: payload?.next_url ?? null
+      results: Array.isArray(payload?.results) ? payload.results.length : null,
+      nextCursor: logHash(extractCursor(payload?.next_url)),
     });
     if (!resolvedRoot) {
       resolvedRoot = resolveSnapshotRoot(payload);
+    }
+    if (!underlyingAsset) {
+      underlyingAsset = extractSnapshotUnderlying(payload);
     }
     const optionsChunk = extractSnapshotOptions(payload);
     aggregated.push(...optionsChunk);
@@ -671,16 +833,37 @@ async function fetchSnapshotOptions(
     nextRequest = parseMassiveNextUrl(payload?.next_url);
   }
 
+  let nextCursor: string | null = null;
   if (nextRequest) {
     exhausted = false;
+    nextCursor = typeof nextRequest.params?.cursor === 'string' ? nextRequest.params.cursor : null;
   }
 
   return {
     options: aggregated,
     root: resolvedRoot,
+    underlyingAsset,
     pagesFetched,
-    exhausted
+    exhausted,
+    nextCursor,
   };
+}
+
+/**
+ * The v3 chain snapshot returns a flat `results[]` of contracts, each carrying
+ * an `underlying_asset` block ({ price, last_updated, timeframe, ticker }).
+ * Older/alternate shapes put it on the root. Handle both.
+ */
+export function extractSnapshotUnderlying(payload: any): any {
+  const root = payload?.results;
+  if (Array.isArray(root)) {
+    for (const entry of root) {
+      const candidate = entry?.underlying_asset ?? entry?.option?.underlying_asset;
+      if (candidate && typeof candidate === 'object') return candidate;
+    }
+    return null;
+  }
+  return payload?.underlying_asset ?? root?.underlying_asset ?? null;
 }
 
 function resolveSnapshotRoot(payload: any) {
@@ -742,16 +925,45 @@ function parseMassiveNextUrl(nextUrl: string | null | undefined): { path: string
  * Builds a normalized option chain by combining Massive snapshots and
  * reference contracts. Handles pagination, expiration filters, and caching.
  */
+export type OptionsChainFilters = {
+  expiration?: string;
+  /** Inclusive expiration-date range (YYYY-MM-DD). Narrows the provider query. */
+  expirationGte?: string;
+  expirationLte?: string;
+  /** calls-only / puts-only fetches for direction-specific consumers. */
+  contractType?: 'call' | 'put';
+  /** Inclusive strike range. Narrows the provider query. */
+  strikeGte?: number;
+  strikeLte?: number;
+  /** Queue priority for every request this chain build issues. */
+  priority?: RequestPriority;
+  /**
+   * Cache TTL for the reference-contract pages. Reference data is static per
+   * contract, so orchestrated callers pass a long TTL to avoid re-downloading
+   * contract definitions on every snapshot/quote refresh.
+   */
+  referenceCacheTtlMs?: number;
+  /**
+   * Cache TTL for snapshot pages. The orchestrator sets 0 and applies its own
+   * market-session-aware chain cache instead of double-caching here.
+   */
+  snapshotCacheTtlMs?: number;
+};
+
 export async function getMassiveOptionsChain(
   underlying: string,
   limit = 100,
   order: 'asc' | 'desc' = 'asc',
   sort: string = 'ticker',
-  options: { expiration?: string } = {}
+  options: OptionsChainFilters = {}
 ) {
   const normalizedUnderlying = underlying.toUpperCase();
   const normalizedExpirationFilter = options.expiration ? normalizeExpirationDate(options.expiration) ?? undefined : undefined;
+  const expirationGte = options.expirationGte ? normalizeExpirationDate(options.expirationGte) ?? undefined : undefined;
+  const expirationLte = options.expirationLte ? normalizeExpirationDate(options.expirationLte) ?? undefined : undefined;
+  const hasWindowFilter = Boolean(normalizedExpirationFilter || (expirationGte && expirationLte));
   const clampedLimit = clampChainLimit(limit);
+  const priority = options.priority;
   const snapshotParams: Record<string, any> = {
     order,
     limit: Math.min(clampedLimit, MASSIVE_SNAPSHOT_PAGE_LIMIT),
@@ -759,20 +971,37 @@ export async function getMassiveOptionsChain(
   };
   if (normalizedExpirationFilter) {
     snapshotParams.expiration_date = normalizedExpirationFilter;
+  } else {
+    if (expirationGte) snapshotParams['expiration_date.gte'] = expirationGte;
+    if (expirationLte) snapshotParams['expiration_date.lte'] = expirationLte;
+  }
+  if (options.contractType === 'call' || options.contractType === 'put') {
+    snapshotParams.contract_type = options.contractType;
+  }
+  if (typeof options.strikeGte === 'number' && Number.isFinite(options.strikeGte)) {
+    snapshotParams['strike_price.gte'] = options.strikeGte;
+  }
+  if (typeof options.strikeLte === 'number' && Number.isFinite(options.strikeLte)) {
+    snapshotParams['strike_price.lte'] = options.strikeLte;
   }
   let snapshotData: Awaited<ReturnType<typeof fetchSnapshotOptions>> | null = null;
   try {
     snapshotData = await fetchSnapshotOptions(
       normalizedUnderlying,
       snapshotParams,
-      { maxPages: normalizedExpirationFilter ? MASSIVE_SNAPSHOT_MAX_PAGES : 5 }
+      {
+        maxPages: hasWindowFilter ? MASSIVE_SNAPSHOT_MAX_PAGES : 5,
+        priority,
+        cacheTtlMs: options.snapshotCacheTtlMs
+      }
     );
   } catch (error) {
-    console.warn('[MASSIVE] snapshot chain fetch failed for', normalizedUnderlying, error);
+    console.warn('[MASSIVE] snapshot chain fetch failed for', normalizedUnderlying, (error as Error)?.message);
   }
 
   const snapshotRoot = snapshotData?.root ?? {};
   const underlyingAsset =
+    snapshotData?.underlyingAsset ??
     snapshotRoot?.underlying_asset ??
     snapshotRoot?.underlying ??
     {};
@@ -780,7 +1009,11 @@ export async function getMassiveOptionsChain(
   const rawOptions = Array.isArray(snapshotData?.options) ? snapshotData.options : [];
 
   let referenceLegs = new Map<string, any>();
-  let referenceStats = { pagesFetched: 0, exhausted: true };
+  let referenceStats: { pagesFetched: number; exhausted: boolean; nextCursor: string | null } = {
+    pagesFetched: 0,
+    exhausted: true,
+    nextCursor: null
+  };
   try {
     const referenceParams: Record<string, any> = {
       underlying_asset: normalizedUnderlying,
@@ -791,15 +1024,30 @@ export async function getMassiveOptionsChain(
     };
     if (normalizedExpirationFilter) {
       referenceParams.expiration_date = normalizedExpirationFilter;
+    } else {
+      if (expirationGte) referenceParams['expiration_date.gte'] = expirationGte;
+      if (expirationLte) referenceParams['expiration_date.lte'] = expirationLte;
+    }
+    if (options.contractType === 'call' || options.contractType === 'put') {
+      referenceParams.contract_type = options.contractType;
+    }
+    if (typeof options.strikeGte === 'number' && Number.isFinite(options.strikeGte)) {
+      referenceParams['strike_price.gte'] = options.strikeGte;
+    }
+    if (typeof options.strikeLte === 'number' && Number.isFinite(options.strikeLte)) {
+      referenceParams['strike_price.lte'] = options.strikeLte;
     }
     const {
       results: contracts,
       pagesFetched,
-      exhausted
+      exhausted,
+      nextCursor
     } = await fetchReferenceContracts(referenceParams, {
-      maxPages: normalizedExpirationFilter ? MASSIVE_REFERENCE_MAX_PAGES : 1
+      maxPages: hasWindowFilter ? MASSIVE_REFERENCE_MAX_PAGES : 1,
+      priority,
+      cacheTtlMs: options.referenceCacheTtlMs
     });
-    referenceStats = { pagesFetched, exhausted };
+    referenceStats = { pagesFetched, exhausted, nextCursor };
     if (!exhausted) {
       console.warn('[MASSIVE] reference contracts truncated', {
         ticker: normalizedUnderlying,
@@ -960,7 +1208,12 @@ export async function getMassiveOptionsChain(
 
   if (normalizedExpirationFilter) {
     expirations = expirations.filter(group => group.expiration === normalizedExpirationFilter);
+  } else {
+    if (expirationGte) expirations = expirations.filter(group => group.expiration >= expirationGte);
+    if (expirationLte) expirations = expirations.filter(group => group.expiration <= expirationLte);
   }
+  // Expired contracts must never surface in a chain (negative DTE correction).
+  expirations = expirations.filter(group => group.dte == null || group.dte >= 0);
 
   if (!expirations.length && referenceLegs.size) {
     const fallbackMap = new Map<string, Map<number, any>>();
@@ -989,7 +1242,11 @@ export async function getMassiveOptionsChain(
 
     if (normalizedExpirationFilter) {
       fallbackExpirations = fallbackExpirations.filter(group => group.expiration === normalizedExpirationFilter);
+    } else {
+      if (expirationGte) fallbackExpirations = fallbackExpirations.filter(group => group.expiration >= expirationGte);
+      if (expirationLte) fallbackExpirations = fallbackExpirations.filter(group => group.expiration <= expirationLte);
     }
+    fallbackExpirations = fallbackExpirations.filter(group => group.dte == null || group.dte >= 0);
     expirations = fallbackExpirations;
   }
 
@@ -1001,20 +1258,50 @@ export async function getMassiveOptionsChain(
     referencePages: referenceStats.pagesFetched
   });
 
+  const coveredExpirations = expirations.map(group => group.expiration).sort();
+
   return {
     ticker: normalizedUnderlying,
     underlyingPrice,
+    underlyingContext: {
+      price: underlyingPrice,
+      ticker: typeof underlyingAsset?.ticker === 'string' ? underlyingAsset.ticker : normalizedUnderlying,
+      lastUpdated: normalizeProviderTimestamp(underlyingAsset?.last_updated),
+      timeframe:
+        typeof underlyingAsset?.timeframe === 'string' ? underlyingAsset.timeframe.toUpperCase() : 'UNKNOWN',
+      source: 'options-snapshot' as const
+    },
     expirations,
     metadata: {
       limit: clampedLimit,
       referenceContracts: referenceLegs.size,
       referencePages: referenceStats.pagesFetched,
       referenceComplete: referenceStats.exhausted,
+      referenceNextCursor: referenceStats.nextCursor,
       snapshotPages: snapshotData?.pagesFetched ?? 0,
       snapshotComplete: snapshotData?.exhausted ?? false,
-      expiration: normalizedExpirationFilter ?? null
+      snapshotNextCursor: snapshotData?.nextCursor ?? null,
+      expiration: normalizedExpirationFilter ?? null,
+      expirationGte: expirationGte ?? null,
+      expirationLte: expirationLte ?? null,
+      contractType: options.contractType ?? null,
+      coveredExpirationStart: coveredExpirations[0] ?? null,
+      coveredExpirationEnd: coveredExpirations[coveredExpirations.length - 1] ?? null,
+      fetchedAt: new Date().toISOString()
     }
   };
+}
+
+/**
+ * Massive timestamps arrive in ns / µs / ms / s depending on the field.
+ * Normalize to epoch milliseconds.
+ */
+export function normalizeProviderTimestamp(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value > 1e17) return Math.floor(value / 1e6); // ns → ms
+  if (value > 1e14) return Math.floor(value / 1e3); // µs → ms
+  if (value > 1e11) return value; // already ms
+  return Math.floor(value * 1000); // s → ms
 }
 
 function resolveNumber(value: any): number | null {
@@ -1035,11 +1322,10 @@ function computeMid(bid: any, ask: any): number | null {
   return bidNum ?? askNum ?? null;
 }
 
+// DTE in exchange (America/New_York) calendar days. Same-day expirations are 0,
+// never -1 (see shared/time/tradingCalendar.ts for the UTC-midnight bug this fixes).
 function computeDte(expiration: string): number | null {
-  const expDate = new Date(expiration);
-  if (Number.isNaN(expDate.getTime())) return null;
-  const diff = Math.round((expDate.getTime() - Date.now()) / 86_400_000);
-  return diff;
+  return computeDteEt(expiration, Date.now());
 }
 
 export function normalizeExpirationDate(value: string | null | undefined): string | null {
@@ -1417,19 +1703,30 @@ export function extractCursor(nextUrl: string | null | undefined) {
  * Retrieves Massive's option snapshot for an underlying. Used to seed the
  * watchlist/checklist modules with top-volume contracts and greeks.
  */
-export async function getMassiveOptionsSnapshot(underlying: string) {
+export async function getMassiveOptionsSnapshot(
+  underlying: string,
+  options: { priority?: RequestPriority; cacheTtlMs?: number } = {}
+) {
   const symbol = underlying.toUpperCase();
+  const requestOptions = {
+    cacheTtlMs: options.cacheTtlMs ?? 5_000,
+    priority: options.priority,
+  };
   let payload: any;
   try {
-    payload = await massiveGet(`/v3/snapshot/options/${symbol}`, {}, { cacheTtlMs: 5_000 });
+    payload = await massiveGet(`/v3/snapshot/options/${symbol}`, {}, requestOptions);
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
     console.warn('[MASSIVE] v3 snapshot missing for', symbol, '– falling back to v2');
-    payload = await massiveGet(`/v2/snapshot/options/${symbol}`, {}, { cacheTtlMs: 5_000 });
+    payload = await massiveGet(`/v2/snapshot/options/${symbol}`, {}, requestOptions);
   }
-  console.log('[MASSIVE] snapshot payload', symbol, JSON.stringify(payload)?.slice(0, 500));
+  console.log('[MASSIVE] snapshot payload summary', {
+    symbol,
+    results: Array.isArray(payload?.results) ? payload.results.length : null,
+    status: payload?.status ?? null
+  });
   const result = Array.isArray(payload?.results) ? payload.results[0] ?? {} : payload?.results ?? payload ?? {};
-  const underlyingAsset = result?.underlying_asset ?? result?.underlying ?? {};
+  const underlyingAsset = extractSnapshotUnderlying(payload) ?? result?.underlying_asset ?? result?.underlying ?? {};
   const underlyingDay = underlyingAsset?.day ?? result?.day ?? {};
   const lastTrade = underlyingAsset?.last_trade ?? result?.last_trade ?? {};
   const lastQuote = underlyingAsset?.last_quote ?? result?.last_quote ?? {};
@@ -1475,6 +1772,11 @@ export async function getMassiveOptionsSnapshot(underlying: string) {
     ticker: typeof underlyingAsset?.ticker === 'string' ? underlyingAsset.ticker.toUpperCase() : symbol,
     name: underlyingAsset?.name ?? underlyingAsset?.description ?? symbol,
     price,
+    // Provider metadata so consumers can label freshness honestly: under
+    // Options Advanced the underlying block is DELAYED, never real-time.
+    priceLastUpdated: normalizeProviderTimestamp(underlyingAsset?.last_updated),
+    priceTimeframe:
+      typeof underlyingAsset?.timeframe === 'string' ? underlyingAsset.timeframe.toUpperCase() : 'UNKNOWN',
     change,
     changePercent,
     iv: resolveNumber(referenceOption?.implied_volatility),
@@ -1522,7 +1824,11 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
       { cacheTtlMs: 3_000 }
     );
   }
-  console.log('[MASSIVE] contract snapshot payload', contractSymbol, JSON.stringify(snapshot)?.slice(0, 500));
+  console.log('[MASSIVE] contract snapshot resolved payload', {
+    contract: contractSymbol,
+    hasResults: snapshot?.results != null,
+    status: snapshot?.status ?? null
+  });
   const payload = snapshot?.results ?? snapshot ?? {};
   const optionData = payload?.option ?? payload ?? {};
   const priceData = optionData?.price_data ?? optionData?.priceData ?? optionData?.pricing ?? null;

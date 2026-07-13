@@ -17,6 +17,7 @@ import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { strategyRouter } from './features/strategy/strategy.routes';
 import { automationRouter } from './features/automation/automation.routes';
+import { marketDataRouter } from './features/marketData/marketData.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
@@ -69,6 +70,7 @@ app.use('/api/lab/futures', futuresRouter);
 app.use('/api/engine/futures', futuresRouter);
 app.use('/api/strategy', strategyRouter);
 app.use('/api/automation', automationRouter);
+app.use('/api/market-data', marketDataRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });

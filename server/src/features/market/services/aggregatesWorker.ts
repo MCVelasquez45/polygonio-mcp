@@ -2,6 +2,7 @@ import { getOptionAggregates } from '../../../shared/data/massive';
 import { upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot } from './marketStatus';
 import { getWarmTickers } from './aggregatesWarmList';
+import { stocksEntitled } from '../../marketData/optionsDataHealth.service';
 
 // Optional worker that periodically hydrates local aggregate caches so the UI
 // can instantly render without waiting for Massive.
@@ -96,11 +97,29 @@ async function fetchAndStore(ticker: string, config: WorkerInterval) {
 
 // Executes a single pass over all configured tickers. Skips minute bars when
 // the regular market is closed to avoid wasting quota.
+// Under the options-advanced subscription profile, intraday STOCK aggregates
+// are outside the plan (NOT_AUTHORIZED). Polling them can never succeed and
+// only consumes rate-limit budget needed by the options pipeline, so the
+// worker keeps only option tickers in that profile.
+function entitledTickers(tickers: Set<string>): Set<string> {
+  if (stocksEntitled()) return tickers;
+  const filtered = new Set<string>();
+  const dropped: string[] = [];
+  for (const ticker of tickers) {
+    if (ticker.startsWith('O:')) filtered.add(ticker);
+    else dropped.push(ticker);
+  }
+  if (dropped.length) {
+    console.log('[AGG-WORKER] skipping stock tickers not covered by the subscription profile', { dropped });
+  }
+  return filtered;
+}
+
 async function runCycle() {
   if (cooldownUntil > Date.now()) {
     return;
   }
-  const tickers = new Set<string>([...BASE_TICKERS, ...getWarmTickers()]);
+  const tickers = entitledTickers(new Set<string>([...BASE_TICKERS, ...getWarmTickers()]));
   if (!tickers.size) return;
   try {
     const status = await getMarketStatusSnapshot();
@@ -131,9 +150,9 @@ export function startAggregatesWorker() {
     console.log('[AGG-WORKER] To enable, set AGG_WORKER_ENABLED=true.');
     return;
   }
-  const tickers = new Set<string>([...BASE_TICKERS, ...getWarmTickers()]);
+  const tickers = entitledTickers(new Set<string>([...BASE_TICKERS, ...getWarmTickers()]));
   if (!tickers.size) {
-    console.log('[AGG-WORKER] no tickers configured, skipping start');
+    console.log('[AGG-WORKER] no entitled tickers configured, skipping start');
     return;
   }
   if (timer) {

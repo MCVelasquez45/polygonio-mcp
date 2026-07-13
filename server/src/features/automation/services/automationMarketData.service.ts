@@ -1,12 +1,14 @@
 import { resolveAggregates } from '../../market/services/aggregatesService';
-import { getMassiveOptionsChain } from '../../../shared/data/massive';
+import { getAutomationChain } from '../../marketData/optionsMarketDataOrchestrator.service';
+import type { ChainCompleteness, UnderlyingContext } from '../../marketData/optionsData.types';
 import type { AutomationStrategyConfig } from '../automation.config';
 import { REASON } from '../automation.config';
 import type { AutomationBar } from './indicatorAdapter.service';
+import type { SignalDirection } from '../models/tradeCandidate.model';
 
 // Market-data access for the decision pipeline. REUSES the existing
-// aggregates resolver (cache + fallback + health) and the existing Massive
-// options-chain fetcher — nothing here talks to Massive directly except
+// aggregates resolver (cache + fallback + health) and the shared Options
+// Market Data Orchestrator — nothing here talks to Massive directly except
 // through those shared services.
 
 export type BarValidation = {
@@ -22,6 +24,14 @@ export type MarketDataHealth = {
   barCount: number;
   resolverHealth?: Record<string, unknown> | null;
   resolverNote?: string | null;
+  /**
+   * Whether the bars are authorized, real-time intraday data. Under the
+   * Options Advanced plan real-time stock intraday is NOT included; when the
+   * resolver served fallback/delayed/cached data these reason codes gate the
+   * pipeline closed (DATA_REJECTED) before any strategy evaluation.
+   */
+  underlyingAuthorized?: boolean;
+  underlyingReasonCodes?: string[];
 };
 
 export type NormalizedChainContract = {
@@ -45,6 +55,10 @@ export type NormalizedChain = {
   underlyingPrice: number | null;
   fetchedAt: number;
   contracts: NormalizedChainContract[];
+  /** Pagination-completeness for the requested DTE window (absent on fixtures). */
+  completeness?: ChainCompleteness | null;
+  /** Delayed underlying context from the options snapshot (labeled, never real-time). */
+  underlyingContext?: UnderlyingContext | null;
 };
 
 function parseTimestamp(value: unknown): number | null {
@@ -59,6 +73,37 @@ function parseTimestamp(value: unknown): number | null {
     return Number.isNaN(parsed) ? null : parsed;
   }
   return null;
+}
+
+/**
+ * Pure authorization gate for underlying bars: the strategy requires CURRENT,
+ * authorized, intraday data. Reason codes are returned (empty = authorized):
+ *  - the provider plan blocked intraday (entitlement) → UNDERLYING_DATA_UNAUTHORIZED
+ *  - the resolver degraded to daily/cache/snapshot fallback (e.g. previous
+ *    close) while the market is open → UNDERLYING_DATA_NOT_REALTIME
+ * Previous-close or delayed data can never satisfy a real-time gate.
+ */
+export function assessUnderlyingAuthorization(response: {
+  intradayEntitlement?: string;
+  resultGranularity?: string;
+  marketClosed?: boolean;
+  health?: { mode?: string; source?: string } | null;
+}): string[] {
+  const reasonCodes: string[] = [];
+  if (response?.intradayEntitlement === 'blocked') {
+    reasonCodes.push(REASON.UNDERLYING_DATA_UNAUTHORIZED);
+  }
+  const resolverMode = response?.health?.mode;
+  const source = response?.health?.source;
+  const granularity = response?.resultGranularity;
+  if (
+    granularity !== 'intraday' ||
+    source === 'snapshot' ||
+    (resolverMode !== 'LIVE' && response?.marketClosed !== true)
+  ) {
+    reasonCodes.push(REASON.UNDERLYING_DATA_NOT_REALTIME);
+  }
+  return reasonCodes;
 }
 
 /** Fetch recent 5-minute bars for the underlying via the shared resolver. */
@@ -87,6 +132,8 @@ export async function fetchUnderlyingBars(
     .filter((bar: AutomationBar | null): bar is AutomationBar => bar != null)
     .sort((a: AutomationBar, b: AutomationBar) => a.timestamp - b.timestamp);
 
+  const underlyingReasonCodes = assessUnderlyingAuthorization(response);
+
   return {
     bars,
     health: {
@@ -95,6 +142,8 @@ export async function fetchUnderlyingBars(
       barCount: bars.length,
       resolverHealth: response?.health ?? null,
       resolverNote: response?.note ?? null,
+      underlyingAuthorized: underlyingReasonCodes.length === 0,
+      underlyingReasonCodes,
     },
   };
 }
@@ -141,15 +190,33 @@ export function validateClosedBars(
   return { ok: reasonCodes.length === 0, reasonCodes, closedBar, closedBars };
 }
 
-/** Fetch + normalize the option chain via the shared Massive service. */
-export async function fetchOptionChain(config: AutomationStrategyConfig): Promise<NormalizedChain> {
-  const response: any = await getMassiveOptionsChain(config.underlying, 250);
+/**
+ * Fetch + normalize the option chain via the shared Options Market Data
+ * Orchestrator: a direction-specific window covering exactly the configured
+ * 7–21 DTE range (calls for bullish, puts for bearish), strike-bounded around
+ * the underlying when known. One orchestrated fetch is shared by every
+ * concurrent consumer of the same window.
+ */
+export async function fetchOptionChain(
+  config: AutomationStrategyConfig,
+  direction: SignalDirection,
+  underlyingPriceHint?: number | null,
+  now?: number
+): Promise<NormalizedChain> {
+  const response = await getAutomationChain({
+    underlying: config.underlying,
+    direction,
+    dteMin: config.contract.dteMin,
+    dteMax: config.contract.dteMax,
+    underlyingPriceHint: underlyingPriceHint ?? null,
+    now,
+  });
   const fetchedAt = Date.now();
   const contracts: NormalizedChainContract[] = [];
   for (const group of response?.expirations ?? []) {
     for (const row of group?.strikes ?? []) {
       for (const side of ['call', 'put'] as const) {
-        const leg = row?.[side];
+        const leg = (row as any)?.[side];
         if (!leg?.ticker) continue;
         contracts.push(normalizeChainLeg(leg, side, fetchedAt));
       }
@@ -162,6 +229,8 @@ export async function fetchOptionChain(config: AutomationStrategyConfig): Promis
       : null,
     fetchedAt,
     contracts,
+    completeness: response.completeness,
+    underlyingContext: response.underlyingContext,
   };
 }
 
@@ -172,6 +241,8 @@ export function normalizeChainLeg(
 ): NormalizedChainContract {
   const quoteTs =
     parseTimestamp(leg?.lastQuote?.sip_timestamp ?? leg?.lastQuote?.timestamp) ??
+    // v3 snapshot legs carry the provider quote time as last_quote.last_updated.
+    parseTimestamp(leg?.snapshot?.last_quote?.last_updated) ??
     parseTimestamp(leg?.lastTrade?.sip_timestamp ?? leg?.lastTrade?.timestamp) ??
     // Chain snapshots don't always carry per-leg quote timestamps; the chain
     // fetch time is then the best available normalized quote timestamp.

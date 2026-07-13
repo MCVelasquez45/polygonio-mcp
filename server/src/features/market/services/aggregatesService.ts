@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getMassiveOptionsSnapshot, getOptionAggregates } from '../../../shared/data/massive';
+import { MassiveEntitlementError } from '../../../shared/data/massiveRetry';
 import { getRecentAggregateBars, StoredAggregateBar, upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot, MarketStatusSnapshot } from './marketStatus';
 
@@ -28,7 +29,16 @@ const MARKET_INTRADAY_RATE_LIMIT_TTL_MS = (() => {
   const value = Number(process.env.MARKET_INTRADAY_RATE_LIMIT_TTL_MS ?? 30_000);
   return Number.isFinite(value) ? value : 30_000;
 })();
-const intradayBlockedUntilBySymbol = new Map<string, number>();
+const MARKET_INTRADAY_ENTITLEMENT_BLOCK_TTL_MS = (() => {
+  const value = Number(process.env.MARKET_INTRADAY_ENTITLEMENT_BLOCK_TTL_MS ?? 6 * 60 * 60 * 1000);
+  return Number.isFinite(value) ? value : 6 * 60 * 60 * 1000;
+})();
+
+export type IntradayBlockReason = 'entitlement' | 'rate-limit' | 'config' | 'forbidden';
+
+type IntradayBlock = { until: number; reason: IntradayBlockReason };
+
+const intradayBlockedBySymbol = new Map<string, IntradayBlock>();
 const inflightAggregates = new Map<string, Promise<AggregatesResponse>>();
 
 type AggregatesParams = {
@@ -78,6 +88,14 @@ export type AggregatesResponse = {
   cache: 'fresh' | 'hit';
   note?: string;
   marketStatus: MarketStatusSummary;
+  /**
+   * Whether the intraday path for this symbol is blocked by the provider plan.
+   * 'blocked' means the account is NOT entitled to this data — consumers with
+   * real-time requirements (automation) must fail closed, never treat the
+   * fallback bars as live.
+   */
+  intradayEntitlement: 'ok' | 'blocked';
+  intradayBlockReason: IntradayBlockReason | null;
 };
 
 type AggregateHealth = {
@@ -104,15 +122,19 @@ function formatDateOnly(date: Date): string {
 }
 
 function isIntradayBlocked(symbol: string): boolean {
-  if (!MARKET_ALLOW_INTRADAY_AGGS) return true;
-  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return false;
-  const until = intradayBlockedUntilBySymbol.get(symbol);
-  if (!until) return false;
-  if (until <= Date.now()) {
-    intradayBlockedUntilBySymbol.delete(symbol);
-    return false;
+  return intradayBlockReason(symbol) != null;
+}
+
+export function intradayBlockReason(symbol: string): IntradayBlockReason | null {
+  if (!MARKET_ALLOW_INTRADAY_AGGS) return 'config';
+  if (MARKET_INTRADAY_BLOCK_TTL_MS <= 0) return null;
+  const block = intradayBlockedBySymbol.get(symbol);
+  if (!block) return null;
+  if (block.until <= Date.now()) {
+    intradayBlockedBySymbol.delete(symbol);
+    return null;
   }
-  return true;
+  return block.reason;
 }
 
 function parseRetryAfter(header: any): number | null {
@@ -134,19 +156,25 @@ function parseRetryAfter(header: any): number | null {
   return null;
 }
 
-function blockIntradayAggs(symbol: string, reason?: unknown, ttlOverrideMs?: number | null) {
+function blockIntradayAggs(
+  symbol: string,
+  reason: IntradayBlockReason,
+  detail?: unknown,
+  ttlOverrideMs?: number | null
+) {
   if (!MARKET_ALLOW_INTRADAY_AGGS) return;
   const ttlMs =
     typeof ttlOverrideMs === 'number' && ttlOverrideMs > 0 ? ttlOverrideMs : MARKET_INTRADAY_BLOCK_TTL_MS;
   if (ttlMs <= 0) return;
   const nextUntil = Date.now() + ttlMs;
-  const currentUntil = intradayBlockedUntilBySymbol.get(symbol) ?? 0;
-  if (nextUntil <= currentUntil) return;
-  intradayBlockedUntilBySymbol.set(symbol, nextUntil);
+  const current = intradayBlockedBySymbol.get(symbol);
+  if (current && nextUntil <= current.until) return;
+  intradayBlockedBySymbol.set(symbol, { until: nextUntil, reason });
   console.warn('[AGGS] intraday aggregates blocked', {
     symbol,
     ttlMs,
-    reason
+    reason,
+    detail
   });
 }
 
@@ -399,16 +427,24 @@ async function fetchRemoteBars(args: {
       timespan,
       multiplier,
       status,
+      entitlement: error instanceof MassiveEntitlementError,
       message: error?.message
     });
+    // Plan/entitlement failures are NOT transient: block the intraday path for
+    // a long window so the request can never enter a retry loop. The shared
+    // massive client also blocks the endpoint class globally.
+    if (error instanceof MassiveEntitlementError && (timespan === 'minute' || timespan === 'hour')) {
+      blockIntradayAggs(ticker, 'entitlement', { message: error.message }, MARKET_INTRADAY_ENTITLEMENT_BLOCK_TTL_MS);
+      return [];
+    }
     if (status === 403 && (timespan === 'minute' || timespan === 'hour')) {
-      blockIntradayAggs(ticker, { status });
+      blockIntradayAggs(ticker, 'forbidden', { status });
       return [];
     }
     if (status === 429 && (timespan === 'minute' || timespan === 'hour')) {
       const retryAfterMs = parseRetryAfter(retryAfterHeader);
       const ttlMs = retryAfterMs ?? MARKET_INTRADAY_RATE_LIMIT_TTL_MS;
-      blockIntradayAggs(ticker, { status }, ttlMs);
+      blockIntradayAggs(ticker, 'rate-limit', { status }, ttlMs);
       return [];
     }
     throw error;
@@ -473,6 +509,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
         cache: 'fresh',
         providerThrottled: false
       });
+      const blockReason = intradayBlockReason(ticker);
       return {
         ticker,
         interval: formatInterval(multiplier, timespan),
@@ -484,7 +521,9 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
         health,
         fetchedAt: new Date(),
         cache: 'fresh',
-        marketStatus: buildMarketState(status)
+        marketStatus: buildMarketState(status),
+        intradayEntitlement: blockReason === 'entitlement' || blockReason === 'forbidden' ? 'blocked' : 'ok',
+        intradayBlockReason: blockReason
       };
     }
 
@@ -582,6 +621,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
       usedSnapshotFallback
     });
 
+    const blockReason = intradayBlockReason(ticker);
     return {
       ticker,
       interval: formatInterval(multiplier, timespan),
@@ -594,7 +634,9 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
       fetchedAt: new Date(),
       cache: cacheState,
       note,
-      marketStatus: buildMarketState(status)
+      marketStatus: buildMarketState(status),
+      intradayEntitlement: blockReason === 'entitlement' || blockReason === 'forbidden' ? 'blocked' : 'ok',
+      intradayBlockReason: blockReason
     };
   })();
 
@@ -635,8 +677,17 @@ async function buildSnapshotFallbackBar(underlying: string): Promise<StoredAggre
     const close = coerceNumber(day?.close) ?? price;
     const volume = coerceNumber(day?.volume) ?? coerceNumber(underlyingAsset?.volume) ?? 0;
     const vwap = coerceNumber(day?.vwap);
+    // CRITICAL: the bar keeps the PROVIDER's timestamp. Stamping Date.now()
+    // here previously made delayed/previous-close data pass real-time
+    // freshness gates downstream (the "prev-close masquerade" bug).
+    const providerTimestamp =
+      coerceNumber(snapshot?.priceLastUpdated) ?? coerceNumber(snapshot?.updated) ?? null;
+    if (providerTimestamp == null) {
+      console.warn('[AGGS] snapshot fallback has no provider timestamp; refusing synthetic bar', { underlying });
+      return null;
+    }
     return {
-      timestamp: Date.now(),
+      timestamp: providerTimestamp,
       open,
       high,
       low,

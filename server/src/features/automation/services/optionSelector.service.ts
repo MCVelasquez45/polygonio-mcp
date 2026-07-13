@@ -3,6 +3,7 @@ import { REASON } from '../automation.config';
 import type { RankedContract } from '../models/contractSelection.model';
 import type { SignalDirection } from '../models/tradeCandidate.model';
 import type { NormalizedChain, NormalizedChainContract } from './automationMarketData.service';
+import { computeDteEt, isExpiredContract } from '../../../shared/time/tradingCalendar';
 
 // Server-side deterministic contract selection — the AUTHORITY for automated
 // trading. This ports the deterministic scoring that previously lived only in
@@ -22,11 +23,11 @@ export type SelectionResult = {
   passedCount: number;
 };
 
+// DTE in exchange (America/New_York) calendar days via the shared trading
+// calendar: same-day = 0, never -1 while the contract is still valid, and
+// expired contracts are excluded outright (see tradingCalendar.ts).
 function computeDte(expiration: string | null, now: number): number | null {
-  if (!expiration) return null;
-  const expiry = Date.parse(`${expiration}T21:00:00Z`);
-  if (Number.isNaN(expiry)) return null;
-  return Math.ceil((expiry - now) / 86_400_000);
+  return computeDteEt(expiration, now);
 }
 
 function scoreContract(
@@ -73,7 +74,24 @@ export function selectContract(
 ): SelectionResult {
   const optionSide: 'call' | 'put' = direction === 'BULLISH' ? 'call' : 'put';
   const filters = config.contract;
-  const considered = chain.contracts.filter(contract => contract.type === optionSide);
+
+  // Fail-closed completeness gate: an incomplete requested window may be
+  // missing a superior eligible contract, so ranking a partial chain is not
+  // allowed. NO_CONTRACT_SELECTED with DATA_INCOMPLETE → no order intent.
+  if (chain.completeness && !chain.completeness.complete) {
+    return {
+      optionSide,
+      candidates: [],
+      selected: null,
+      noSelectionReason: REASON.DATA_INCOMPLETE,
+      consideredCount: 0,
+      passedCount: 0,
+    };
+  }
+
+  const considered = chain.contracts.filter(
+    contract => contract.type === optionSide && !isExpiredContract(contract.expiration, now)
+  );
 
   const candidates: RankedContract[] = considered.map(contract => {
     const reasons: string[] = [];

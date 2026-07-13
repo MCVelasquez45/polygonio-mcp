@@ -200,6 +200,15 @@ export async function processClosedBar(
 
   if (gateReasons.length) return reject('DATA_REJECTED', gateReasons);
 
+  // Underlying-data entitlement gate (Options Advanced alignment): the
+  // strategy requires authorized real-time intraday bars. When the provider
+  // plan blocks them — or the resolver degraded to delayed/cached/fallback
+  // data — no evaluation happens. Fail closed, never evaluate on
+  // previous-close data masquerading as live input.
+  if (fixture == null && health.underlyingAuthorized === false) {
+    return reject('DATA_REJECTED', health.underlyingReasonCodes ?? [REASON.UNDERLYING_DATA_UNAUTHORIZED]);
+  }
+
   // Bar must be strictly newer than the last processed closed bar.
   if (session.lastProcessedClosedBarTs && barTimestamp.getTime() <= session.lastProcessedClosedBarTs.getTime()) {
     return reject('DUPLICATE_SUPPRESSED', [REASON.BAR_NOT_NEWER_THAN_LAST_PROCESSED]);
@@ -290,7 +299,11 @@ export async function processClosedBar(
   });
 
   // ---- contract selection -----------------------------------------------------
-  const chain = fixture?.chain ?? (await fetchOptionChain(config));
+  // Direction-specific 7–21 DTE window through the shared orchestrator; the
+  // last closed bar's price bounds the strike range.
+  const chain =
+    fixture?.chain ??
+    (await fetchOptionChain(config, evaluation.direction, validation.closedBar?.close ?? null, now));
   const selectionResult = selectContract(evaluation.direction, chain, config, now);
   const selection = await ContractSelectionModel.create({
     tradeCandidateId: String(candidate._id),

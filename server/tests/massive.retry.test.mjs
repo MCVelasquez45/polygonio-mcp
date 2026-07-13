@@ -41,18 +41,29 @@ test('parseRetryAfterMs handles delta-seconds and HTTP-date', () => {
   assert.equal(parseRetryAfterMs(null), null);
 });
 
-test('resolveMassiveRetryDelayMs honors Retry-After, capped at maxMs', () => {
+test('resolveMassiveRetryDelayMs honors Retry-After as a floor (provider-directed)', () => {
+  // Options Advanced alignment: the provider-directed retry time is
+  // authoritative — never clamped below it, jittered only UPWARD so we can
+  // never retry before Massive asked us to.
   const err = axiosErr(429, { headers: { 'retry-after': '2' } });
-  assert.equal(resolveMassiveRetryDelayMs(err, 0, { baseMs: 500, maxMs: 5000 }), 2000);
-  // header exceeds cap → clamped
+  for (let i = 0; i < 20; i += 1) {
+    const ms = resolveMassiveRetryDelayMs(err, 0, { baseMs: 500, maxMs: 5000 });
+    assert.ok(ms >= 2000, `never earlier than Retry-After (got ${ms})`);
+    assert.ok(ms <= 2300, `upward jitter bounded (got ${ms})`);
+  }
+  // A large Retry-After is still respected in full — maxMs does not override
+  // the provider's directive.
   const big = axiosErr(429, { headers: { 'retry-after': '999' } });
-  assert.equal(resolveMassiveRetryDelayMs(big, 0, { baseMs: 500, maxMs: 5000 }), 5000);
+  assert.ok(resolveMassiveRetryDelayMs(big, 0, { baseMs: 500, maxMs: 5000 }) >= 999_000);
 });
 
-test('resolveMassiveRetryDelayMs falls back to exponential backoff', () => {
+test('resolveMassiveRetryDelayMs falls back to jittered exponential backoff', () => {
   const err = axiosErr(503); // no Retry-After
-  assert.equal(resolveMassiveRetryDelayMs(err, 0, { baseMs: 500, maxMs: 5000 }), 500);
-  assert.equal(resolveMassiveRetryDelayMs(err, 1, { baseMs: 500, maxMs: 5000 }), 1000);
-  assert.equal(resolveMassiveRetryDelayMs(err, 2, { baseMs: 500, maxMs: 5000 }), 2000);
-  assert.equal(resolveMassiveRetryDelayMs(err, 10, { baseMs: 500, maxMs: 5000 }), 5000, 'capped');
+  const within = (ms, base) => ms >= base * 0.75 && ms <= base * 1.25;
+  for (let i = 0; i < 20; i += 1) {
+    assert.ok(within(resolveMassiveRetryDelayMs(err, 0, { baseMs: 500, maxMs: 5000 }), 500));
+    assert.ok(within(resolveMassiveRetryDelayMs(err, 1, { baseMs: 500, maxMs: 5000 }), 1000));
+    assert.ok(within(resolveMassiveRetryDelayMs(err, 2, { baseMs: 500, maxMs: 5000 }), 2000));
+    assert.ok(within(resolveMassiveRetryDelayMs(err, 10, { baseMs: 500, maxMs: 5000 }), 5000), 'capped');
+  }
 });

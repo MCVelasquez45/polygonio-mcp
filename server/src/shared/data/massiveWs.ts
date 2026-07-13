@@ -12,6 +12,18 @@ type MassiveWsOptions = {
 
 type SubscriptionSet = Set<string>;
 
+export type MassiveWsState = {
+  url: string;
+  assetClass: string;
+  connected: boolean;
+  connecting: boolean;
+  authenticated: boolean;
+  reconnectAttempts: number;
+  nextReconnectAt: string | null;
+  lastEventAt: string | null;
+  subscriptionCount: number;
+};
+
 export class MassiveWsClient {
   private ws: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -25,6 +37,10 @@ export class MassiveWsClient {
   private readonly subscriptions: SubscriptionSet = new Set();
   private connecting = false;
   private reconnectAttempts = 0;
+  private authenticated = false;
+  private nextReconnectAt: number | null = null;
+  private lastEventAt: number | null = null;
+  private stopped = false;
 
   constructor(options: MassiveWsOptions) {
     this.apiKey = options.apiKey;
@@ -38,6 +54,7 @@ export class MassiveWsClient {
 
   connect() {
     if (this.connecting || this.ws) return;
+    this.stopped = false;
     this.connecting = true;
     const socket = new WebSocket(this.url);
     this.ws = socket;
@@ -62,6 +79,7 @@ export class MassiveWsClient {
 
     socket.on('close', () => {
       this.connecting = false;
+      this.authenticated = false;
       this.ws = null;
       this.scheduleReconnect();
     });
@@ -75,6 +93,7 @@ export class MassiveWsClient {
   }
 
   disconnect() {
+    this.stopped = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -85,7 +104,28 @@ export class MassiveWsClient {
       this.ws = null;
     }
     this.connecting = false;
+    this.authenticated = false;
+    this.nextReconnectAt = null;
     this.subscriptions.clear();
+  }
+
+  /** Structured connection state for health reporting. */
+  getState(): MassiveWsState {
+    return {
+      url: this.url,
+      assetClass: this.assetClass,
+      connected: this.ws?.readyState === WebSocket.OPEN,
+      connecting: this.connecting,
+      authenticated: this.authenticated,
+      reconnectAttempts: this.reconnectAttempts,
+      nextReconnectAt: this.nextReconnectAt ? new Date(this.nextReconnectAt).toISOString() : null,
+      lastEventAt: this.lastEventAt ? new Date(this.lastEventAt).toISOString() : null,
+      subscriptionCount: this.subscriptions.size,
+    };
+  }
+
+  getSubscriptions(): string[] {
+    return Array.from(this.subscriptions);
   }
 
   subscribe(params: string) {
@@ -123,20 +163,17 @@ export class MassiveWsClient {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer || this.stopped) return;
     this.reconnectAttempts += 1;
     const attempt = this.reconnectAttempts;
-    const MAX_ATTEMPTS = 20;
-    if (attempt > MAX_ATTEMPTS) {
-      console.warn('[MassiveWS] giving up after max reconnect attempts', {
-        attempts: MAX_ATTEMPTS,
-        url: this.url,
-        assetClass: this.assetClass
-      });
-      return;
-    }
-    // Exponential backoff: 3s, 6s, 12s, ... capped at 60s
-    const delayMs = Math.min(3000 * Math.pow(2, attempt - 1), 60_000);
+    // Bounded exponential backoff with jitter, capped at 60 s. The client
+    // NEVER permanently gives up: while consumers hold subscriptions the feed
+    // must keep trying (health reporting marks the stream DEGRADED/UNAVAILABLE
+    // in the meantime — see optionsDataHealth).
+    const base = Math.min(3000 * Math.pow(2, Math.min(attempt - 1, 5)), 60_000);
+    const jitter = Math.round(base * (Math.random() * 0.4 - 0.2)); // ±20%
+    const delayMs = Math.max(1_000, base + jitter);
+    this.nextReconnectAt = Date.now() + delayMs;
     // Only log the first 5 attempts and then every 5th to reduce noise
     if (attempt <= 5 || attempt % 5 === 0) {
       console.warn('[MassiveWS] scheduling reconnect', {
@@ -148,15 +185,18 @@ export class MassiveWsClient {
     }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      this.nextReconnectAt = null;
       this.connect();
     }, delayMs);
   }
 
   private handleEvent(event: any) {
+    this.lastEventAt = Date.now();
     if (event?.ev === 'status') {
       this.onStatus?.(event);
       if (event?.status === 'auth_success') {
         this.reconnectAttempts = 0;
+        this.authenticated = true;
         this.onConnect?.();
         this.resubscribeAll();
       }

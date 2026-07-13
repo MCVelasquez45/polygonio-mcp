@@ -13,6 +13,49 @@ import axios from 'axios';
 export const MASSIVE_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 /**
+ * Thrown when Massive reports the request is outside the account's plan
+ * (HTTP 403 or a `status: "NOT_AUTHORIZED"` body). These are NEVER retried:
+ * retrying an entitlement failure only burns rate-limit budget.
+ */
+export class MassiveEntitlementError extends Error {
+  readonly isEntitlementError = true as const;
+  readonly httpStatus: number | null;
+  readonly path: string;
+
+  constructor(path: string, httpStatus: number | null, providerMessage?: string) {
+    super(
+      `Massive entitlement failure for ${path}` +
+        (providerMessage ? `: ${providerMessage}` : '') +
+        (httpStatus != null ? ` (HTTP ${httpStatus})` : '')
+    );
+    this.name = 'MassiveEntitlementError';
+    this.httpStatus = httpStatus;
+    this.path = path;
+  }
+}
+
+/** Detects a plan/entitlement failure from an HTTP error or a 2xx body. */
+export function isEntitlementFailure(httpStatus: number | null | undefined, body: unknown): boolean {
+  if (httpStatus === 403) return true;
+  if (body && typeof body === 'object') {
+    const status = (body as Record<string, unknown>).status;
+    if (typeof status === 'string' && status.toUpperCase() === 'NOT_AUTHORIZED') return true;
+  }
+  return false;
+}
+
+/**
+ * Full jitter around a base delay: uniform in [base * (1 - spread), base * (1 + spread)].
+ * Prevents synchronized retry bursts from amplifying provider throttling.
+ */
+export function applyRetryJitter(baseMs: number, spread = 0.25, rand: () => number = Math.random): number {
+  if (!Number.isFinite(baseMs) || baseMs <= 0) return 0;
+  const s = Math.min(Math.max(spread, 0), 1);
+  const factor = 1 - s + rand() * 2 * s;
+  return Math.round(baseMs * factor);
+}
+
+/**
  * Parse a `Retry-After` header into milliseconds. Supports the two documented
  * forms: delta-seconds (e.g. "5") and an HTTP-date. Returns null if absent or
  * unparseable.
@@ -51,6 +94,7 @@ function retryAfterHeader(error: unknown): unknown {
  */
 export function isRetryableMassiveError(error: unknown, attempt: number, maxRetries: number): boolean {
   if (attempt >= maxRetries) return false;
+  if (error instanceof MassiveEntitlementError) return false;
   if (!axios.isAxiosError(error)) return false;
   if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
     return true;
@@ -71,8 +115,10 @@ export function resolveMassiveRetryDelayMs(
 ): number {
   const headerDelay = parseRetryAfterMs(retryAfterHeader(error));
   if (typeof headerDelay === 'number' && headerDelay > 0) {
-    return Math.min(headerDelay, opts.maxMs);
+    // Provider-directed retry time is authoritative (never clamped below it);
+    // jitter only upward so we never retry *before* the provider asked us to.
+    return headerDelay + applyRetryJitter(headerDelay * 0.1);
   }
   const backoff = opts.baseMs * Math.pow(2, Math.max(0, attempt));
-  return Math.min(backoff, opts.maxMs);
+  return applyRetryJitter(Math.min(backoff, opts.maxMs));
 }
