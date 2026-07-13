@@ -1,0 +1,115 @@
+// Shared helpers for automation Phase 2A tests.
+// Tests run against the compiled dist/ output (same convention as
+// tests/massive.*.test.mjs) with an in-memory MongoDB and the deterministic
+// mock broker — never the real Alpaca API, never the network.
+
+// Keep Massive traffic off the network: point at an unroutable local port with
+// a tiny timeout BEFORE any dist module loads.
+process.env.MASSIVE_BASE_URL = 'http://127.0.0.1:9';
+process.env.MASSIVE_TIMEOUT_MS = '150';
+process.env.MASSIVE_MAX_RETRIES = '0';
+process.env.AUTOMATION_BROKER_TIMEOUT_MS = '500';
+process.env.AUTOMATION_CLOCK_TTL_MS = '0'; // no clock-decision caching in tests
+
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose from 'mongoose';
+
+let mongod = null;
+
+export async function startTestMongo() {
+  mongod = await MongoMemoryServer.create();
+  await mongoose.connect(mongod.getUri(), { dbName: 'automation-test' });
+  return mongod;
+}
+
+export async function stopTestMongo() {
+  await mongoose.disconnect().catch(() => undefined);
+  if (mongod) {
+    await mongod.stop();
+    mongod = null;
+  }
+}
+
+export async function dropAutomationCollections() {
+  const db = mongoose.connection?.db;
+  if (!db) return;
+  const collections = await db.listCollections().toArray();
+  for (const { name } of collections) {
+    if (name.startsWith('automation_')) {
+      await db.collection(name).deleteMany({});
+    }
+  }
+}
+
+export async function loadDist() {
+  const [
+    sessionModel,
+    intentModel,
+    brokerOrderModel,
+    intentService,
+    reconciliation,
+    recovery,
+    marketClock,
+    audit,
+    health,
+    mockBroker,
+    alpacaAdapter,
+    errors,
+  ] = await Promise.all([
+    import('../dist/features/automation/models/automationSession.model.js'),
+    import('../dist/features/automation/models/orderIntent.model.js'),
+    import('../dist/features/automation/models/brokerOrder.model.js'),
+    import('../dist/features/automation/services/orderIntent.service.js'),
+    import('../dist/features/automation/services/reconciliation.service.js'),
+    import('../dist/features/automation/services/sessionRecovery.service.js'),
+    import('../dist/features/automation/services/marketClock.service.js'),
+    import('../dist/features/automation/services/automationAudit.service.js'),
+    import('../dist/features/automation/services/automationHealth.service.js'),
+    import('../dist/features/automation/services/mockPaperBrokerAdapter.service.js'),
+    import('../dist/features/automation/services/alpacaPaperBrokerAdapter.service.js'),
+    import('../dist/features/automation/automation.errors.js'),
+  ]);
+  return {
+    ...sessionModel,
+    ...intentModel,
+    ...brokerOrderModel,
+    ...intentService,
+    ...reconciliation,
+    ...recovery,
+    ...marketClock,
+    ...audit,
+    ...health,
+    ...mockBroker,
+    ...alpacaAdapter,
+    ...errors,
+  };
+}
+
+export async function createReadySession(mods, overrides = {}) {
+  return mods.AutomationSessionModel.create({
+    mode: 'paper',
+    strategyVersionId: overrides.strategyVersionId ?? 'sv-test-1',
+    underlying: overrides.underlying ?? 'SPY',
+    status: overrides.status ?? 'READY',
+    healthStatus: 'HEALTHY',
+    reconciliationStatus: 'PENDING',
+    ...overrides,
+  });
+}
+
+export function baseIntentInput(sessionId, overrides = {}) {
+  return {
+    automationSessionId: String(sessionId),
+    strategyVersionId: 'sv-test-1',
+    underlying: 'SPY',
+    signalDirection: 'BUY',
+    closedBarTimestamp: '2026-07-10T14:35:00.000Z',
+    intentType: 'ENTRY',
+    optionSymbol: 'SPY260821C00450000',
+    quantity: 2,
+    orderType: 'limit',
+    limitPrice: 5.2,
+    timeInForce: 'day',
+    ...overrides,
+  };
+}

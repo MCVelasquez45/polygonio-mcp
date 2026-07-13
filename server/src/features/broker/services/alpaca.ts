@@ -187,6 +187,40 @@ export async function listAlpacaOptionOrders(params: { status?: string; limit?: 
   return [];
 }
 
+// --- Additive order-lifecycle helpers (used by the automation BrokerAdapter) ---
+// These extend the surface without altering any existing behavior above.
+
+export async function getAlpacaOrder(orderId: string) {
+  return sendOptionsRequest(`/orders/${encodeURIComponent(orderId)}`);
+}
+
+export async function getAlpacaOrderByClientOrderId(clientOrderId: string) {
+  return sendOptionsRequest(`/orders:by_client_order_id`, { client_order_id: clientOrderId });
+}
+
+export async function cancelAlpacaOrder(orderId: string) {
+  return sendOptionsRequest(`/orders/${encodeURIComponent(orderId)}`, null, null, 'DELETE');
+}
+
+export async function closeAlpacaPosition(symbol: string) {
+  return sendOptionsRequest(`/positions/${encodeURIComponent(normalizeOptionSymbol(symbol))}`, null, null, 'DELETE');
+}
+
+/**
+ * Exposes the resolved Alpaca environment so callers (automation) can hard-fail
+ * on any non-paper configuration. Never returns credentials.
+ */
+export function getAlpacaEnvironment(): { paper: boolean; baseUrl: string | null; hasCredentials: boolean } {
+  const config: any = (alpaca as any).configuration ?? {};
+  const baseUrl: string | null = typeof config.baseUrl === 'string' ? config.baseUrl : null;
+  const paperFlag = (process.env.ALPACA_PAPER ?? 'true').toLowerCase() !== 'false';
+  return {
+    paper: paperFlag,
+    baseUrl,
+    hasCredentials: Boolean(alpacaKey && alpacaSecret),
+  };
+}
+
 function normalizeOptionPositions(payload: any) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.positions)) return payload.positions;

@@ -16,6 +16,8 @@ import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { strategyRouter } from './features/strategy/strategy.routes';
+import { automationRouter } from './features/automation/automation.routes';
+import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -66,6 +68,7 @@ app.use('/api/engine', engineRouter);
 app.use('/api/lab/futures', futuresRouter);
 app.use('/api/engine/futures', futuresRouter);
 app.use('/api/strategy', strategyRouter);
+app.use('/api/automation', automationRouter);
 
 app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
@@ -137,6 +140,13 @@ async function start() {
 
   httpServer.listen(PORT, () => {
     console.log(`[SERVER] API listening on :${PORT}`);
+  });
+
+  // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
+  // server is up so a broker/Mongo problem never blocks unrelated features.
+  // When Mongo is down this resolves to state UNAVAILABLE without throwing.
+  initializeAutomation().catch(error => {
+    console.error('[SERVER] Automation initialization failed (automation stays unavailable)', error);
   });
 }
 

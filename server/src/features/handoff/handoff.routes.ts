@@ -42,7 +42,13 @@ router.post('/request', async (req, res) => {
 router.get('/requests', async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = status ? { status } : {};
+    // Narrow to a string so the mongoose filter typechecks (query params can be
+    // arrays). Type-only assertion: unknown statuses still match zero docs at
+    // runtime, exactly as before.
+    const filter =
+      typeof status === 'string' && status
+        ? { status: status as 'pending' | 'approved' | 'rejected' | 'deployed' }
+        : {};
     const requests = await HandoffRequestModel.find(filter)
       .populate('strategyId') // Include strategy details
       .sort({ createdAt: -1 });
