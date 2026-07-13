@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { validateAutomationConfig } from '../automation.config';
 import { AUTOMATION_ENV } from '../automation.constants';
 import { LiveTradingBlockedError } from '../automation.errors';
 import { AutomationEventModel } from '../models/automationEvent.model';
@@ -65,18 +66,32 @@ export function isAutomationReady(): boolean {
 /** Await every automation index build (unique constraints are load-bearing). */
 export async function ensureAutomationIndexes(): Promise<void> {
   const models = [AutomationSessionModel, OrderIntentModel, BrokerOrderModel, AutomationEventModel];
-  // Phase 2B/2.6 models are loaded lazily to keep 2A boot lean.
-  const [{ TradeCandidateModel }, { ContractSelectionModel }, { RiskDecisionModel }, { UniverseEvaluationModel }] =
-    await Promise.all([
-      import('../models/tradeCandidate.model'),
-      import('../models/contractSelection.model'),
-      import('../models/riskDecision.model'),
-      import('../models/universeEvaluation.model'),
-    ]);
+  // Phase 2B/2.6/2C models are loaded lazily to keep 2A boot lean.
+  const [
+    { TradeCandidateModel },
+    { ContractSelectionModel },
+    { RiskDecisionModel },
+    { UniverseEvaluationModel },
+    { AutomationPositionModel },
+    { SchedulerLeaseModel },
+  ] = await Promise.all([
+    import('../models/tradeCandidate.model'),
+    import('../models/contractSelection.model'),
+    import('../models/riskDecision.model'),
+    import('../models/universeEvaluation.model'),
+    import('../models/automationPosition.model'),
+    import('../models/schedulerLease.model'),
+  ]);
   await Promise.all(
-    [...models, TradeCandidateModel, ContractSelectionModel, RiskDecisionModel, UniverseEvaluationModel].map(
-      model => model.init()
-    )
+    [
+      ...models,
+      TradeCandidateModel,
+      ContractSelectionModel,
+      RiskDecisionModel,
+      UniverseEvaluationModel,
+      AutomationPositionModel,
+      SchedulerLeaseModel,
+    ].map(model => model.init())
   );
 }
 
@@ -85,6 +100,12 @@ export function resolveBrokerAdapter(explicit?: PaperBrokerAdapter): PaperBroker
   if (runtime.adapter) return runtime.adapter;
   const kind = (process.env[AUTOMATION_ENV.broker] ?? 'alpaca-paper').toLowerCase();
   if (kind === 'mock') {
+    // Runtime authenticity: the mock broker is a TEST double. Production normal
+    // runtime must never select it — real Alpaca paper only. (Config validation
+    // also blocks this at startup; this is the defensive second guard.)
+    if ((process.env.NODE_ENV ?? '').toLowerCase() === 'production') {
+      throw new LiveTradingBlockedError('AUTOMATION_BROKER=mock is forbidden in production runtime');
+    }
     return new MockPaperBrokerAdapter();
   }
   return createAlpacaPaperBrokerAdapter();
@@ -115,6 +136,29 @@ export async function initializeAutomation(
       payload: { reason: `${AUTOMATION_ENV.enabled}=false` },
     });
     return { ready: false, state: runtime.state, detail: 'automation disabled by configuration' };
+  }
+
+  // Configuration validation — fail closed on contradictory required settings.
+  const configCheck = validateAutomationConfig();
+  if (configCheck.warnings.length) {
+    logAutomationEvent({
+      service: 'recovery',
+      event: 'AUTOMATION_CONFIG_WARNINGS',
+      severity: 'warning',
+      payload: { warnings: configCheck.warnings, resolved: configCheck.resolved },
+    });
+  }
+  if (!configCheck.ok) {
+    runtime.state = 'FAILED';
+    runtime.adapter = null;
+    runtime.lastError = `invalid automation configuration: ${configCheck.errors.join('; ')}`;
+    logAutomationEvent({
+      service: 'recovery',
+      event: 'AUTOMATION_CONFIG_INVALID',
+      severity: 'critical',
+      payload: { errors: configCheck.errors },
+    });
+    return { ready: false, state: runtime.state, detail: runtime.lastError };
   }
 
   // Mandatory MongoDB gate — fail closed.

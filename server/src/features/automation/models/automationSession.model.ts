@@ -29,6 +29,11 @@ export interface AutomationSessionDocument extends Document {
   consecutiveLossCount: number;
   dailyRealizedPnl: number;
   currentDrawdown: number;
+  // Phase 2C broker-truth risk accounting
+  peakEquity: number | null;
+  maxDrawdown: number;
+  lastClosedTradeAt: Date | null;
+  lastTradeResult: 'WIN' | 'LOSS' | 'BREAKEVEN' | null;
   // Phase 2B daily-reset bookkeeping (exchange trading day, never local midnight)
   startingDayEquity: number | null;
   dailyLossBudget: number | null;
@@ -85,6 +90,10 @@ const AutomationSessionSchema = new Schema<AutomationSessionDocument>(
     consecutiveLossCount: { type: Number, required: true, default: 0 },
     dailyRealizedPnl: { type: Number, required: true, default: 0 },
     currentDrawdown: { type: Number, required: true, default: 0 },
+    peakEquity: { type: Number, default: null },
+    maxDrawdown: { type: Number, required: true, default: 0 },
+    lastClosedTradeAt: { type: Date, default: null },
+    lastTradeResult: { type: String, enum: ['WIN', 'LOSS', 'BREAKEVEN', null], default: null },
     startingDayEquity: { type: Number, default: null },
     dailyLossBudget: { type: Number, default: null },
     lastResetTradingDate: { type: String, default: null },

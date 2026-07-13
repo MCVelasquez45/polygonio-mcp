@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
-import { getStrategyConfig, REASON, type AutomationStrategyConfig } from '../automation.config';
+import { getExecutionConfig, getStrategyConfig, REASON, type AutomationStrategyConfig } from '../automation.config';
+import { computeEntryLimitPrice } from './entryExecution.service';
 import { MongoUnavailableError, NotFoundError } from '../automation.errors';
 import { AutomationSessionModel, type AutomationSessionDocument } from '../models/automationSession.model';
 import { ContractSelectionModel } from '../models/contractSelection.model';
@@ -631,6 +632,11 @@ export async function processUniverseTick(
       selected = opportunity;
       riskApproved = true;
       riskReasonCodes = [];
+      // Deterministic entry limit price per the configured policy (MID default),
+      // falling back to the ask when bid/ask are unusable.
+      const entryLimitPrice =
+        computeEntryLimitPrice(opportunity.contract.bid, opportunity.contract.ask, getExecutionConfig()) ??
+        opportunity.contract.ask;
       const { intent, created } = await createOrderIntent({
         automationSessionId: String(session._id),
         strategyVersionId: session.strategyVersionId,
@@ -641,7 +647,7 @@ export async function processUniverseTick(
         optionSymbol: opportunity.contract.symbol,
         quantity: risk.sizing.outputs.quantity,
         orderType: 'limit',
-        limitPrice: opportunity.contract.ask,
+        limitPrice: entryLimitPrice,
         timeInForce: 'day',
       });
       if (created && intent.status === 'CREATED') {
@@ -659,8 +665,8 @@ export async function processUniverseTick(
           created,
           underlying: opportunity.symbol,
           quantity: risk.sizing.outputs.quantity,
-          limitPrice: opportunity.contract.ask,
-          note: 'execution deferred to Phase 2C — no broker submission',
+          limitPrice: entryLimitPrice,
+          note: 'approved intent — execution wired via Phase 2C scheduler',
         },
       });
       break;

@@ -242,12 +242,13 @@ export async function submitIntent(
 
   const session = await AutomationSessionModel.findById(intent.automationSessionId);
   if (!session) throw new NotFoundError(`Automation session ${intent.automationSessionId}`);
-  if (!RUNNABLE_SESSION_STATUSES.includes(session.status) || session.emergencyStop.active) {
-    throw new SessionNotRunnableError(String(session._id), session.status);
-  }
-
-  // Entries are clock-gated; exits are always allowed to reduce risk.
+  // EXIT intents must be submittable even on a paused/emergency-stopped session
+  // — flattening and risk reduction cannot be blocked by a non-runnable status.
+  // Only ENTRY intents require a runnable, non-emergency session.
   if (intent.intentType === 'ENTRY') {
+    if (!RUNNABLE_SESSION_STATUSES.includes(session.status) || session.emergencyStop.active) {
+      throw new SessionNotRunnableError(String(session._id), session.status);
+    }
     await assertEntryAllowed(adapter);
   }
 
@@ -297,8 +298,10 @@ export async function submitIntent(
     return { intent, brokerOrder: null, outcome: 'AMBIGUOUS_SUBMIT_FAILURE' };
   }
 
-  if (intent.status !== 'CREATED') {
-    // Terminal-ish intents are never resubmitted.
+  // Submittable states: a freshly-created intent, or one the deterministic
+  // pipeline risk-approved and parked as APPROVED_AWAITING_EXECUTION (Phase 2C
+  // execution entry point). Anything else is terminal-ish and never resubmitted.
+  if (intent.status !== 'CREATED' && intent.status !== 'APPROVED_AWAITING_EXECUTION') {
     return { intent, brokerOrder: null, outcome: 'ALREADY_SUBMITTED' };
   }
 

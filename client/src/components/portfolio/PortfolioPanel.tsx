@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analysisApi, marketApi } from '../../api';
+import { AutomationCommandCenter } from './AutomationCommandCenter';
 import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
 import type { DeskInsight } from '../../api/analysis';
 import type { WatchlistSnapshot } from '../../types/market';
@@ -432,6 +433,8 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const totalPnl = useMemo(() => positions.reduce((sum, row) => sum + row.unrealizedPnl, 0), [positions]);
 
   return (
+    <div className="space-y-4">
+    <AutomationCommandCenter />
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -678,6 +681,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
         )}
       </div>
     </section>
+    </div>
   );
 }
 

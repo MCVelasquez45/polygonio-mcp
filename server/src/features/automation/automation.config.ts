@@ -117,6 +117,179 @@ export function getStrategyConfig(underlying?: string): AutomationStrategyConfig
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2C — live paper execution configuration
+// ---------------------------------------------------------------------------
+
+function envString(name: string, fallback: string): string {
+  const raw = process.env[name];
+  return raw == null || raw.trim() === '' ? fallback : raw.trim();
+}
+
+function envBool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
+export type SignalMode = 'OPTIONS_NATIVE_FLOW' | 'EQUITY_MOMENTUM';
+
+/** Active signal engine. OPTIONS_NATIVE_FLOW is the authorized-data default. */
+export function getSignalMode(): SignalMode {
+  const raw = envString('AUTOMATION_SIGNAL_MODE', 'OPTIONS_NATIVE_FLOW').toUpperCase();
+  return raw === 'EQUITY_MOMENTUM' ? 'EQUITY_MOMENTUM' : 'OPTIONS_NATIVE_FLOW';
+}
+
+export type OptionsFlowConfig = {
+  /** Completed flow window that carries the directional read (minutes). */
+  flowWindowMinutes: number;
+  /** Longer baseline window the flow window is compared against (minutes). */
+  baselineWindowMinutes: number;
+  /** Max age of the newest window event before the window is stale (ms). */
+  windowFreshnessMaxAgeMs: number;
+  /** Minimum option contracts represented before a window is evaluable. */
+  minContracts: number;
+  /** Minimum total option volume in the flow window before it is evaluable. */
+  minWindowVolume: number;
+  /** Net-premium tilt (call$−put$)/(call$+put$) beyond ±this → directional. */
+  netPremiumTiltMin: number;
+  /** Call/put volume ratio ≥ this (bullish) or ≤ 1/this (bearish). */
+  volumeRatioMin: number;
+  /** Score threshold (0–1) below which a tilt is NO_TRADE. */
+  minScore: number;
+};
+
+export function getOptionsFlowConfig(): OptionsFlowConfig {
+  return {
+    flowWindowMinutes: envNumber('AUTOMATION_OPTIONS_FLOW_WINDOW_MINUTES', 5),
+    baselineWindowMinutes: envNumber('AUTOMATION_OPTIONS_BASELINE_WINDOW_MINUTES', 30),
+    windowFreshnessMaxAgeMs: envNumber('AUTOMATION_OPTIONS_WINDOW_FRESHNESS_MS', 3 * 60_000),
+    minContracts: envNumber('AUTOMATION_OPTIONS_MIN_CONTRACTS', 5),
+    minWindowVolume: envNumber('AUTOMATION_OPTIONS_MIN_WINDOW_VOLUME', 250),
+    netPremiumTiltMin: envNumber('AUTOMATION_OPTIONS_NET_PREMIUM_TILT_MIN', 0.2),
+    volumeRatioMin: envNumber('AUTOMATION_OPTIONS_VOLUME_RATIO_MIN', 1.5),
+    minScore: envNumber('AUTOMATION_OPTIONS_MIN_SCORE', 0.5),
+  };
+}
+
+export type MarketHoursConfig = {
+  finalEntryMinutesBeforeClose: number;
+  cancelEntryOrdersMinutesBeforeClose: number;
+  flattenMinutesBeforeClose: number;
+};
+
+export function getMarketHoursConfig(): MarketHoursConfig {
+  return {
+    finalEntryMinutesBeforeClose: envNumber('AUTOMATION_FINAL_ENTRY_MINUTES_BEFORE_CLOSE', 45),
+    cancelEntryOrdersMinutesBeforeClose: envNumber('AUTOMATION_CANCEL_ENTRY_ORDERS_MINUTES_BEFORE_CLOSE', 20),
+    flattenMinutesBeforeClose: envNumber('AUTOMATION_FLATTEN_MINUTES_BEFORE_CLOSE', 15),
+  };
+}
+
+export type ExecutionConfig = {
+  /** Deterministic limit-price policy for option entries. */
+  entryLimitPolicy: 'MID' | 'ASK' | 'BID';
+  /** Max slippage from mid tolerated when marketable (fraction of mid). */
+  entryMaxSlippagePct: number;
+  /** Seconds an unfilled entry may rest before reconcile/replace/cancel. */
+  entryOrderTimeoutSeconds: number;
+};
+
+export function getExecutionConfig(): ExecutionConfig {
+  const policy = envString('AUTOMATION_ENTRY_LIMIT_POLICY', 'MID').toUpperCase();
+  return {
+    entryLimitPolicy: policy === 'ASK' ? 'ASK' : policy === 'BID' ? 'BID' : 'MID',
+    entryMaxSlippagePct: envNumber('AUTOMATION_ENTRY_MAX_SLIPPAGE_PCT', 0.05),
+    entryOrderTimeoutSeconds: envNumber('AUTOMATION_ENTRY_ORDER_TIMEOUT_SECONDS', 60),
+  };
+}
+
+export type ExitPolicyConfig = {
+  /** Stop loss as a fraction of entry premium (long options). */
+  stopLossPct: number;
+  /** Profit target as a fraction of entry premium. */
+  profitTargetPct: number;
+  trailingEnabled: boolean;
+  /** Quote staleness beyond this blocks new entries + raises a warning (ms). */
+  monitorStaleQuoteMs: number;
+};
+
+export function getExitPolicyConfig(): ExitPolicyConfig {
+  return {
+    stopLossPct: envNumber('AUTOMATION_STOP_LOSS_PCT', 0.25),
+    profitTargetPct: envNumber('AUTOMATION_PROFIT_TARGET_PCT', 0.3),
+    trailingEnabled: envBool('AUTOMATION_TRAILING_ENABLED', false),
+    monitorStaleQuoteMs: envNumber('AUTOMATION_MONITOR_STALE_QUOTE_MS', 2 * 60_000),
+  };
+}
+
+export type AutomationConfigValidation = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  resolved: {
+    signalMode: SignalMode;
+    broker: string;
+    subscriptionProfile: string;
+  };
+};
+
+/**
+ * Validate the automation configuration at startup. Fails closed on missing or
+ * contradictory required settings so an unsafe runtime never becomes READY.
+ */
+export function validateAutomationConfig(): AutomationConfigValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const signalMode = getSignalMode();
+  const broker = envString('AUTOMATION_BROKER', 'alpaca-paper').toLowerCase();
+  const subscriptionProfile = envString('MASSIVE_SUBSCRIPTION_PROFILE', 'options-advanced').toLowerCase();
+  const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+
+  // Runtime authenticity: production may never select the mock broker.
+  if (isProd && broker === 'mock') {
+    errors.push('AUTOMATION_BROKER=mock is forbidden in production (real Alpaca paper only)');
+  }
+  // OPTIONS_NATIVE_FLOW is the only mode the current entitlement can supply.
+  if (signalMode === 'EQUITY_MOMENTUM') {
+    warnings.push(
+      'AUTOMATION_SIGNAL_MODE=EQUITY_MOMENTUM requires real-time stock intraday, which the ' +
+        'Options Advanced plan does NOT authorize; live evaluations will fail closed.'
+    );
+  }
+  if (subscriptionProfile !== 'options-advanced') {
+    warnings.push(`MASSIVE_SUBSCRIPTION_PROFILE=${subscriptionProfile} — expected options-advanced`);
+  }
+
+  const hours = getMarketHoursConfig();
+  // Ordering invariant: final-entry ≥ cancel-entries ≥ flatten (minutes before close).
+  if (!(hours.finalEntryMinutesBeforeClose >= hours.cancelEntryOrdersMinutesBeforeClose)) {
+    errors.push('AUTOMATION_FINAL_ENTRY_MINUTES_BEFORE_CLOSE must be ≥ CANCEL_ENTRY_ORDERS minutes');
+  }
+  if (!(hours.cancelEntryOrdersMinutesBeforeClose >= hours.flattenMinutesBeforeClose)) {
+    errors.push('AUTOMATION_CANCEL_ENTRY_ORDERS_MINUTES_BEFORE_CLOSE must be ≥ FLATTEN minutes');
+  }
+  if (hours.flattenMinutesBeforeClose <= 0) {
+    errors.push('AUTOMATION_FLATTEN_MINUTES_BEFORE_CLOSE must be > 0 (no intentional overnight positions)');
+  }
+
+  const exit = getExitPolicyConfig();
+  if (!(exit.stopLossPct > 0)) errors.push('AUTOMATION_STOP_LOSS_PCT must be > 0');
+  if (!(exit.profitTargetPct > 0)) errors.push('AUTOMATION_PROFIT_TARGET_PCT must be > 0');
+
+  const exec = getExecutionConfig();
+  if (!(exec.entryOrderTimeoutSeconds > 0)) errors.push('AUTOMATION_ENTRY_ORDER_TIMEOUT_SECONDS must be > 0');
+  if (!(exec.entryMaxSlippagePct >= 0)) errors.push('AUTOMATION_ENTRY_MAX_SLIPPAGE_PCT must be ≥ 0');
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    resolved: { signalMode, broker, subscriptionProfile },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2.6 — configurable trading universe
 // ---------------------------------------------------------------------------
 
@@ -227,6 +400,24 @@ export const REASON = {
   NOT_TRADABLE: 'NOT_TRADABLE',
   NO_CONTRACT_PASSED_FILTERS: 'NO_CONTRACT_PASSED_FILTERS',
   EMPTY_OPTION_CHAIN: 'EMPTY_OPTION_CHAIN',
+  // options-native signal (Phase 2C)
+  OPTIONS_WINDOW_INCOMPLETE: 'OPTIONS_WINDOW_INCOMPLETE',
+  OPTIONS_WINDOW_STALE: 'OPTIONS_WINDOW_STALE',
+  OPTIONS_WINDOW_INSUFFICIENT_VOLUME: 'OPTIONS_WINDOW_INSUFFICIENT_VOLUME',
+  OPTIONS_WINDOW_INSUFFICIENT_CONTRACTS: 'OPTIONS_WINDOW_INSUFFICIENT_CONTRACTS',
+  OPTIONS_FLOW_BALANCED: 'OPTIONS_FLOW_BALANCED',
+  OPTIONS_FLOW_BELOW_SCORE: 'OPTIONS_FLOW_BELOW_SCORE',
+  OPTIONS_DATA_UNAVAILABLE: 'OPTIONS_DATA_UNAVAILABLE',
+  // market-hours / lifecycle (Phase 2C)
+  MARKET_SESSION_CLOSED: 'MARKET_SESSION_CLOSED',
+  AFTER_FINAL_ENTRY_CUTOFF: 'AFTER_FINAL_ENTRY_CUTOFF',
+  FLATTEN_WINDOW_ACTIVE: 'FLATTEN_WINDOW_ACTIVE',
+  SCHEDULER_LEASE_NOT_OWNED: 'SCHEDULER_LEASE_NOT_OWNED',
+  // execution / exits (Phase 2C)
+  ENTRY_ORDER_TIMEOUT: 'ENTRY_ORDER_TIMEOUT',
+  EXIT_ALREADY_IN_PROGRESS: 'EXIT_ALREADY_IN_PROGRESS',
+  MONITOR_QUOTE_STALE: 'MONITOR_QUOTE_STALE',
+  POSITION_NOT_CONFIRMED_CLOSED: 'POSITION_NOT_CONFIRMED_CLOSED',
   // universe (Phase 2.6)
   UNIVERSE_NOT_CONFIGURED: 'UNIVERSE_NOT_CONFIGURED',
   UNIVERSE_SYMBOL_INVALID: 'UNIVERSE_SYMBOL_INVALID',

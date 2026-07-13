@@ -27,7 +27,12 @@ export type MockOrderScript = {
 
 export type MockClockState = 'open' | 'closed' | 'unknown';
 
-type StoredOrder = BrokerOrder & { pollScript: MockOrderScript['pollSequence']; pollIndex: number };
+type StoredOrder = BrokerOrder & {
+  pollScript: MockOrderScript['pollSequence'];
+  pollIndex: number;
+  /** Cumulative filled qty already reflected in the position book (increment guard). */
+  appliedQty: number;
+};
 
 let orderSeq = 0;
 
@@ -40,6 +45,8 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
   private clockState: MockClockState = 'open';
   private clockFails = false;
   private accountFails = false;
+  /** Price a market order (no limit) fills at — the prevailing price stand-in. */
+  private marketFillPrice = 1;
 
   public submitCalls = 0;
 
@@ -70,6 +77,11 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
     this.defaultScript = script;
   }
 
+  /** Price a market order fills at (used for market exits with no limit price). */
+  setMarketFillPrice(price: number) {
+    this.marketFillPrice = price;
+  }
+
   /** Seed a position with no corresponding order — an orphan for reconciliation. */
   seedPosition(position: Partial<BrokerPosition> & { symbol: string }) {
     this.positions.set(position.symbol.toUpperCase(), {
@@ -92,7 +104,7 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
       rawStatus: partial.rawStatus ?? 'new',
       status: partial.status ?? 'PENDING_NEW',
     });
-    this.orders.set(order.brokerOrderId, { ...order, pollScript: undefined, pollIndex: 0 });
+    this.orders.set(order.brokerOrderId, { ...order, pollScript: undefined, pollIndex: 0, appliedQty: order.filledQty });
     if (order.clientOrderId) this.byClientId.set(order.clientOrderId, order.brokerOrderId);
     return order;
   }
@@ -142,6 +154,13 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
       if (step.filledQty != null) stored.filledQty = step.filledQty;
       if (step.avgFillPrice != null) stored.avgFillPrice = step.avgFillPrice;
       stored.updatedAt = new Date();
+      // Reflect newly-filled quantity in the position book, exactly like a real
+      // broker whose position appears once fills confirm on the order.
+      const increment = stored.filledQty - stored.appliedQty;
+      if (increment > 0) {
+        this.applyFillToPositions(stored, increment, stored.avgFillPrice ?? this.marketFillPrice);
+        stored.appliedQty = stored.filledQty;
+      }
     }
     return this.snapshot(stored);
   }
@@ -176,11 +195,11 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
     } else if (outcome === 'fill') {
       rawStatus = 'filled';
       filledQty = intent.quantity;
-      avgFillPrice = intent.limitPrice ?? 1;
+      avgFillPrice = intent.limitPrice ?? this.marketFillPrice;
     } else if (outcome === 'partial_fill') {
       rawStatus = 'partially_filled';
       filledQty = Math.max(1, Math.floor(intent.quantity / 2));
-      avgFillPrice = intent.limitPrice ?? 1;
+      avgFillPrice = intent.limitPrice ?? this.marketFillPrice;
     }
 
     const order = this.buildOrder(intent.symbol, {
@@ -199,6 +218,7 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
       ...order,
       pollScript: script.pollSequence,
       pollIndex: 0,
+      appliedQty: filledQty,
     });
     this.byClientId.set(intent.clientOrderId, order.brokerOrderId);
 
@@ -242,7 +262,7 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
       filledQty: pos.qty,
       avgFillPrice: pos.avgEntryPrice ?? 1,
     });
-    this.orders.set(order.brokerOrderId, { ...order, pollScript: undefined, pollIndex: 0 });
+    this.orders.set(order.brokerOrderId, { ...order, pollScript: undefined, pollIndex: 0, appliedQty: order.filledQty });
     return order;
   }
 
@@ -272,7 +292,7 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
   }
 
   private snapshot(order: StoredOrder | BrokerOrder): BrokerOrder {
-    const { pollScript: _script, pollIndex: _idx, ...rest } = order as StoredOrder;
+    const { pollScript: _script, pollIndex: _idx, appliedQty: _applied, ...rest } = order as StoredOrder;
     return { ...rest };
   }
 

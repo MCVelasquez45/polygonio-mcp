@@ -131,12 +131,15 @@ test('decision pipeline integration', async (t) => {
     assert.equal(submitCallCount(), 0);
   });
 
-  await t.test('26. approved intents are NOT submittable by the Phase 2A submit path either', async () => {
+  await t.test('26. the Phase 2B pipeline itself never submits (execution is a separate 2C step)', async () => {
+    // Phase 2B invariant preserved: producing an approved intent reaches NO
+    // broker. (Phase 2C wires submission as a distinct, explicitly-invoked
+    // step — proven in automation2c.lifecycle.test.mjs — so the intent is now
+    // submittable, but the decision pipeline still never calls the broker.)
     const fixture = fixtureFor('bullish', 'call');
     const result = await mods.processClosedBar(String(session._id), mock, fixture);
-    const submitResult = await mods.submitIntent(String(result.orderIntent._id), mock);
-    assert.equal(submitResult.outcome, 'ALREADY_SUBMITTED', 'non-CREATED intents are never submitted');
-    assert.equal(submitCallCount(), 0, 'submitOrder must not be reached');
+    assert.equal(result.orderIntent.status, 'APPROVED_AWAITING_EXECUTION');
+    assert.equal(submitCallCount(), 0, 'the decision pipeline must never reach submitOrder');
   });
 
   await t.test('29. all decision records carry timestamps and reason codes', async () => {
