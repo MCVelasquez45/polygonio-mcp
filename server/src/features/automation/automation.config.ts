@@ -203,6 +203,16 @@ export function getExecutionConfig(): ExecutionConfig {
   };
 }
 
+/**
+ * Phase 2C Sprint 2: whether the scheduler submits approved intents to the
+ * broker. Default OFF — the scheduler evaluates (Sprint 1) but does not submit
+ * until an operator deliberately enables execution. Turning this on is the
+ * single switch that lets Approved Order Intents reach Alpaca paper.
+ */
+export function getSubmissionEnabled(): boolean {
+  return envBool('AUTOMATION_SUBMIT_APPROVED_INTENTS', false);
+}
+
 export type SchedulerConfig = {
   /** Master switch. 'false' disables the boot-time scheduler entirely. */
   enabled: boolean;

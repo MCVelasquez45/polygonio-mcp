@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import mongoose from 'mongoose';
-import { getMarketHoursConfig, getSchedulerConfig } from '../automation.config';
+import { getMarketHoursConfig, getSchedulerConfig, getSubmissionEnabled } from '../automation.config';
 import {
   acquireSchedulerLease,
   releaseSchedulerLease,
@@ -13,6 +13,7 @@ import {
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import { deriveMarketSession, type MarketSessionState } from './marketSession.service';
+import { submitApprovedIntent, type SubmissionOutcome } from './orderSubmission.service';
 import { exchangeTradingDate } from './sessionDailyReset.service';
 import { getAutomationRuntime, isAutomationReady, resolveBrokerAdapter } from './sessionRecovery.service';
 
@@ -74,11 +75,22 @@ async function defaultEvaluateSession(
   return { approvedIntentId: orderIntent ? String(orderIntent._id) : null, outcome: evaluation.outcome };
 }
 
+/** Submit one approved intent to the broker (Sprint 2). */
+export type SubmitApproved = (
+  intentId: string,
+  adapter: PaperBrokerAdapter,
+  ctx: { ownsLease: boolean; marketSession: MarketSessionState }
+) => Promise<{ outcome: SubmissionOutcome; brokerOrderId: string | null; brokerStatus: string | null }>;
+
 export type EvaluationTickDeps = {
   adapter: PaperBrokerAdapter;
   ownerId: string;
   now?: number;
   evaluate?: EvaluateSession;
+  /** Sprint 2: submit the approved intent. Injected in tests; default = real path. */
+  submit?: SubmitApproved;
+  /** Force-enable submission regardless of env (tests). */
+  submissionEnabled?: boolean;
 };
 
 export type SessionEvaluationOutcome = {
@@ -87,6 +99,8 @@ export type SessionEvaluationOutcome = {
   skippedReason: string | null;
   approvedIntentId: string | null;
   windowKey: string;
+  /** Sprint 2: broker submission outcome for the approved intent, if any. */
+  submission: { outcome: SubmissionOutcome; brokerOrderId: string | null; brokerStatus: string | null } | null;
 };
 
 export type EvaluationTickResult = {
@@ -95,6 +109,7 @@ export type EvaluationTickResult = {
   marketSession: MarketSessionState | null;
   evaluated: number;
   skipped: number;
+  submitted: number;
   skippedReason: string | null;
   sessions: SessionEvaluationOutcome[];
 };
@@ -115,12 +130,20 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
   const now = deps.now ?? Date.now();
   const config = getSchedulerConfig();
   const evaluate = deps.evaluate ?? defaultEvaluateSession;
+  const submit: SubmitApproved =
+    deps.submit ??
+    (async (intentId, adapter, ctx) => {
+      const r = await submitApprovedIntent(intentId, adapter, ctx);
+      return { outcome: r.outcome, brokerOrderId: r.brokerOrderId, brokerStatus: r.brokerStatus };
+    });
+  const submissionEnabled = deps.submissionEnabled ?? getSubmissionEnabled();
   const base: EvaluationTickResult = {
     ranAt: new Date(now).toISOString(),
     ownsLease: false,
     marketSession: null,
     evaluated: 0,
     skipped: 0,
+    submitted: 0,
     skippedReason: null,
     sessions: [],
   };
@@ -161,6 +184,17 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
     base.sessions.push(outcome);
     if (outcome.evaluated) base.evaluated += 1;
     else base.skipped += 1;
+
+    // Sprint 2: submit the Approved Order Intent (gated). Persist-then-STOP —
+    // no fills, positions, or P&L. Idempotent; ambiguity → MANUAL_REVIEW.
+    if (submissionEnabled && outcome.evaluated && outcome.approvedIntentId) {
+      const submission = await submit(outcome.approvedIntentId, deps.adapter, {
+        ownsLease: true,
+        marketSession,
+      });
+      outcome.submission = submission;
+      if (submission.outcome === 'SUBMITTED') base.submitted += 1;
+    }
   }
 
   logAutomationEvent({
@@ -171,6 +205,7 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
       phase: marketSession.phase,
       evaluated: base.evaluated,
       skipped: base.skipped,
+      submitted: base.submitted,
       minutesToClose: marketSession.minutesToClose,
     },
   });
@@ -191,6 +226,7 @@ async function evaluateSessionOnce(
     skippedReason: reason,
     approvedIntentId: null,
     windowKey,
+    submission: null,
   });
 
   if (session.reconciliationStatus !== 'CLEAN') return skip('RECONCILIATION_NOT_CLEAN');
@@ -212,7 +248,7 @@ async function evaluateSessionOnce(
       automationSessionId: sessionId,
       payload: { windowKey, outcome, approvedIntentId, note: 'Sprint 1 stops here — no broker submission' },
     });
-    return { automationSessionId: sessionId, evaluated: true, skippedReason: null, approvedIntentId, windowKey };
+    return { automationSessionId: sessionId, evaluated: true, skippedReason: null, approvedIntentId, windowKey, submission: null };
   } catch (error: any) {
     // Roll the window claim back so a transient failure can retry next tick.
     await AutomationSessionModel.updateOne(
