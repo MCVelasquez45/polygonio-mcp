@@ -21,6 +21,11 @@ import {
   startAutomationScheduler,
   stopAutomationScheduler,
 } from './features/automation/services/schedulerController.service';
+import {
+  startOrderReconciliationWorker,
+  stopOrderReconciliationWorker,
+} from './features/automation/services/orderReconciliation.service';
+import { getAutomationRuntime } from './features/automation/services/sessionRecovery.service';
 import { portfolioRouter } from './features/portfolio/portfolio.routes';
 import { marketDataRouter } from './features/marketData/marketData.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
@@ -160,7 +165,14 @@ async function start() {
   // submits broker orders in this sprint.
   initializeAutomation()
     .then(result => {
-      if (result.ready) startAutomationScheduler();
+      if (result.ready) {
+        // Sprint 3: keep broker truth current via the REST reconciliation worker
+        // (also the fallback when a trade-update stream is unavailable). Started
+        // alongside the evaluation scheduler after startup reconciliation.
+        const adapter = getAutomationRuntime().adapter ?? undefined;
+        if (adapter) startOrderReconciliationWorker(adapter);
+        startAutomationScheduler();
+      }
     })
     .catch(error => {
       console.error('[SERVER] Automation initialization failed (automation stays unavailable)', error);
@@ -174,6 +186,7 @@ async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[SERVER] ${signal} received — stopping automation scheduler`);
+  stopOrderReconciliationWorker();
   await stopAutomationScheduler(signal).catch(() => undefined);
   process.exit(0);
 }

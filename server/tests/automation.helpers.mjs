@@ -92,6 +92,8 @@ export async function loadDist() {
     portfolioSvc2c,
     schedulerCtrl2c,
     orderSubmission2c,
+    brokerIngestion2c,
+    orderReconciliation2c,
   ] = await Promise.all([
     import('../dist/features/automation/models/automationSession.model.js'),
     import('../dist/features/automation/models/orderIntent.model.js'),
@@ -133,6 +135,8 @@ export async function loadDist() {
     import('../dist/features/portfolio/portfolio.service.js'),
     import('../dist/features/automation/services/schedulerController.service.js'),
     import('../dist/features/automation/services/orderSubmission.service.js'),
+    import('../dist/features/automation/services/brokerUpdateIngestion.service.js'),
+    import('../dist/features/automation/services/orderReconciliation.service.js'),
   ]);
   return {
     ...sessionModel,
@@ -175,6 +179,8 @@ export async function loadDist() {
     ...portfolioSvc2c,
     ...schedulerCtrl2c,
     ...orderSubmission2c,
+    ...brokerIngestion2c,
+    ...orderReconciliation2c,
   };
 }
 

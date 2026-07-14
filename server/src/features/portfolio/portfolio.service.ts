@@ -15,6 +15,8 @@ import { UniverseEvaluationModel } from '../automation/models/universeEvaluation
 import { logAutomationEvent, listSessionEvents } from '../automation/services/automationAudit.service';
 import { flattenAllOnEmergency } from '../automation/automation.scheduler';
 import { submitExit } from '../automation/services/positionManager.service';
+import { getBrokerStreamHealth } from '../automation/services/orderReconciliation.service';
+import { BrokerOrderModel } from '../automation/models/brokerOrder.model';
 import type { BrokerOrder, BrokerPosition } from '../automation/automation.types';
 
 // Phase 2C — Portfolio command-center aggregation.
@@ -54,10 +56,17 @@ export type OwnedBrokerPosition = BrokerPosition & {
 export type OwnedBrokerOrder = BrokerOrder & {
   source: 'AUTOMATION' | 'MANUAL';
   automation: {
-    intentId: string;
-    intentType: string;
-    status: string;
-    automationSessionId: string;
+    intentId: string | null;
+    intentType: string | null;
+    status: string | null;
+    automationSessionId: string | null;
+    brokerLifecycleState?: string | null;
+    filledQty?: number | null;
+    remainingQty?: number | null;
+    avgFillPrice?: number | null;
+    submittedAt?: Date | null;
+    lastBrokerUpdateAt?: Date | null;
+    manualReviewReason?: string | null;
   } | null;
 };
 
@@ -118,8 +127,17 @@ export async function getPortfolioOperations() {
     };
   });
 
+  // Durable broker-order journal (Sprint 3), keyed by client_order_id — the
+  // source of lifecycle state / cumulative fill / avg price / timestamps.
+  const journalRows = mongoUp
+    ? await BrokerOrderModel.find({ intentId: { $ne: null } }).sort({ updatedAt: -1 }).limit(300).lean()
+    : [];
+  const journalByClientOrderId = new Map<string, (typeof journalRows)[number]>();
+  for (const row of journalRows) if (row.clientOrderId) journalByClientOrderId.set(row.clientOrderId, row);
+
   const orders: OwnedBrokerOrder[] = brokerOrders.map(order => {
     const intent = order.clientOrderId ? intentByClientOrderId.get(order.clientOrderId) : undefined;
+    const journal = order.clientOrderId ? journalByClientOrderId.get(order.clientOrderId) : undefined;
     return {
       ...order,
       source: intent ? 'AUTOMATION' : 'MANUAL',
@@ -129,10 +147,58 @@ export async function getPortfolioOperations() {
             intentType: intent.intentType,
             status: intent.status,
             automationSessionId: intent.automationSessionId,
+            // Sprint 3 lifecycle fields (durable broker truth; null when absent).
+            brokerLifecycleState: journal?.status ?? null,
+            filledQty: journal?.filledQty ?? null,
+            remainingQty: journal ? Math.max(0, journal.qty - journal.filledQty) : null,
+            avgFillPrice: journal?.avgFillPrice ?? null,
+            submittedAt: journal?.submittedAt ?? null,
+            lastBrokerUpdateAt: journal?.lastBrokerUpdateAt ?? null,
+            manualReviewReason: intent.status === 'MANUAL_REVIEW' ? intent.rejectionReason ?? 'manual review' : null,
           }
         : null,
     };
   });
+
+  // Automation-owned broker orders that exist only in the journal (e.g. filled/
+  // terminal, no longer in the broker's open-orders list) — surface them too.
+  const openClientOrderIds = new Set(brokerOrders.map(o => o.clientOrderId).filter(Boolean) as string[]);
+  const journalOnlyOrders = journalRows
+    .filter(row => row.clientOrderId && !openClientOrderIds.has(row.clientOrderId))
+    .map(row => {
+      const intent = row.clientOrderId ? intentByClientOrderId.get(row.clientOrderId) : undefined;
+      return {
+        brokerOrderId: row.brokerOrderId,
+        clientOrderId: row.clientOrderId,
+        symbol: row.symbol,
+        side: row.side,
+        qty: row.qty,
+        filledQty: row.filledQty,
+        avgFillPrice: row.avgFillPrice,
+        status: row.status,
+        rawStatus: row.rawStatus,
+        orderType: row.orderType,
+        limitPrice: row.limitPrice,
+        timeInForce: row.timeInForce,
+        submittedAt: row.submittedAt,
+        updatedAt: row.lastBrokerUpdateAt,
+        source: 'AUTOMATION' as const,
+        automation: {
+          intentId: row.intentId,
+          intentType: intent?.intentType ?? null,
+          status: intent?.status ?? null,
+          automationSessionId: row.automationSessionId,
+          brokerLifecycleState: row.status,
+          filledQty: row.filledQty,
+          remainingQty: Math.max(0, row.qty - row.filledQty),
+          avgFillPrice: row.avgFillPrice,
+          submittedAt: row.submittedAt,
+          lastBrokerUpdateAt: row.lastBrokerUpdateAt,
+          manualReviewReason: intent?.status === 'MANUAL_REVIEW' ? intent.rejectionReason ?? 'manual review' : null,
+        },
+      } as unknown as OwnedBrokerOrder;
+    });
+  orders.push(...journalOnlyOrders);
 
   const risk = sessions.map(s => ({
     automationSessionId: String(s._id),
@@ -147,6 +213,8 @@ export async function getPortfolioOperations() {
     reconciliationStatus: s.reconciliationStatus,
   }));
 
+  const brokerStream = getBrokerStreamHealth();
+
   return {
     brokerTruth: { account, positions: brokerPositions, orders: brokerOrders },
     automationContext: {
@@ -160,6 +228,14 @@ export async function getPortfolioOperations() {
       orders: orders.filter(o => o.source === 'MANUAL'),
     },
     health,
+    brokerStreamHealth: {
+      state: brokerStream.state,
+      streamEnabled: brokerStream.streamEnabled,
+      truthCurrent: brokerStream.truthCurrent,
+      lastEventAt: brokerStream.lastEventAt,
+      lastRestReconciliationAt: brokerStream.lastRestReconciliationAt,
+      unresolvedContradictions: brokerStream.unresolvedContradictions,
+    },
     risk,
   };
 }

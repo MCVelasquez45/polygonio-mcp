@@ -213,6 +213,31 @@ export function getSubmissionEnabled(): boolean {
   return envBool('AUTOMATION_SUBMIT_APPROVED_INTENTS', false);
 }
 
+export type BrokerLifecycleConfig = {
+  /** Whether the broker trade-update stream is preferred (REST is the fallback). */
+  streamEnabled: boolean;
+  /** Recurring order-reconciliation interval (clamped to sane bounds). */
+  reconciliationIntervalMs: number;
+  /**
+   * Max age of the last successful REST reconciliation before broker truth is
+   * considered "not current" and new submissions are blocked.
+   */
+  reconciliationStaleMs: number;
+};
+
+export function getBrokerLifecycleConfig(): BrokerLifecycleConfig {
+  const RECON_MIN = 5_000;
+  const RECON_MAX = 5 * 60_000;
+  const raw = envNumber('AUTOMATION_ORDER_RECONCILIATION_INTERVAL_MS', 15_000);
+  const reconciliationIntervalMs = Math.min(RECON_MAX, Math.max(RECON_MIN, raw));
+  return {
+    streamEnabled: envBool('AUTOMATION_BROKER_STREAM_ENABLED', true),
+    reconciliationIntervalMs,
+    // Stale window = 4× the interval, floored at 60s.
+    reconciliationStaleMs: Math.max(60_000, reconciliationIntervalMs * 4),
+  };
+}
+
 export type SchedulerConfig = {
   /** Master switch. 'false' disables the boot-time scheduler entirely. */
   enabled: boolean;

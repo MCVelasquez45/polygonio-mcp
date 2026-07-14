@@ -5,6 +5,7 @@ import { OrderIntentModel } from '../models/orderIntent.model';
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import type { MarketSessionState } from './marketSession.service';
+import { isBrokerTruthCurrent } from './orderReconciliation.service';
 import { submitIntent } from './orderIntent.service';
 import { isAutomationReady } from './sessionRecovery.service';
 
@@ -84,6 +85,9 @@ export async function submitApprovedIntent(
   // Gate 3/4 — Market open AND before the entry cutoff.
   if (!ctx.marketSession.isOpen) return refuse('MARKET_CLOSED');
   if (!ctx.marketSession.entriesAllowed) return refuse('AFTER_FINAL_ENTRY_CUTOFF');
+  // Gate — broker truth must be current (stream connected or fresh REST
+  // reconciliation). A disconnected stream with stale REST blocks submission.
+  if (!isBrokerTruthCurrent()) return refuse('BROKER_TRUTH_STALE');
 
   const intent = await OrderIntentModel.findById(intentId);
   if (!intent) return refuse('INTENT_NOT_FOUND');

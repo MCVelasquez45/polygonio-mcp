@@ -221,6 +221,22 @@ export async function initializeAutomation(
     return { ready: false, state: runtime.state, detail: `reconciliation failed: ${runtime.lastError}` };
   }
 
+  // Phase 2C Sprint 3: bring every nonterminal automation broker order to
+  // current broker truth (rebuilds partial/open positions, resolves terminal
+  // zero-fill orders) BEFORE readiness, and mark REST reconciliation fresh so
+  // submissions have current truth. Freshly-dropped test DBs make this a no-op.
+  try {
+    const { reconcileNonterminalAutomationOrders } = await import('./orderReconciliation.service');
+    await reconcileNonterminalAutomationOrders(adapter);
+  } catch (error) {
+    logAutomationEvent({
+      service: 'recovery',
+      event: 'STARTUP_ORDER_RECONCILIATION_ERROR',
+      severity: 'warning',
+      payload: { error: String((error as Error)?.message ?? error).slice(0, 200) },
+    });
+  }
+
   runtime.state = 'READY';
   runtime.initializedAt = new Date();
   runtime.lastError = null;

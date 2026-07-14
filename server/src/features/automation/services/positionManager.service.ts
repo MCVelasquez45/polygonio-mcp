@@ -82,8 +82,13 @@ export async function openOrUpdateEntryPosition(
 export function applyEntryFill(position: AutomationPositionDocument, order: BrokerOrder): void {
   if (position.status === 'CLOSED' || position.status === 'EXITING') return;
   if (order.brokerOrderId) position.entryBrokerOrderId = order.brokerOrderId;
+  if (order.qty > 0) position.orderedQuantity = order.qty;
+  position.lastBrokerReconciledAt = order.updatedAt ?? new Date();
 
   // Only advance on new fill information (guards duplicate/out-of-order events).
+  // Average entry price is taken from Alpaca's authoritative avg fill price on
+  // the SAME event that advances cumulative filled quantity — never recomputed
+  // from a synthetic assumption.
   if (order.filledQty > position.filledQty) {
     position.filledQty = order.filledQty;
     if (order.avgFillPrice != null) position.avgEntryPrice = order.avgFillPrice;

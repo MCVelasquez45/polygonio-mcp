@@ -98,9 +98,12 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
   /** Seed a broker-side order the local journal knows nothing about. */
   seedUnknownOrder(partial: Partial<BrokerOrder> & { symbol: string }): BrokerOrder {
     const order = this.buildOrder(partial.symbol, {
+      brokerOrderId: partial.brokerOrderId,
       clientOrderId: partial.clientOrderId ?? null,
       side: partial.side ?? 'BUY',
       qty: partial.qty ?? 1,
+      filledQty: partial.filledQty ?? 0,
+      avgFillPrice: partial.avgFillPrice ?? null,
       rawStatus: partial.rawStatus ?? 'new',
       status: partial.status ?? 'PENDING_NEW',
     });
@@ -274,7 +277,7 @@ export class MockPaperBrokerAdapter implements PaperBrokerAdapter {
   ): BrokerOrder {
     orderSeq += 1;
     return {
-      brokerOrderId: `mock-order-${orderSeq}`,
+      brokerOrderId: overrides.brokerOrderId ?? `mock-order-${orderSeq}`,
       clientOrderId: overrides.clientOrderId ?? null,
       symbol: symbol.toUpperCase(),
       side: overrides.side ?? 'BUY',

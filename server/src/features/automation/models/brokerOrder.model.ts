@@ -29,6 +29,8 @@ export interface BrokerOrderDocument extends Document {
   lastSource: 'submit-response' | 'order-poll' | 'reconciliation' | 'manual-review';
   submittedAt: Date | null;
   lastBrokerUpdateAt: Date | null;
+  /** Sprint 3: reconciliation-worker claim (prevents concurrent reconcile of one order). */
+  reconcileClaimedAt: Date | null;
   statusHistory: Array<{
     at: Date;
     status: BrokerOrderStatus;
@@ -78,6 +80,7 @@ const BrokerOrderSchema = new Schema<BrokerOrderDocument>(
     },
     submittedAt: { type: Date, default: null },
     lastBrokerUpdateAt: { type: Date, default: null },
+    reconcileClaimedAt: { type: Date, default: null },
     statusHistory: [
       {
         at: { type: Date, required: true },

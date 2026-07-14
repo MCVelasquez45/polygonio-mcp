@@ -13,6 +13,7 @@ import {
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import { deriveMarketSession, type MarketSessionState } from './marketSession.service';
+import { hasUnresolvedAutomationOrder, isBrokerTruthCurrent } from './orderReconciliation.service';
 import { submitApprovedIntent, type SubmissionOutcome } from './orderSubmission.service';
 import { exchangeTradingDate } from './sessionDailyReset.service';
 import { getAutomationRuntime, isAutomationReady, resolveBrokerAdapter } from './sessionRecovery.service';
@@ -185,15 +186,23 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
     if (outcome.evaluated) base.evaluated += 1;
     else base.skipped += 1;
 
-    // Sprint 2: submit the Approved Order Intent (gated). Persist-then-STOP —
+    // Sprint 2/3: submit the Approved Order Intent (gated). Persist-then-STOP —
     // no fills, positions, or P&L. Idempotent; ambiguity → MANUAL_REVIEW.
+    // Sprint 3 gates: do not start a NEW submission while broker truth is not
+    // current, or while any automation order is unresolved.
     if (submissionEnabled && outcome.evaluated && outcome.approvedIntentId) {
-      const submission = await submit(outcome.approvedIntentId, deps.adapter, {
-        ownsLease: true,
-        marketSession,
-      });
-      outcome.submission = submission;
-      if (submission.outcome === 'SUBMITTED') base.submitted += 1;
+      if (!isBrokerTruthCurrent(now)) {
+        outcome.submission = { outcome: 'REFUSED', brokerOrderId: null, brokerStatus: null };
+      } else if (await hasUnresolvedAutomationOrder()) {
+        outcome.submission = { outcome: 'REFUSED', brokerOrderId: null, brokerStatus: null };
+      } else {
+        const submission = await submit(outcome.approvedIntentId, deps.adapter, {
+          ownsLease: true,
+          marketSession,
+        });
+        outcome.submission = submission;
+        if (submission.outcome === 'SUBMITTED') base.submitted += 1;
+      }
     }
   }
 

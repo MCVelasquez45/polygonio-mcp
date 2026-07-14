@@ -43,10 +43,14 @@ export interface AutomationPositionDocument extends Document {
   entryIntentId: string;
   entryBrokerOrderId: string | null;
   entryClientOrderId: string;
+  /** Ordered contract quantity (from the broker order). Sprint 3. */
+  orderedQuantity: number | null;
   filledQty: number;
   avgEntryPrice: number | null;
   entryFees: number | null;
   openedAt: Date | null;
+  /** Latest broker-truth reconciliation of this position. Sprint 3. */
+  lastBrokerReconciledAt: Date | null;
 
   // Monitoring
   status: AutomationPositionStatus;
@@ -118,10 +122,12 @@ const AutomationPositionSchema = new Schema<AutomationPositionDocument>(
     // Unique: one automation position per entry order. The idempotent entry
     // intent already guarantees one order; this guarantees one position.
     entryClientOrderId: { type: String, required: true, unique: true },
+    orderedQuantity: { type: Number, default: null },
     filledQty: { type: Number, required: true, default: 0 },
     avgEntryPrice: { type: Number, default: null },
     entryFees: { type: Number, default: null },
     openedAt: { type: Date, default: null },
+    lastBrokerReconciledAt: { type: Date, default: null },
 
     status: { type: String, enum: STATUSES, required: true, default: 'PENDING_ENTRY', index: true },
     currentMark: { type: Number, default: null },
