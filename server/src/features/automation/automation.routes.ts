@@ -6,6 +6,7 @@ import {
   getSessionContractSelections,
   getSessionEvents,
   getSessionOrders,
+  getSchedulerStatus,
   getSessionRiskDecisions,
   getSessionUniverseEvaluations,
   getSessions,
@@ -23,6 +24,7 @@ import {
 export const automationRouter = Router();
 
 automationRouter.get('/health', getHealth);
+automationRouter.get('/scheduler', getSchedulerStatus);
 automationRouter.post('/reconcile', postReconcile);
 automationRouter.post('/sessions', postSession);
 automationRouter.get('/sessions', getSessions);

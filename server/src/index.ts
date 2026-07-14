@@ -17,6 +17,10 @@ import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { strategyRouter } from './features/strategy/strategy.routes';
 import { automationRouter } from './features/automation/automation.routes';
+import {
+  startAutomationScheduler,
+  stopAutomationScheduler,
+} from './features/automation/services/schedulerController.service';
 import { portfolioRouter } from './features/portfolio/portfolio.routes';
 import { marketDataRouter } from './features/marketData/marketData.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
@@ -149,10 +153,32 @@ async function start() {
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
   // server is up so a broker/Mongo problem never blocks unrelated features.
   // When Mongo is down this resolves to state UNAVAILABLE without throwing.
-  initializeAutomation().catch(error => {
-    console.error('[SERVER] Automation initialization failed (automation stays unavailable)', error);
-  });
+  //
+  // Phase 2C Sprint 1: the evaluation scheduler starts ONLY after init resolves
+  // ready — i.e. after startup reconciliation succeeded (reconciliation before
+  // activation). It evaluates to the Approved Evaluation Request and never
+  // submits broker orders in this sprint.
+  initializeAutomation()
+    .then(result => {
+      if (result.ready) startAutomationScheduler();
+    })
+    .catch(error => {
+      console.error('[SERVER] Automation initialization failed (automation stays unavailable)', error);
+    });
 }
+
+// Graceful shutdown: release the scheduler lease so a replacement instance can
+// take ownership immediately instead of waiting for the lease to expire.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[SERVER] ${signal} received — stopping automation scheduler`);
+  await stopAutomationScheduler(signal).catch(() => undefined);
+  process.exit(0);
+}
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
 start().catch(error => {
   console.error('[SERVER] Uncaught bootstrap error', error);

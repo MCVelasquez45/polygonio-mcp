@@ -151,6 +151,12 @@ export async function getUniverse() {
   return getUniverseConfig();
 }
 
+/** Current scheduler controller status (Phase 2C Sprint 1). */
+export async function getSchedulerStatus() {
+  const { getSchedulerStatus } = await import('./services/schedulerController.service');
+  return getSchedulerStatus();
+}
+
 /** Persisted universe evaluations (dashboard: eligibility, ranking, selection). */
 export async function getSessionUniverseEvaluations(id: string, limit = 20) {
   assertMongo();

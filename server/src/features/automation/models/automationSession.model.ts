@@ -25,6 +25,12 @@ export interface AutomationSessionDocument extends Document {
   lastProcessedClosedBarTs: Date | null;
   /** Phase 2.6: last processed closed bar per universe symbol. */
   lastProcessedBars: { symbol: string; barTimestamp: Date }[];
+  /**
+   * Phase 2C Sprint 1: the observation-window key most recently evaluated by
+   * the scheduler. Guarantees a window is evaluated at most once per session,
+   * durably across restarts. Format: `${exchangeTradingDate}:${windowIndex}`.
+   */
+  lastEvaluatedWindowKey: string | null;
   dailyTradeCount: number;
   consecutiveLossCount: number;
   dailyRealizedPnl: number;
@@ -76,6 +82,7 @@ const AutomationSessionSchema = new Schema<AutomationSessionDocument>(
       default: 'UNAVAILABLE',
     },
     lastProcessedClosedBarTs: { type: Date, default: null },
+    lastEvaluatedWindowKey: { type: String, default: null },
     // Array (not a map) so symbols containing dots (BRK.B) are safe as data.
     lastProcessedBars: {
       type: [

@@ -22,6 +22,14 @@ export async function getHealth(_req: Request, res: Response, next: NextFunction
   }
 }
 
+export async function getSchedulerStatus(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await automationService.getSchedulerStatus());
+  } catch (error) {
+    handleError(error, res, next);
+  }
+}
+
 export async function postReconcile(_req: Request, res: Response, next: NextFunction) {
   try {
     const report = await automationService.reconcileNow();

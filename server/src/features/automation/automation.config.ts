@@ -203,6 +203,27 @@ export function getExecutionConfig(): ExecutionConfig {
   };
 }
 
+export type SchedulerConfig = {
+  /** Master switch. 'false' disables the boot-time scheduler entirely. */
+  enabled: boolean;
+  /** Tick cadence — how often the scheduler wakes to check the clock/lease. */
+  intervalMs: number;
+  /** Lease TTL. Must exceed intervalMs so an active owner keeps renewing. */
+  leaseTtlMs: number;
+  /** Observation-window size for the once-per-window evaluation guard. */
+  windowMs: number;
+};
+
+export function getSchedulerConfig(): SchedulerConfig {
+  const flowWindowMinutes = envNumber('AUTOMATION_OPTIONS_FLOW_WINDOW_MINUTES', 5);
+  return {
+    enabled: envBool('AUTOMATION_SCHEDULER_ENABLED', true),
+    intervalMs: envNumber('AUTOMATION_SCHEDULER_INTERVAL_MS', 30_000),
+    leaseTtlMs: envNumber('AUTOMATION_SCHEDULER_LEASE_TTL_MS', 90_000),
+    windowMs: envNumber('AUTOMATION_SCHEDULER_WINDOW_MS', flowWindowMinutes * 60_000),
+  };
+}
+
 export type ExitPolicyConfig = {
   /** Stop loss as a fraction of entry premium (long options). */
   stopLossPct: number;
@@ -280,6 +301,15 @@ export function validateAutomationConfig(): AutomationConfigValidation {
   const exec = getExecutionConfig();
   if (!(exec.entryOrderTimeoutSeconds > 0)) errors.push('AUTOMATION_ENTRY_ORDER_TIMEOUT_SECONDS must be > 0');
   if (!(exec.entryMaxSlippagePct >= 0)) errors.push('AUTOMATION_ENTRY_MAX_SLIPPAGE_PCT must be ≥ 0');
+
+  const scheduler = getSchedulerConfig();
+  if (!(scheduler.intervalMs > 0)) errors.push('AUTOMATION_SCHEDULER_INTERVAL_MS must be > 0');
+  if (!(scheduler.leaseTtlMs > scheduler.intervalMs)) {
+    // A lease shorter than the tick would expire between renewals and let a
+    // second owner acquire it — breaking the single-owner guarantee.
+    errors.push('AUTOMATION_SCHEDULER_LEASE_TTL_MS must be > AUTOMATION_SCHEDULER_INTERVAL_MS');
+  }
+  if (!(scheduler.windowMs > 0)) errors.push('AUTOMATION_SCHEDULER_WINDOW_MS must be > 0');
 
   return {
     ok: errors.length === 0,
