@@ -1,18 +1,19 @@
 import { Router } from 'express';
 // Broker router: thin façade over Alpaca APIs for account/positions/orders with caching.
+// Order SUBMISSION is intentionally NOT here — it is governed by the manual
+// execution gateway (manualTrading.routes) and the automation engine.
 import {
   getAlpacaAccount,
   getAlpacaClock,
   listAlpacaOptionOrders,
-  listAlpacaOptionPositions,
-  submitAlpacaOptionsOrder
+  listAlpacaOptionPositions
 } from './services/alpaca';
+import { logAutomationEvent } from '../automation/services/automationAudit.service';
 
 const router = Router();
 
 // Simple in-memory caches to avoid calling Alpaca more than ~once every 10s.
 const CACHE_TTL_MS = 10_000;
-const ALLOWED_POSITION_INTENTS = new Set(['buy_to_open', 'buy_to_close', 'sell_to_open', 'sell_to_close']);
 
 let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
@@ -68,74 +69,33 @@ router.get('/alpaca/options/orders', async (req, res, next) => {
   }
 });
 
-// POST /api/broker/alpaca/options/orders – normalizes legs and forwards to Alpaca.
+// POST /api/broker/alpaca/options/orders – DEPRECATED direct submission path.
+//
+// This ungoverned route used to forward any payload straight to Alpaca (the
+// accidental-submission defect). It is now FAIL-CLOSED: manual paper orders must
+// go through the governed lifecycle at POST /api/trading/manual/intents →
+// /confirm → /submit (execution gateway), and automation uses its own engine
+// path. Direct submission here is refused so no order-shaped payload from a
+// research/selection surface can ever reach the broker.
 router.post('/alpaca/options/orders', async (req, res, next) => {
   try {
-    const body = req.body ?? {};
-    console.log('[BROKER] order submission received', body);
-    const legs = Array.isArray(body.legs) ? body.legs : [];
-    if (!legs.length) {
-      return res.status(400).json({ error: 'At least one leg is required' });
-    }
-    // Normalize each leg, applying defaults and validation before hitting Alpaca.
-    const normalizedLegs = legs.map((leg: any) => {
-      const symbol = typeof leg.symbol === 'string' ? leg.symbol.trim().toUpperCase() : '';
-      const qty = Number(leg.qty ?? leg.quantity ?? 0);
-      const side = leg.side === 'sell' ? 'sell' : 'buy';
-      const limitPrice = leg.limitPrice ?? leg.limit_price;
-      const type = leg.type ?? (limitPrice != null ? 'limit' : 'market');
-      const intentRaw = leg.position_intent ?? leg.positionIntent;
-      const positionIntent =
-        typeof intentRaw === 'string' && ALLOWED_POSITION_INTENTS.has(intentRaw) ? intentRaw : undefined;
-      if (!symbol || !Number.isFinite(qty) || qty <= 0) {
-        throw new Error('Invalid leg payload');
-      }
-      return {
-        symbol,
-        qty,
-        side,
-        type,
-        ...(limitPrice != null ? { limit_price: Number(limitPrice) } : {}),
-        ...(positionIntent ? { position_intent: positionIntent } : {})
-      };
+    logAutomationEvent({
+      service: 'execution-gateway',
+      event: 'ORDER_SUBMISSION_BLOCKED',
+      severity: 'warning',
+      payload: {
+        route: 'POST /api/broker/alpaca/options/orders',
+        reason: 'DIRECT_BROKER_SUBMISSION_DISABLED',
+        detail: 'use the governed manual path /api/trading/manual/intents/:id/{confirm,submit}',
+      },
     });
-    const limitPriceRaw = body.limitPrice ?? body.limit_price;
-    const limitPriceValue = Number(limitPriceRaw);
-    const stopPriceRaw = body.stopPrice ?? body.stop_price;
-    const stopPriceValue = Number(stopPriceRaw);
-    const trailPriceRaw = body.trailPrice ?? body.trail_price;
-    const trailPriceValue = Number(trailPriceRaw);
-    const trailPercentRaw = body.trailPercent ?? body.trail_percent;
-    const trailPercentValue = Number(trailPercentRaw);
-    const orderClass =
-      typeof body.orderClass === 'string'
-        ? body.orderClass
-        : typeof body.order_class === 'string'
-        ? body.order_class
-        : undefined;
-    const orderType =
-      typeof body.orderType === 'string'
-        ? body.orderType
-        : typeof body.order_type === 'string'
-        ? body.order_type
-        : undefined;
-    const payload = {
-      legs: normalizedLegs,
-      quantity: Number(body.quantity ?? 1),
-      order_class: orderClass,
-      order_type: orderType,
-      limit_price: Number.isFinite(limitPriceValue) ? Math.abs(limitPriceValue) : undefined,
-      stop_price: Number.isFinite(stopPriceValue) ? Math.abs(stopPriceValue) : undefined,
-      trail_price: Number.isFinite(trailPriceValue) ? Math.abs(trailPriceValue) : undefined,
-      trail_percent: Number.isFinite(trailPercentValue) ? Math.abs(trailPercentValue) : undefined,
-      time_in_force: body.timeInForce ?? body.time_in_force ?? 'day',
-      client_order_id: body.clientOrderId ?? body.client_order_id,
-      extended_hours: Boolean(body.extendedHours ?? body.extended_hours)
-    };
-    console.log('[BROKER] normalized Alpaca payload', payload);
-    const order = await submitAlpacaOptionsOrder(payload);
-    console.log('[BROKER] Alpaca order response', order);
-    res.json(order);
+    return res.status(410).json({
+      error: 'DIRECT_BROKER_SUBMISSION_DISABLED',
+      message:
+        'Direct broker order submission is disabled. Manual paper orders must use ' +
+        'POST /api/trading/manual/intents then /confirm then /submit (execution gateway). ' +
+        'Automation submits through its own deterministic engine path.',
+    });
   } catch (error) {
     next(error);
   }

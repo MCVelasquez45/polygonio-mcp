@@ -81,6 +81,17 @@ export interface AutomationPositionDocument extends Document {
   /** True once this close has been folded into session risk counters (once only). */
   riskCounted: boolean;
 
+  // Exit lifecycle recovery (Phase 2C finalization). The EXITING state must
+  // never strand a position: a failed exit is retried (bounded) or escalated.
+  /** How many exit orders have been submitted for this position (1 = first). */
+  exitAttemptCount: number;
+  /** When the CURRENT exit order was submitted — basis for the exit timeout. */
+  exitSubmittedAt: Date | null;
+  /** Cumulative broker-confirmed exit fill across all exit attempts. */
+  exitFilledQty: number;
+  /** Why the position was parked in MANUAL_REVIEW (operator-facing). */
+  manualReviewReason: string | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -159,6 +170,12 @@ const AutomationPositionSchema = new Schema<AutomationPositionDocument>(
     returnPct: { type: Number, default: null },
     closedAt: { type: Date, default: null },
     riskCounted: { type: Boolean, required: true, default: false },
+
+    // Exit lifecycle recovery (Phase 2C finalization).
+    exitAttemptCount: { type: Number, required: true, default: 0 },
+    exitSubmittedAt: { type: Date, default: null },
+    exitFilledQty: { type: Number, required: true, default: 0 },
+    manualReviewReason: { type: String, default: null },
   },
   { timestamps: true, collection: 'automation_positions' }
 );

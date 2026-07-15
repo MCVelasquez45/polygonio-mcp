@@ -36,6 +36,8 @@ export interface OrderIntentDocument extends Document {
     signalDirection: IntentDirection;
     closedBarTimestamp: string;
     intentType: IntentType;
+    /** Position/attempt scope for EXIT keys; null for ENTRY. */
+    idempotencyScope?: string | null;
   };
   brokerOrderId: string | null;
   rejectionReason: string | null;
@@ -80,6 +82,7 @@ const OrderIntentSchema = new Schema<OrderIntentDocument>(
       signalDirection: { type: String, required: true },
       closedBarTimestamp: { type: String, required: true },
       intentType: { type: String, required: true },
+      idempotencyScope: { type: String, default: null },
     },
     brokerOrderId: { type: String, default: null },
     rejectionReason: { type: String, default: null },

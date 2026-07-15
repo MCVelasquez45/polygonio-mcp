@@ -1,7 +1,8 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { memo, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import type { QuoteSnapshot, OptionContractDetail } from '../../types/market';
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { getBrokerAccount, submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
+import { getBrokerAccount } from '../../api/alpaca';
+import { submitManualPaperOrder } from '../../api/manualTrading';
 import { useLiveQuote } from '../../lib/liveMarketStore';
 
 type Props = {
@@ -12,7 +13,6 @@ type Props = {
   marketClosed?: boolean;
   afterHours?: boolean;
   nextOpen?: string | null;
-  autoSubmit?: boolean;
   onOrderSubmitted?: (ticker: string, side: string, qty: number, price: number) => void;
 };
 
@@ -90,7 +90,6 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   marketClosed,
   afterHours,
   nextOpen,
-  autoSubmit = false,
   onOrderSubmitted
 }: Props) {
   // Live + REST-fallback quotes both land in the shared store.
@@ -111,7 +110,6 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   const [tipsOpen, setTipsOpen] = useState(true);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
-  const autoSubmitAttemptedRef = useRef<string | null>(null);
 
   useEffect(() => {
     setQuantity(1);
@@ -247,73 +245,43 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
     };
   }
 
-  function mapOrderDraftToPayload(draft: OrderDraft): SubmitOptionsOrderPayload {
-    const trail = draft.prices.trail;
-    const orderClass: SubmitOptionsOrderPayload['order_class'] =
-      draft.orderClass === 'mleg' ? 'multi-leg' : 'simple';
-    return {
-      legs: draft.legs ?? [
-        {
-          symbol: draft.instrument,
-          qty: 1,
-          side: draft.side,
-          position_intent: draft.intent
-        }
-      ],
-      quantity: draft.qty,
-      time_in_force: draft.timeInForce,
-      order_type: draft.orderType,
-      order_class: orderClass,
-      limit_price: draft.prices.limit != null ? Number(draft.prices.limit.toFixed(2)) : undefined,
-      stop_price: draft.prices.stop != null ? Number(draft.prices.stop.toFixed(2)) : undefined,
-      trail_price:
-        trail && trail.type === 'amount' ? Number(trail.value.toFixed(2)) : undefined,
-      trail_percent:
-        trail && trail.type === 'percent' ? Number(trail.value.toFixed(2)) : undefined,
-      client_order_id: `mcp-${Date.now()}`
-    };
-  }
-
-  async function handleSubmit() {
+  // Explicit MANUAL submission ONLY. Never called from an effect, mount, quote
+  // update, or selection — solely from the confirmation dialog's dedicated
+  // button. Routes through the governed manual lifecycle (create → confirm →
+  // submit) behind the server-side execution gateway; the browser never holds
+  // execution authority and never calls the broker directly.
+  async function handleConfirmManualOrder() {
     const draft = buildOrderDraft();
     if (!draft) return;
     setSubmitting(true);
     setSubmissionResult(null);
     try {
-      const payload = mapOrderDraftToPayload(draft);
-      console.log('[CLIENT] submitting Alpaca options order', payload);
-      const result = await submitOptionOrder(payload);
-      setSubmissionResult({ status: 'success', message: 'Order submitted to Alpaca paper trading.' });
-      if (onOrderSubmitted && draft.instrument) {
-        onOrderSubmitted(draft.instrument, draft.side, draft.qty, draft.prices.limit || markPrice || 0);
+      const result = await submitManualPaperOrder({
+        optionSymbol: draft.instrument,
+        side: draft.side,
+        quantity: draft.qty,
+        orderType: draft.orderType,
+        limitPrice: draft.prices.limit != null ? Number(draft.prices.limit.toFixed(2)) : null,
+        timeInForce: draft.timeInForce,
+        positionIntent: draft.intent,
+        marketDataSource: 'massive'
+      });
+      if (result.outcome === 'SUBMITTED' || result.outcome === 'ALREADY_SUBMITTED') {
+        setSubmissionResult({ status: 'success', message: 'Manual paper order submitted to Alpaca paper trading.' });
+        if (onOrderSubmitted && draft.instrument) {
+          onOrderSubmitted(draft.instrument, draft.side, draft.qty, draft.prices.limit || markPrice || 0);
+        }
+      } else {
+        setSubmissionResult({ status: 'error', message: result.reason ?? 'Manual order was blocked by the execution gateway.' });
       }
       return result;
     } catch (error: any) {
-      const message = error?.response?.data?.message ?? error?.message ?? 'Failed to submit order';
+      const message = error?.response?.data?.message ?? error?.response?.data?.reason ?? error?.message ?? 'Failed to submit order';
       setSubmissionResult({ status: 'error', message });
     } finally {
       setSubmitting(false);
     }
   }
-
-  // Auto-submit logic
-  useEffect(() => {
-    if (!autoSubmit || !contract?.ticker || submitting || submissionResult) return;
-    if (autoSubmitAttemptedRef.current === contract.ticker) return;
-
-    // Check if we have everything we need to submit
-    if (canSubmit) {
-      console.log('[CLIENT] Auto-submitting order for', contract.ticker);
-      autoSubmitAttemptedRef.current = contract.ticker;
-      handleSubmit();
-    }
-  }, [autoSubmit, contract?.ticker, canSubmit, submitting, submissionResult]);
-
-  useEffect(() => {
-    if (contract?.ticker !== autoSubmitAttemptedRef.current) {
-      autoSubmitAttemptedRef.current = null;
-    }
-  }, [contract?.ticker]);
 
   return (
     <section className="bg-gray-950 border border-gray-900 rounded-2xl h-full flex flex-col">
@@ -702,11 +670,11 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
                   }`}
                 onClick={() => {
                   setReviewOpen(false);
-                  void handleSubmit();
+                  void handleConfirmManualOrder();
                 }}
                 disabled={!canSubmit}
               >
-                {submitting ? 'Submitting…' : 'Submit Order'}
+                {submitting ? 'Submitting…' : 'Submit Manual Paper Order'}
               </button>
             </div>
           </div>

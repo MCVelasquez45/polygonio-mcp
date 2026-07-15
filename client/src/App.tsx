@@ -71,7 +71,6 @@ const AI_CHART_ANALYSIS_ENABLED_KEY = 'market-copilot.aiChartAnalysisEnabled';
 const CHART_SESSION_MODE_KEY = 'market-copilot.chartSessionMode';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
-const AUTO_SUBMIT_ORDERS_KEY = 'market-copilot.autoSubmitOrders';
 const AUTO_SCANNER_ENABLED_KEY = 'market-copilot.autoScannerEnabled';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
@@ -489,7 +488,6 @@ function App() {
   );
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
-  const [autoSubmitOrders, setAutoSubmitOrders] = useState(() => readStoredBoolean(AUTO_SUBMIT_ORDERS_KEY, false));
   const [autoScannerEnabled, setAutoScannerEnabled] = useState(() => readStoredBoolean(AUTO_SCANNER_ENABLED_KEY, false));
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
   const contractSelectionAllowed = aiEnabled && aiContractSelectionEnabled;
@@ -722,7 +720,6 @@ function App() {
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(AUTO_CONTRACT_SELECTION_KEY, String(autoContractSelection));
-      window.localStorage.setItem(AUTO_SUBMIT_ORDERS_KEY, String(autoSubmitOrders));
       window.localStorage.setItem(AUTO_SCANNER_ENABLED_KEY, String(autoScannerEnabled));
     } catch {
       // ignore persistence failures
@@ -744,7 +741,7 @@ function App() {
   useEffect(() => {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
-  }, [autoContractSelection, autoSubmitOrders, autoScannerEnabled]);
+  }, [autoContractSelection, autoScannerEnabled]);
 
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
@@ -2588,7 +2585,6 @@ function App() {
           marketClosed={marketSessionMeta?.marketClosed}
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
-          autoSubmit={autoSubmitOrders}
           onOrderSubmitted={handleOrderSubmitted}
         />
       </div>
@@ -2820,22 +2816,15 @@ function App() {
               Autonomous Operations
             </h3>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
+              <div className="flex items-center justify-between gap-4 rounded-2xl border border-gray-700/40 bg-gray-800/30 px-4 py-3">
                 <span>
-                  <span className="block text-sm font-semibold text-amber-100">Auto submit orders</span>
-                  <span className="block text-xs text-amber-500/80">Automatically execute AI-selected contracts.</span>
+                  <span className="block text-sm font-semibold text-gray-200">Order execution</span>
+                  <span className="block text-xs text-gray-400">
+                    Research is read-only. Manual orders require explicit confirmation in the ticket.
+                    Autonomous execution runs only through the deterministic automation engine.
+                  </span>
                 </span>
-                <input
-                  type="checkbox"
-                  checked={autoSubmitOrders}
-                  onChange={event => setAutoSubmitOrders(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
-                />
-              </label>
+              </div>
               <label
                 className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}

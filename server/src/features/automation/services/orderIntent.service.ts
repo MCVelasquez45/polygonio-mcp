@@ -47,17 +47,26 @@ function normalizeBarTimestamp(value: string | number | Date): string {
   return Number.isNaN(parsed) ? String(value) : new Date(parsed).toISOString();
 }
 
-/** Deterministic idempotency key from exactly the six specified inputs. */
+/**
+ * Deterministic idempotency key from the canonical inputs. ENTRY intents key on
+ * exactly the six signal-identifying fields (unchanged, backward compatible).
+ * When `idempotencyScope` is present (EXIT intents) it is appended, so an exit
+ * is keyed per-position-per-attempt rather than by a timestamp that two
+ * same-underlying positions could share.
+ */
 export function buildIdempotencyKey(input: IdempotencyKeyInput): string {
-  const canonical = [
+  const parts = [
     input.automationSessionId,
     input.strategyVersionId,
     input.underlying.toUpperCase(),
     input.signalDirection,
     normalizeBarTimestamp(input.closedBarTimestamp),
     input.intentType,
-  ].join('|');
-  return createHash('sha256').update(canonical).digest('hex');
+  ];
+  if (input.idempotencyScope != null && input.idempotencyScope !== '') {
+    parts.push(input.idempotencyScope);
+  }
+  return createHash('sha256').update(parts.join('|')).digest('hex');
 }
 
 export function buildClientOrderId(idempotencyKey: string): string {
@@ -106,6 +115,7 @@ export async function createOrderIntent(input: CreateOrderIntentInput): Promise<
           signalDirection: input.signalDirection,
           closedBarTimestamp,
           intentType: input.intentType,
+          idempotencyScope: input.idempotencyScope ?? null,
         },
         brokerOrderId: null,
         rejectionReason: null,

@@ -47,6 +47,14 @@ export type IdempotencyKeyInput = {
   signalDirection: IntentDirection;
   closedBarTimestamp: string | number | Date;
   intentType: IntentType;
+  /**
+   * Optional discriminator that scopes the idempotency key beyond the six
+   * canonical fields. ENTRY intents omit it (keys unchanged — backward
+   * compatible). EXIT intents pass a position-and-attempt scope so each exit
+   * order for a position maps to exactly one deterministic broker identity and
+   * a bounded retry produces a distinct, still-idempotent client_order_id.
+   */
+  idempotencyScope?: string | null;
 };
 
 export type CreateOrderIntentInput = IdempotencyKeyInput & {
