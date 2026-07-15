@@ -23,6 +23,13 @@ import { getApiBaseUrl } from '../../api/http';
 import { apiClient, futuresApi } from '../../api';
 import type { AiSuggestion } from '../../types/futures';
 
+/** Default trading method from a strategy type (mirrors the creation wizard). */
+function inferTradingMethod(type: string | undefined): string {
+  if (type === 'futures') return 'futures';
+  if (type === '0dte' || type === 'spreads') return 'options';
+  return 'equities';
+}
+
 type Props = {
   apiBase?: string;
   onTickerSelect?: (ticker: string) => void;

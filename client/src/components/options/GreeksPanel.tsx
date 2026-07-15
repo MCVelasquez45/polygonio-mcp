@@ -217,7 +217,7 @@ export const GreeksPanel = memo(function GreeksPanel({
       breakevenPct: breakevenPercent ?? null,
       contract: {
         symbol: contractSymbol,
-        type: contractType,
+        type: (contractType === 'put' ? 'put' : 'call') as 'call' | 'put',
         strike: resolvedStrike ?? null,
         expiration: resolvedExpiration ?? null,
         price: resolvedPremium ?? null

@@ -324,7 +324,7 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
     id: string,
     rules: string[],
     setter: (value: string[] | ((prev: string[]) => string[])) => void
-  ) => (
+  ): JSX.Element => (
     <div className="sed-section">
       <div className="sed-section-header" onClick={() => toggleSection(id)}>
         <span className="sed-section-arrow">{collapsed[id] ? '\u25B8' : '\u25BE'}</span>
@@ -572,7 +572,7 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
         {renderRulesSection('Risk Management', 'risk', riskRules, setRiskRules)}
 
         {/* Futures Config (read-only display if present) */}
-        {strategyType === 'futures' && strategy.futuresConfig && (
+        {strategyType === 'futures' && Boolean(strategy.futuresConfig) && (
           <div className="sed-section">
             <div className="sed-section-header" onClick={() => toggleSection('futures')}>
               <span className="sed-section-arrow">{collapsed.futures ? '\u25B8' : '\u25BE'}</span>

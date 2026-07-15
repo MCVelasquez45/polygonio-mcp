@@ -523,7 +523,11 @@ function ChartCanvas({
   );
 
   useEffect(() => {
-    const candles = candleSeriesRef.current;
+    // lightweight-charts v5 removed ISeriesApi.setMarkers (moved to a plugin);
+    // guard at runtime and access via a narrow cast so older builds still render.
+    const candles = candleSeriesRef.current as
+      | (typeof candleSeriesRef.current & { setMarkers?: (m: unknown[]) => void })
+      | null;
     if (!candles || typeof candles.setMarkers !== 'function') return;
     candles.setMarkers(markers || []);
   }, [markers]);

@@ -322,7 +322,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           return [symbol, insight] as const;
         } catch (error) {
           if (isAbortError(error)) return null;
-          if (error?.response?.status === 429) {
+          if ((error as { response?: { status?: number } })?.response?.status === 429) {
             rateLimited = true;
             return null;
           }
