@@ -77,6 +77,17 @@ test('automation universe provider', async (t) => {
     assert.deepEqual(reloaded.symbols, [], 'past TTL the provider reloads and reflects the change');
   });
 
+  await t.test('Sprint 2F eligibility fields pass through the universe item', async () => {
+    await seed('SPY', { minimumOpenInterest: 750, minimumVolume: 300, maxSpreadPercent: 6, minDTE: 5, maxDTE: 30 });
+    mods.resetAutomationUniverseProviderForTests();
+    const u = await mods.getAutomationUniverse(NOW);
+    assert.equal(u.items.SPY.minimumOpenInterest, 750);
+    assert.equal(u.items.SPY.minimumVolume, 300);
+    assert.equal(u.items.SPY.maxSpreadPercent, 6);
+    assert.equal(u.items.SPY.minDTE, 5);
+    assert.equal(u.items.SPY.maxDTE, 30);
+  });
+
   await t.test('write-invalidation: a service write is visible on the next read (no restart)', async () => {
     await seed('SPY');
     const before = await mods.getAutomationUniverse(NOW);

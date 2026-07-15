@@ -133,6 +133,19 @@ let activeRequests = 0;
 let nextAvailableTimestamp = Date.now();
 let scheduledDrain: NodeJS.Timeout | null = null;
 
+/**
+ * Sprint 2F — read-only observability into the SINGLE shared Massive request
+ * manager (queue + inflight dedup + response cache). Used by /api/system/health.
+ */
+export function getMassiveRequestStats() {
+  return {
+    queueDepth: requestQueue.length,
+    activeRequests,
+    inflightDeduped: inflightRequests.size,
+    responseCacheEntries: responseCache.size,
+  };
+}
+
 /** Pending request counts by priority (for the market-data health endpoint). */
 export function getPendingRequestsByPriority(): Record<string, number> {
   const nameByValue = new Map<number, string>(

@@ -46,17 +46,26 @@ export const WATCHLIST_AUTOMATION_STATUSES = [
 export type WatchlistAutomationStatus = (typeof WATCHLIST_AUTOMATION_STATUSES)[number];
 
 export interface WatchlistItemDocument extends Document {
+  /** The ticker. `symbol` IS the canonical ticker; API responses also expose `ticker`. */
   symbol: string;
   enabled: boolean;
   automationEnabled: boolean;
   priority: number;
   strategy: WatchlistStrategy;
+  /** Sprint 2F: strategies this symbol may run. Active if it includes the wired strategy. */
+  allowedStrategies: WatchlistStrategy[];
   minConfidence: number;
   maxPositionSize: number;
   /** Percent (e.g. 10 = 10%). Converted to a fraction for the contract filter. */
   maxSpreadPercent: number;
   maxDTE: number;
   minDTE: number;
+  /** Sprint 2F additive eligibility controls (null → fall back to the engine default). */
+  minimumOpenInterest: number | null;
+  minimumVolume: number | null;
+  /** Advisory (recorded; not wired into the deterministic selector). */
+  maximumIV: number | null;
+  riskProfile: string;
   notes?: string;
   // --- UI telemetry (set by the evaluator; never influences a decision) ---
   automationStatus: WatchlistAutomationStatus;
@@ -75,11 +84,16 @@ const WatchlistItemSchema = new Schema<WatchlistItemDocument>(
     automationEnabled: { type: Boolean, required: true, default: false },
     priority: { type: Number, required: true, default: 100 },
     strategy: { type: String, enum: WATCHLIST_STRATEGIES, required: true, default: ACTIVE_WATCHLIST_STRATEGY },
+    allowedStrategies: { type: [String], enum: WATCHLIST_STRATEGIES, required: true, default: [ACTIVE_WATCHLIST_STRATEGY] },
     minConfidence: { type: Number, required: true, default: 0.5 },
     maxPositionSize: { type: Number, required: true, default: 1 },
     maxSpreadPercent: { type: Number, required: true, default: 10 },
     maxDTE: { type: Number, required: true, default: 21 },
     minDTE: { type: Number, required: true, default: 7 },
+    minimumOpenInterest: { type: Number, default: null },
+    minimumVolume: { type: Number, default: null },
+    maximumIV: { type: Number, default: null },
+    riskProfile: { type: String, required: true, default: 'balanced' },
     notes: { type: String, default: undefined },
     automationStatus: { type: String, enum: WATCHLIST_AUTOMATION_STATUSES, required: true, default: 'DISABLED' },
     lastEvaluationAt: { type: Date, default: null },

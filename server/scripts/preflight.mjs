@@ -128,14 +128,22 @@ async function main() {
     }
   }
 
-  // 6. Live Massive options entitlement + chain fetch.
+  // 6. Live Massive options entitlement + chain fetch — probe the FIRST
+  //    watchlist automation symbol (no hardcoded ticker).
   try {
-    const md = await dist('features/automation/services/automationMarketData.service.js');
-    const cfgMod = await dist('features/automation/automation.config.js');
-    const chain = await md.fetchOptionChain(cfgMod.getStrategyConfig('SPY'), 'BULLISH', null, Date.now());
-    const ok = chain && Array.isArray(chain.contracts);
-    add('massiveOptions', ok ? 'pass' : 'fail',
-      ok ? `SPY chain fetched (contracts=${chain.contracts.length}, underlyingPrice=${chain.underlyingPrice})` : 'no chain');
+    const provider = await dist('features/watchlist/automationUniverseProvider.service.js');
+    const universe = await provider.getAutomationUniverse(Date.now());
+    const probe = universe.symbols[0];
+    if (!probe) {
+      add('massiveOptions', 'warn', 'no watchlist symbol to probe (empty universe)');
+    } else {
+      const md = await dist('features/automation/services/automationMarketData.service.js');
+      const cfgMod = await dist('features/automation/automation.config.js');
+      const chain = await md.fetchOptionChain(cfgMod.getStrategyConfig(probe), 'BULLISH', null, Date.now());
+      const ok = chain && Array.isArray(chain.contracts);
+      add('massiveOptions', ok ? 'pass' : 'fail',
+        ok ? `${probe} chain fetched (contracts=${chain.contracts.length}, underlyingPrice=${chain.underlyingPrice})` : 'no chain');
+    }
   } catch (e) {
     add('massiveOptions', 'fail', String(e?.message ?? e));
   }

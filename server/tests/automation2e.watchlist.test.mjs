@@ -182,6 +182,15 @@ test('watchlist-driven automation universe', async (t) => {
     assert.deepEqual(refreshed.symbols, [], 'after the TTL the external change is reflected');
   });
 
+  await t.test('watchlist minimumOpenInterest gate blocks a low-OI contract (no intent)', async () => {
+    // Fixture contracts have OI 1000; require 5000 → no contract passes selection.
+    await seed('SPY', { priority: 10, minimumOpenInterest: 5000 });
+    await mods.processOptionsFlowTick(sessionId, mock, chainsFixture({ SPY: baselineChains({ symbol: 'SPY', now: NOW }) }, NOW));
+    const result = await mods.processOptionsFlowTick(sessionId, mock, chainsFixture({ SPY: currentChains({ symbol: 'SPY', now: NEXT, call: 1060, put: 1005 }) }, NEXT));
+    assert.equal(result.orderIntent, null, 'per-symbol minimumOpenInterest rejected the contract');
+    assert.notEqual(result.outcomeLabel, 'INTENT_CREATED');
+  });
+
   await t.test('INTEGRATION: scheduler → watchlist universe → OPTIONS_NATIVE_FLOW → approved intent, zero submissions', async () => {
     await seed('SPY', { priority: 5 });
     const evalW1 = async (sid, adapter) => {

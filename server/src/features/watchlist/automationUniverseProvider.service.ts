@@ -27,6 +27,8 @@ export type WatchlistUniverseSymbol = {
   maxSpreadPercent: number;
   minDTE: number;
   maxDTE: number;
+  minimumOpenInterest: number | null;
+  minimumVolume: number | null;
 };
 
 export type AutomationUniverse = {
@@ -94,6 +96,8 @@ export async function refreshAutomationUniverse(now: number = Date.now()): Promi
 
   for (const doc of docs) {
     // The architecture supports many strategies; only the active one is wired.
+    // The primary `strategy` field is the gate; `allowedStrategies` is recorded
+    // metadata for future multi-strategy routing (not yet a gate).
     if (doc.strategy !== ACTIVE_WATCHLIST_STRATEGY) {
       skipped.push({ symbol: doc.symbol, reason: 'WATCHLIST_STRATEGY_INACTIVE' });
       logAutomationEvent({
@@ -115,6 +119,8 @@ export async function refreshAutomationUniverse(now: number = Date.now()): Promi
       maxSpreadPercent: doc.maxSpreadPercent,
       minDTE: doc.minDTE,
       maxDTE: doc.maxDTE,
+      minimumOpenInterest: doc.minimumOpenInterest ?? null,
+      minimumVolume: doc.minimumVolume ?? null,
     };
   }
 

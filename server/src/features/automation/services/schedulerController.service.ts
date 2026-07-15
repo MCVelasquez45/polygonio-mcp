@@ -266,7 +266,7 @@ async function evaluateSessionOnce(
       service: 'scheduler',
       event: 'APPROVED_EVALUATION_REQUEST',
       automationSessionId: sessionId,
-      payload: { windowKey, outcome, approvedIntentId, note: 'Sprint 1 stops here — no broker submission' },
+      payload: { windowKey, outcome, approvedIntentId, note: 'submission gated by AUTOMATION_SUBMIT_APPROVED_INTENTS' },
     });
     return { automationSessionId: sessionId, evaluated: true, skippedReason: null, approvedIntentId, windowKey, submission: null };
   } catch (error: any) {

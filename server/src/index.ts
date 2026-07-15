@@ -19,6 +19,7 @@ import { strategyRouter } from './features/strategy/strategy.routes';
 import { automationRouter } from './features/automation/automation.routes';
 import { automationOpsRouter } from './features/automation/automationOps.routes';
 import { watchlistRouter } from './features/watchlist';
+import { systemHealthRouter } from './features/system/systemHealth.routes';
 import {
   startAutomationScheduler,
   stopAutomationScheduler,
@@ -89,6 +90,7 @@ app.use('/api/strategy', strategyRouter);
 app.use('/api/automation', automationRouter);
 app.use('/api/automation', automationOpsRouter);
 app.use('/api/watchlist', watchlistRouter);
+app.use('/api/system', systemHealthRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
 

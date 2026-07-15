@@ -433,7 +433,7 @@ export async function processClosedBar(
         created,
         quantity: risk.sizing.outputs.quantity,
         limitPrice: selectionResult.selected.ask,
-        note: 'execution deferred to Phase 2C — no broker submission',
+        note: 'legacy equity-momentum path — inert under OPTIONS_NATIVE_FLOW',
       },
     });
   }

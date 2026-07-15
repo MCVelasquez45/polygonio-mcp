@@ -26,11 +26,16 @@ export type WatchlistUpsertInput = {
   automationEnabled?: boolean;
   priority?: number;
   strategy?: WatchlistStrategy;
+  allowedStrategies?: WatchlistStrategy[];
   minConfidence?: number;
   maxPositionSize?: number;
   maxSpreadPercent?: number;
   maxDTE?: number;
   minDTE?: number;
+  minimumOpenInterest?: number;
+  minimumVolume?: number;
+  maximumIV?: number;
+  riskProfile?: string;
   notes?: string;
 };
 
@@ -62,12 +67,22 @@ function validatePatch(input: Partial<WatchlistUpsertInput>): Record<string, unk
   num('maxSpreadPercent', 0, 100);
   num('maxDTE', 0, 1_000);
   num('minDTE', 0, 1_000);
+  num('minimumOpenInterest', 0, 100_000_000);
+  num('minimumVolume', 0, 100_000_000);
+  num('maximumIV', 0, 100);
   if (input.strategy !== undefined) {
     if (!WATCHLIST_STRATEGIES.includes(input.strategy)) {
       throw new WatchlistValidationError(`Unknown strategy: ${input.strategy}`);
     }
     patch.strategy = input.strategy;
   }
+  if (input.allowedStrategies !== undefined) {
+    if (!Array.isArray(input.allowedStrategies) || input.allowedStrategies.some((s) => !WATCHLIST_STRATEGIES.includes(s))) {
+      throw new WatchlistValidationError('allowedStrategies must be an array of known strategies');
+    }
+    patch.allowedStrategies = input.allowedStrategies;
+  }
+  if (input.riskProfile !== undefined) patch.riskProfile = String(input.riskProfile).slice(0, 40);
   if (input.notes !== undefined) patch.notes = String(input.notes).slice(0, 500);
   if (
     input.minDTE !== undefined &&
@@ -138,6 +153,8 @@ export async function listWatchlistWithLiveStatus(): Promise<WatchlistItemView[]
     }
     return {
       ...item,
+      symbol: doc.symbol,
+      ticker: doc.symbol, // Sprint 2F: canonical ticker alias (symbol IS the ticker)
       automationStatus,
       position: pos
         ? {

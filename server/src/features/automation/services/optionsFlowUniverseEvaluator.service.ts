@@ -123,6 +123,8 @@ function effectiveConfigFor(symbol: string, item?: WatchlistUniverseSymbol): Aut
       dteMin: item.minDTE,
       dteMax: item.maxDTE,
       maxSpreadPct: item.maxSpreadPercent / 100,
+      minOpenInterest: item.minimumOpenInterest ?? base.contract.minOpenInterest,
+      minDailyVolume: item.minimumVolume ?? base.contract.minDailyVolume,
     },
   };
 }

@@ -5,8 +5,14 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
 
-const symbols = process.argv.slice(2).map((s) => s.toUpperCase());
-const targets = symbols.length ? symbols : ['SPY'];
+// Sprint 2F — NO hardcoded/demo default. The operator must pass explicit
+// symbols; the watchlist only ever contains symbols intentionally added.
+const targets = process.argv.slice(2).map((s) => s.toUpperCase());
+if (targets.length === 0) {
+  console.error('usage: node scripts/seed-launch-watchlist.mjs <SYMBOL> [SYMBOL ...]');
+  console.error('  (no default symbol — pass the liquid symbol(s) you intend to trade)');
+  process.exit(2);
+}
 
 const uri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/market-copilot';
 await mongoose.connect(uri, { dbName: 'market-copilot', serverSelectionTimeoutMS: 8000 });
