@@ -8,7 +8,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { analyzeRouter } from './features/assistant';
 import { chatRouter, conversationsRouter } from './features/conversations';
 import { marketRouter } from './features/market';
-import { brokerRouter } from './features/broker';
+import { brokerRouter, manualTradingRouter } from './features/broker';
 import { analysisRouter } from './features/analysis';
 import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
@@ -17,10 +17,16 @@ import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { strategyRouter } from './features/strategy/strategy.routes';
 import { automationRouter } from './features/automation/automation.routes';
+import { automationOpsRouter } from './features/automation/automationOps.routes';
+import { watchlistRouter } from './features/watchlist';
 import {
   startAutomationScheduler,
   stopAutomationScheduler,
 } from './features/automation/services/schedulerController.service';
+import {
+  startMonitorScheduler,
+  stopMonitorScheduler,
+} from './features/automation/services/monitorController.service';
 import {
   startOrderReconciliationWorker,
   stopOrderReconciliationWorker,
@@ -71,6 +77,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/broker', brokerRouter);
+app.use('/api/trading/manual', manualTradingRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
@@ -80,6 +87,8 @@ app.use('/api/lab/futures', futuresRouter);
 app.use('/api/engine/futures', futuresRouter);
 app.use('/api/strategy', strategyRouter);
 app.use('/api/automation', automationRouter);
+app.use('/api/automation', automationOpsRouter);
+app.use('/api/watchlist', watchlistRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
 
@@ -159,19 +168,22 @@ async function start() {
   // server is up so a broker/Mongo problem never blocks unrelated features.
   // When Mongo is down this resolves to state UNAVAILABLE without throwing.
   //
-  // Phase 2C Sprint 1: the evaluation scheduler starts ONLY after init resolves
-  // ready — i.e. after startup reconciliation succeeded (reconciliation before
-  // activation). It evaluates to the Approved Evaluation Request and never
-  // submits broker orders in this sprint.
+  // The two schedulers start ONLY after init resolves ready — i.e. after
+  // startup reconciliation succeeded (reconciliation before activation).
+  //   • evaluation scheduler → entries (evaluate → approve → submit)
+  //   • monitoring scheduler → everything after a fill (monitor, stop-loss,
+  //     profit-target, cancel unfilled entries, reconcile EXITING, flatten EOD)
+  // Both take independent single-owner DB leases; together they make the full
+  // paper-trading lifecycle autonomous.
   initializeAutomation()
     .then(result => {
       if (result.ready) {
-        // Sprint 3: keep broker truth current via the REST reconciliation worker
-        // (also the fallback when a trade-update stream is unavailable). Started
-        // alongside the evaluation scheduler after startup reconciliation.
+        // Keep broker truth current via the REST reconciliation worker (also the
+        // fallback when a trade-update stream is unavailable).
         const adapter = getAutomationRuntime().adapter ?? undefined;
         if (adapter) startOrderReconciliationWorker(adapter);
         startAutomationScheduler();
+        startMonitorScheduler();
       }
     })
     .catch(error => {
@@ -185,9 +197,12 @@ let shuttingDown = false;
 async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[SERVER] ${signal} received — stopping automation scheduler`);
+  console.log(`[SERVER] ${signal} received — stopping automation schedulers`);
   stopOrderReconciliationWorker();
-  await stopAutomationScheduler(signal).catch(() => undefined);
+  await Promise.all([
+    stopAutomationScheduler(signal).catch(() => undefined),
+    stopMonitorScheduler(signal).catch(() => undefined),
+  ]);
   process.exit(0);
 }
 process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));

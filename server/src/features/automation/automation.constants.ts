@@ -9,6 +9,8 @@ export const AUTOMATION_COLLECTIONS = {
   orderIntents: 'automation_order_intents',
   brokerOrders: 'automation_broker_orders',
   events: 'automation_events',
+  // Sprint 2E — the watchlist IS the authoritative automation universe.
+  watchlist: 'automation_watchlist',
 } as const;
 
 // Environment keys (documented in docs/automation/phase-2a-safety-foundation.md).

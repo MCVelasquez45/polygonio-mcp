@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import mongoose from 'mongoose';
-import { getMarketHoursConfig, getSchedulerConfig, getSubmissionEnabled } from '../automation.config';
+import { getMarketHoursConfig, getSchedulerConfig, getSignalMode, getSubmissionEnabled } from '../automation.config';
 import {
   acquireSchedulerLease,
   releaseSchedulerLease,
@@ -69,8 +69,19 @@ async function defaultEvaluateSession(
   sessionId: string,
   adapter: PaperBrokerAdapter
 ): Promise<{ approvedIntentId: string | null; outcome: string }> {
-  // The universe processor produces an APPROVED_AWAITING_EXECUTION intent and
-  // STOPS. It never imports submitIntent, so no broker order is created here.
+  // The active signal engine is selected by configuration, never hardcoded.
+  // Both evaluators produce an APPROVED_AWAITING_EXECUTION intent (or NO_TRADE)
+  // and STOP — neither imports submitIntent, so no broker order is created here.
+  if (getSignalMode() === 'OPTIONS_NATIVE_FLOW') {
+    // Authorized options-native flow: baseline snapshot → completed window →
+    // deterministic direction → contract → risk → approved intent. This is the
+    // launch-authorized path under the Options Advanced entitlement.
+    const { processOptionsFlowTick } = await import('./optionsFlowUniverseEvaluator.service');
+    const { orderIntent, outcomeLabel } = await processOptionsFlowTick(sessionId, adapter);
+    return { approvedIntentId: orderIntent ? String(orderIntent._id) : null, outcome: outcomeLabel };
+  }
+  // EQUITY_MOMENTUM: the underlying-bar strategy (unauthorized under the current
+  // plan; warned at startup, retained for entitlements that include stock intraday).
   const { processUniverseTick } = await import('./universeTickProcessor.service');
   const { evaluation, orderIntent } = await processUniverseTick(sessionId, adapter);
   return { approvedIntentId: orderIntent ? String(orderIntent._id) : null, outcome: evaluation.outcome };
@@ -322,7 +333,21 @@ export function startAutomationScheduler(adapter?: PaperBrokerAdapter): boolean 
     runEvaluationTick({ adapter: brokerAdapter, ownerId: controller.ownerId })
       .then(result => {
         controller.lastError = null;
-        void result;
+        // Every tick emits an evaluation heartbeat — visible even when the tick
+        // no-ops (market closed, lease not owned), so the evaluation loop's
+        // liveness is observable at all hours (mirrors MONITOR_HEARTBEAT).
+        logAutomationEvent({
+          service: 'scheduler',
+          event: 'EVALUATION_HEARTBEAT',
+          payload: {
+            ranAt: result.ranAt,
+            ownsLease: result.ownsLease,
+            phase: result.marketSession?.phase ?? null,
+            skippedReason: result.skippedReason,
+            evaluated: result.evaluated,
+            submitted: result.submitted,
+          },
+        });
       })
       .catch(error => {
         controller.lastError = String(error?.message ?? error);

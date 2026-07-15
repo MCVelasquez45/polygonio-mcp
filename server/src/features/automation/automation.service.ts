@@ -94,6 +94,40 @@ export async function reconcileNow(): Promise<ReconciliationReport> {
   return runStartupReconciliation(adapter);
 }
 
+/**
+ * Sprint 2E launch — promote a session to the runnable READY state and reconcile
+ * it to CLEAN. A session is created as CREATED/PENDING; the evaluation scheduler
+ * only runs READY + CLEAN sessions, so this is the operator's "go live" action
+ * for a session. Reconciliation (which processes READY/PAUSED sessions) sets the
+ * reconciliation status; if it finds an orphan it pauses the session instead.
+ * Idempotent: an already-READY session is simply re-reconciled.
+ */
+export async function activateSession(id: string) {
+  assertMongo();
+  const session = await AutomationSessionModel.findById(id);
+  if (!session) throw new NotFoundError(`Automation session ${id}`);
+  if (session.status === 'CREATED' || session.status === 'PAUSED') {
+    session.status = 'READY';
+    session.healthStatus = 'HEALTHY';
+    session.reconciliationStatus = 'PENDING';
+    session.pauseReason = null;
+    if (!session.startedAt) session.startedAt = new Date();
+    await session.save();
+    logAutomationEvent({
+      service: 'session',
+      event: 'SESSION_ACTIVATED',
+      automationSessionId: String(session._id),
+      payload: { status: session.status },
+    });
+  }
+  // Reconcile against broker truth → CLEAN (or PAUSED if an orphan is found).
+  const runtime = getAutomationRuntime();
+  const adapter = runtime.adapter ?? resolveBrokerAdapter();
+  await runStartupReconciliation(adapter).catch(() => undefined);
+  const reloaded = await AutomationSessionModel.findById(id);
+  return reloaded ?? session;
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2B: decision-pipeline reads + guarded evaluate-bar
 // ---------------------------------------------------------------------------

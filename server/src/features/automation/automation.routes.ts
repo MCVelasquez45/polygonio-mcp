@@ -11,6 +11,7 @@ import {
   getSessionUniverseEvaluations,
   getSessions,
   getUniverse,
+  postActivateSession,
   postEvaluateBar,
   postEvaluateUniverse,
   postReconcile,
@@ -27,6 +28,7 @@ automationRouter.get('/health', getHealth);
 automationRouter.get('/scheduler', getSchedulerStatus);
 automationRouter.post('/reconcile', postReconcile);
 automationRouter.post('/sessions', postSession);
+automationRouter.post('/sessions/:id/activate', postActivateSession);
 automationRouter.get('/sessions', getSessions);
 automationRouter.get('/sessions/:id', getSessionById);
 automationRouter.get('/sessions/:id/events', getSessionEvents);

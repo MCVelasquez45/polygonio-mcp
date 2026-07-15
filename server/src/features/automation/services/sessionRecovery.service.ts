@@ -74,6 +74,8 @@ export async function ensureAutomationIndexes(): Promise<void> {
     { UniverseEvaluationModel },
     { AutomationPositionModel },
     { SchedulerLeaseModel },
+    { OptionsFlowSnapshotModel },
+    { WatchlistItemModel },
   ] = await Promise.all([
     import('../models/tradeCandidate.model'),
     import('../models/contractSelection.model'),
@@ -81,6 +83,8 @@ export async function ensureAutomationIndexes(): Promise<void> {
     import('../models/universeEvaluation.model'),
     import('../models/automationPosition.model'),
     import('../models/schedulerLease.model'),
+    import('../models/optionsFlowSnapshot.model'),
+    import('../../watchlist/watchlist.model'),
   ]);
   await Promise.all(
     [
@@ -91,6 +95,8 @@ export async function ensureAutomationIndexes(): Promise<void> {
       UniverseEvaluationModel,
       AutomationPositionModel,
       SchedulerLeaseModel,
+      OptionsFlowSnapshotModel,
+      WatchlistItemModel,
     ].map(model => model.init())
   );
 }

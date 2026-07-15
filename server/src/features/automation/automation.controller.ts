@@ -79,6 +79,14 @@ export async function postSession(req: Request, res: Response, next: NextFunctio
   }
 }
 
+export async function postActivateSession(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await automationService.activateSession(req.params.id));
+  } catch (error) {
+    handleError(error, res, next);
+  }
+}
+
 export async function getSessions(req: Request, res: Response, next: NextFunction) {
   try {
     const limit = Number(req.query.limit ?? 50);

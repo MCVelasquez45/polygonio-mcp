@@ -267,6 +267,18 @@ export type ExitPolicyConfig = {
   trailingEnabled: boolean;
   /** Quote staleness beyond this blocks new entries + raises a warning (ms). */
   monitorStaleQuoteMs: number;
+  /**
+   * Max exit orders submitted for one position before escalating to
+   * MANUAL_REVIEW. Bounds the retry loop so a persistently-failing exit is
+   * handed to an operator rather than retried forever.
+   */
+  maxExitRetries: number;
+  /**
+   * Max time a position may remain in EXITING (from the last exit submission)
+   * before it is escalated to MANUAL_REVIEW. Guarantees EXITING is never a
+   * permanent state.
+   */
+  exitTimeoutMs: number;
 };
 
 export function getExitPolicyConfig(): ExitPolicyConfig {
@@ -275,6 +287,8 @@ export function getExitPolicyConfig(): ExitPolicyConfig {
     profitTargetPct: envNumber('AUTOMATION_PROFIT_TARGET_PCT', 0.3),
     trailingEnabled: envBool('AUTOMATION_TRAILING_ENABLED', false),
     monitorStaleQuoteMs: envNumber('AUTOMATION_MONITOR_STALE_QUOTE_MS', 2 * 60_000),
+    maxExitRetries: envNumber('AUTOMATION_MAX_EXIT_RETRIES', 3),
+    exitTimeoutMs: envNumber('AUTOMATION_EXIT_TIMEOUT_MS', 5 * 60_000),
   };
 }
 
@@ -316,6 +330,18 @@ export function validateAutomationConfig(): AutomationConfigValidation {
   if (subscriptionProfile !== 'options-advanced') {
     warnings.push(`MASSIVE_SUBSCRIPTION_PROFILE=${subscriptionProfile} — expected options-advanced`);
   }
+  // Legacy-universe isolation (Sprint 2E): the watchlist is the authoritative
+  // automation universe. A stale env symbol list is IGNORED by the active
+  // OPTIONS_NATIVE_FLOW path; warn loudly so the operator removes it.
+  if (
+    signalMode === 'OPTIONS_NATIVE_FLOW' &&
+    (process.env.AUTOMATION_UNDERLYINGS?.trim() || process.env.AUTOMATION_UNDERLYING?.trim())
+  ) {
+    warnings.push(
+      'AUTOMATION_UNDERLYINGS/AUTOMATION_UNDERLYING are set but IGNORED under OPTIONS_NATIVE_FLOW — ' +
+        'the watchlist is the authoritative automation universe. Remove them to avoid confusion.'
+    );
+  }
 
   const hours = getMarketHoursConfig();
   // Ordering invariant: final-entry ≥ cancel-entries ≥ flatten (minutes before close).
@@ -332,6 +358,22 @@ export function validateAutomationConfig(): AutomationConfigValidation {
   const exit = getExitPolicyConfig();
   if (!(exit.stopLossPct > 0)) errors.push('AUTOMATION_STOP_LOSS_PCT must be > 0');
   if (!(exit.profitTargetPct > 0)) errors.push('AUTOMATION_PROFIT_TARGET_PCT must be > 0');
+  if (!(exit.maxExitRetries >= 1)) errors.push('AUTOMATION_MAX_EXIT_RETRIES must be ≥ 1');
+  if (!(exit.exitTimeoutMs > 0)) errors.push('AUTOMATION_EXIT_TIMEOUT_MS must be > 0');
+
+  // Single-position architecture guard. Several invariants (the risk-engine
+  // concurrency cap, the position-scoped exit identity, and the SUBMITTED-intent
+  // open-position count) are proven only for exactly one concurrent autonomous
+  // position. Refuse to boot with an unsupported value rather than expose
+  // scalability the lifecycle has not been validated for.
+  const risk = getStrategyConfig().risk;
+  if (!(risk.maxConcurrentPositions === 1)) {
+    errors.push(
+      `AUTOMATION_MAX_CONCURRENT_POSITIONS=${risk.maxConcurrentPositions} is not supported — the ` +
+        'autonomous lifecycle is validated for exactly 1 concurrent position; set it to 1 ' +
+        '(multi-position support is a future, explicitly-designed sprint)'
+    );
+  }
 
   const exec = getExecutionConfig();
   if (!(exec.entryOrderTimeoutSeconds > 0)) errors.push('AUTOMATION_ENTRY_ORDER_TIMEOUT_SECONDS must be > 0');
@@ -473,6 +515,8 @@ export const REASON = {
   OPTIONS_FLOW_BALANCED: 'OPTIONS_FLOW_BALANCED',
   OPTIONS_FLOW_BELOW_SCORE: 'OPTIONS_FLOW_BELOW_SCORE',
   OPTIONS_DATA_UNAVAILABLE: 'OPTIONS_DATA_UNAVAILABLE',
+  /** First observation window persisted a baseline; no trade until the next. */
+  OPTIONS_BASELINE_INITIALIZED: 'OPTIONS_BASELINE_INITIALIZED',
   // market-hours / lifecycle (Phase 2C)
   MARKET_SESSION_CLOSED: 'MARKET_SESSION_CLOSED',
   AFTER_FINAL_ENTRY_CUTOFF: 'AFTER_FINAL_ENTRY_CUTOFF',
@@ -483,9 +527,18 @@ export const REASON = {
   EXIT_ALREADY_IN_PROGRESS: 'EXIT_ALREADY_IN_PROGRESS',
   MONITOR_QUOTE_STALE: 'MONITOR_QUOTE_STALE',
   POSITION_NOT_CONFIRMED_CLOSED: 'POSITION_NOT_CONFIRMED_CLOSED',
+  // exit lifecycle recovery (Phase 2C finalization)
+  EXIT_RETRY_SCHEDULED: 'EXIT_RETRY_SCHEDULED',
+  EXIT_TIMEOUT_ESCALATED: 'EXIT_TIMEOUT_ESCALATED',
+  EXIT_RETRIES_EXHAUSTED: 'EXIT_RETRIES_EXHAUSTED',
+  EXIT_PARTIAL_TERMINAL: 'EXIT_PARTIAL_TERMINAL',
+  EXIT_BROKER_UNREACHABLE: 'EXIT_BROKER_UNREACHABLE',
   // universe (Phase 2.6)
   UNIVERSE_NOT_CONFIGURED: 'UNIVERSE_NOT_CONFIGURED',
   UNIVERSE_SYMBOL_INVALID: 'UNIVERSE_SYMBOL_INVALID',
+  // watchlist-driven universe (Sprint 2E)
+  WATCHLIST_EMPTY: 'WATCHLIST_EMPTY',
+  WATCHLIST_STRATEGY_INACTIVE: 'WATCHLIST_STRATEGY_INACTIVE',
   SYMBOL_DATA_UNAVAILABLE: 'SYMBOL_DATA_UNAVAILABLE',
   SYMBOL_CHAIN_UNAVAILABLE: 'SYMBOL_CHAIN_UNAVAILABLE',
   SYMBOL_CHAIN_ILLIQUID: 'SYMBOL_CHAIN_ILLIQUID',

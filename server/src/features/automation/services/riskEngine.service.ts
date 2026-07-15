@@ -41,6 +41,11 @@ export type RiskEngineInputs = {
   mongoConnected: boolean;
   automationReady: boolean;
   now: number;
+  /**
+   * Sprint 2E: per-symbol watchlist max contract quantity (maxPositionSize).
+   * Applied as an additional deterministic sizing cap; omitted → no extra cap.
+   */
+  maxContracts?: number;
 };
 
 export type RiskEngineResult = {
@@ -158,6 +163,7 @@ export function evaluateRisk(inputs: RiskEngineInputs): RiskEngineResult {
       buyingPower: inputs.account.buyingPower ?? 0,
       selectedAsk: selectedContract.ask,
       config: config.risk,
+      maxContracts: inputs.maxContracts,
     });
     const bpOk = sizing.outputs.buyingPowerCap >= 1;
     push(
