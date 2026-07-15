@@ -94,6 +94,14 @@ export async function loadDist() {
     orderSubmission2c,
     brokerIngestion2c,
     orderReconciliation2c,
+    monitorCtrl2c,
+    // Sprint 2D — options-native flow evaluator + baseline snapshot
+    optionsFlowEval2d,
+    optionsFlowSnapshotModel2d,
+    // Sprint 2E — watchlist-driven automation universe
+    watchlistModel2e,
+    watchlistService2e,
+    watchlistProvider2e,
   ] = await Promise.all([
     import('../dist/features/automation/models/automationSession.model.js'),
     import('../dist/features/automation/models/orderIntent.model.js'),
@@ -137,6 +145,12 @@ export async function loadDist() {
     import('../dist/features/automation/services/orderSubmission.service.js'),
     import('../dist/features/automation/services/brokerUpdateIngestion.service.js'),
     import('../dist/features/automation/services/orderReconciliation.service.js'),
+    import('../dist/features/automation/services/monitorController.service.js'),
+    import('../dist/features/automation/services/optionsFlowUniverseEvaluator.service.js'),
+    import('../dist/features/automation/models/optionsFlowSnapshot.model.js'),
+    import('../dist/features/watchlist/watchlist.model.js'),
+    import('../dist/features/watchlist/watchlist.service.js'),
+    import('../dist/features/watchlist/automationUniverseProvider.service.js'),
   ]);
   return {
     ...sessionModel,
@@ -181,6 +195,12 @@ export async function loadDist() {
     ...orderSubmission2c,
     ...brokerIngestion2c,
     ...orderReconciliation2c,
+    ...monitorCtrl2c,
+    ...optionsFlowEval2d,
+    ...optionsFlowSnapshotModel2d,
+    ...watchlistModel2e,
+    ...watchlistService2e,
+    ...watchlistProvider2e,
   };
 }
 

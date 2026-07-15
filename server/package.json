@@ -11,7 +11,9 @@
     "seed": "bash ../scripts/seed-mongo.sh",
     "seed:docker": "bash ../scripts/seed-mongo.sh --docker",
     "seed:drop": "bash ../scripts/seed-mongo.sh --drop",
-    "test:automation": "npm run build && node --test tests/automation*.test.mjs"
+    "test:automation": "npm run build && node --test tests/automation*.test.mjs",
+    "automation:preflight": "npm run build && node scripts/preflight.mjs",
+    "automation:preflight:launch": "npm run build && node scripts/preflight.mjs --launch"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
