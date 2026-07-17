@@ -42,4 +42,4 @@ export const IDEMPOTENCY_KEY_FIELDS = [
 export const CLIENT_ORDER_ID_PREFIX = 'at2a-';
 
 // Log-redaction: any key matching this pattern is masked in structured events.
-export const SENSITIVE_KEY_PATTERN = /key|secret|token|password|authorization|credential|cookie/i;
+export { SENSITIVE_KEY_PATTERN } from '../../shared/logging/safeLogging';

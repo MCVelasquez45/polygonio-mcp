@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
-import { AUTOMATION_SERVICE_PREFIX, SENSITIVE_KEY_PATTERN } from '../automation.constants';
+import { AUTOMATION_SERVICE_PREFIX } from '../automation.constants';
 import { AutomationEventModel } from '../models/automationEvent.model';
 import type { AutomationEventInput, AutomationEventSeverity } from '../automation.types';
+import { redactForLog } from '../../../shared/logging/safeLogging';
 
 // Structured, redacted audit logging.
 //
@@ -9,9 +10,6 @@ import type { AutomationEventInput, AutomationEventSeverity } from '../automatio
 // (2) is appended to the automation_events collection when Mongo is up.
 // Console logging never throws into the trading path; Mongo persistence is
 // fire-and-forget with a console fallback marker on failure.
-
-const MAX_STRING_LENGTH = 2_000;
-const MAX_DEPTH = 6;
 
 function isMongoConnected(): boolean {
   return mongoose.connection?.readyState === 1;
@@ -23,26 +21,7 @@ function isMongoConnected(): boolean {
  * cannot blow up the journal.
  */
 export function redactPayload(value: unknown, depth = 0): unknown {
-  if (value == null) return value;
-  if (depth > MAX_DEPTH) return '[max-depth]';
-  if (typeof value === 'string') {
-    return value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}…[truncated]` : value;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.slice(0, 100).map(item => redactPayload(item, depth + 1));
-  if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      if (SENSITIVE_KEY_PATTERN.test(key)) {
-        out[key] = '[redacted]';
-      } else {
-        out[key] = redactPayload(val, depth + 1);
-      }
-    }
-    return out;
-  }
-  return String(value);
+  return redactForLog(value, depth);
 }
 
 /** Masks an account identifier to its last 4 characters. */

@@ -60,9 +60,11 @@ Trading Intelligence Engine:
 
 - Trading Session Capture
 - Trade Intelligence Reports
-- Daily End-of-Day Report
+- Daily Trading Report
 - Decision Journal
-- Strategy and Missed-Opportunity Analytics
-- AI Coach Recommendations
+- Missed Opportunity Analytics
+- Strategy Analytics
+- AI Coach
+- Historical Intelligence Workspace
 
 The AI Coach must remain advisory and must never automatically change production trading rules.

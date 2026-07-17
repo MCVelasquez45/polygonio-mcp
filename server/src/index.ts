@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
+import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 // Central application entrypoint wiring platform feature routers + shared middleware.
@@ -42,6 +43,7 @@ import {
 import { marketDataRouter } from './features/marketData/marketData.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
+import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
 import {
@@ -68,13 +70,35 @@ app.use(
 
 app.use(express.json());
 
-app.use((req, _res, next) => {
-  console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+type RequestWithContext = express.Request & { requestId?: string };
+
+app.use((req: RequestWithContext, res, next) => {
+  const headerRequestId = req.header('x-request-id');
+  const requestId = headerRequestId && headerRequestId.length <= 128 ? headerRequestId : randomUUID();
+  req.requestId = requestId;
+  res.setHeader('x-request-id', requestId);
+  writeStructuredLog({
+    component: 'server',
+    module: 'http',
+    event: 'HTTP_REQUEST',
+    severity: 'info',
+    requestId,
+    context: {
+      method: req.method,
+      path: req.originalUrl,
+      body: req.body ?? {},
+    },
+  });
   next();
 });
 
 app.get('/health', (_req, res) => {
-  console.log('[SERVER] GET /health responded with ok');
+  writeStructuredLog({
+    component: 'server',
+    module: 'health',
+    event: 'HEALTH_CHECK_OK',
+    severity: 'debug',
+  });
   res.json({ ok: true });
 });
 
@@ -99,8 +123,18 @@ app.use('/api/system', systemHealthRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
 
-app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
+app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
+  writeStructuredLog({
+    component: 'server',
+    module: 'http',
+    event: 'UNHANDLED_ERROR',
+    severity: 'error',
+    requestId: req.requestId,
+    context: {
+      path: req.originalUrl,
+      error: serializeErrorForLog(error),
+    },
+  });
   const status = error?.response?.status ?? error?.status ?? 500;
   const payload = error?.response?.data ?? { error: error?.message ?? 'Internal server error' };
   res.status(status).json(payload);
@@ -119,14 +153,26 @@ initFuturesRuntime(io);
 startAutomationVisibilityBroadcaster(io);
 
 io.on('connection', socket => {
-  console.log('[SERVER] WebSocket client connected:', socket.id);
+  writeStructuredLog({
+    component: 'server',
+    module: 'socket',
+    event: 'SOCKET_CONNECTED',
+    severity: 'info',
+    context: { socketId: socket.id },
+  });
   socket.emit('connected', { msg: 'WebSocket connected' });
   registerLiveFeedHandlers(socket);
   registerChartHubHandlers(socket);
   registerAutomationVisibilityHandlers(io, socket);
 
   socket.on('disconnect', reason => {
-    console.log('[SERVER] WebSocket client disconnected:', socket.id, reason);
+    writeStructuredLog({
+      component: 'server',
+      module: 'socket',
+      event: 'SOCKET_DISCONNECTED',
+      severity: 'info',
+      context: { socketId: socket.id, reason },
+    });
   });
 });
 

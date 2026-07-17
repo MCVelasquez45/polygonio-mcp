@@ -45,7 +45,7 @@ Success metric:
 
 - Every closed trade has a human-readable report backed by stored facts.
 
-## Milestone 3: Daily End-of-Day Report
+## Milestone 3: Daily Trading Report
 
 Create an end-of-day report across all evaluations and trades.
 
@@ -78,9 +78,9 @@ Success metric:
 
 - A reviewer can trace any trade or rejection from market context to final outcome.
 
-## Milestone 5: Strategy and Missed-Opportunity Analytics
+## Milestone 5: Missed Opportunity Analytics
 
-Analyze filter value, false positives, false negatives, and opportunity cost.
+Analyze false negatives, rejected opportunities, missed fills, and opportunity cost.
 
 Initial scope:
 
@@ -88,13 +88,28 @@ Initial scope:
 - No-signal outcomes and subsequent underlying moves.
 - Fill failures and subsequent mid/mark behavior.
 - Exit quality versus available alternatives.
-- Regime dependence by trend, flow, relative volume, and market timing.
 
 Success metric:
 
-- Recommendations are backed by cohort-level evidence, not individual anecdotes.
+- Missed-opportunity findings are backed by cohort-level evidence, not individual anecdotes.
 
-## Milestone 6: AI Coach Recommendations
+## Milestone 6: Strategy Analytics
+
+Analyze strategy and filter contribution across regimes.
+
+Initial scope:
+
+- Filter value by accepted and rejected cohorts.
+- False positives and false negatives.
+- Regime dependence by trend, flow, relative volume, volatility, and market timing.
+- Selection quality by contract attributes.
+- Exit quality by trigger, time in trade, and market condition.
+
+Success metric:
+
+- Strategy recommendations identify hypothesis, evidence, missing evidence, expected upside, risks introduced, and rollback criteria.
+
+## Milestone 7: AI Coach
 
 Generate advisory recommendations for human review.
 
@@ -115,3 +130,19 @@ Success metric:
 - Recommendations are actionable, measurable, and explicitly marked as advisory.
 
 The AI Coach must not directly alter thresholds, enable strategies, disable filters, change sizing, or submit orders.
+
+## Milestone 8: Historical Intelligence Workspace
+
+Build a review workspace for historical sessions, trades, rejected opportunities, and strategy cohorts.
+
+Initial scope:
+
+- Session browser.
+- Trade and rejection timelines.
+- Cohort filters by symbol, strategy, regime, and decision outcome.
+- Drill-down from daily report to decision journal records.
+- Exportable research views for human review.
+
+Success metric:
+
+- A reviewer can compare executed trades and rejected opportunities across multiple sessions without reading raw logs or Mongo records.

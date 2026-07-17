@@ -127,3 +127,42 @@ test('15. sensitive credentials are never written to logs', async () => {
     console.log = original;
   }
 });
+
+test('15b. shared structured logs redact request-boundary context', async () => {
+  const { writeStructuredLog, serializeErrorForLog } = await import('../dist/shared/logging/safeLogging.js');
+  const captured = [];
+  const original = console.log;
+  console.log = (line) => captured.push(String(line));
+  try {
+    writeStructuredLog({
+      component: 'server',
+      module: 'http',
+      event: 'HTTP_REQUEST',
+      requestId: 'req-123',
+      context: {
+        headers: { authorization: 'Bearer abc.def.ghi' },
+        body: { apiKey: 'provider-key-value', nested: { password: 'local-password', safe: 'visible' } },
+        error: serializeErrorForLog(Object.assign(new Error('upstream failed'), { status: 502 })),
+      },
+    });
+
+    const parsed = JSON.parse(captured.at(-1));
+    assert.ok(!Number.isNaN(Date.parse(parsed.timestamp)));
+    assert.equal(parsed.component, 'server');
+    assert.equal(parsed.module, 'http');
+    assert.equal(parsed.severity, 'info');
+    assert.equal(parsed.requestId, 'req-123');
+    assert.equal(parsed.context.headers.authorization, '[redacted]');
+    assert.equal(parsed.context.body.apiKey, '[redacted]');
+    assert.equal(parsed.context.body.nested.password, '[redacted]');
+    assert.equal(parsed.context.body.nested.safe, 'visible');
+    assert.equal(parsed.context.error.status, 502);
+
+    const joined = captured.join('\n');
+    assert.ok(!joined.includes('abc.def.ghi'));
+    assert.ok(!joined.includes('provider-key-value'));
+    assert.ok(!joined.includes('local-password'));
+  } finally {
+    console.log = original;
+  }
+});
