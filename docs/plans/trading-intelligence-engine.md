@@ -16,6 +16,8 @@ This branch is reserved for the Trading Intelligence and Daily Reporting Layer. 
 
 Capture a normalized trading-session record for each automation run.
 
+Implementation status: Milestone 1 is implemented in the `intelligence_trading_sessions` collection with read APIs and a minimal Sessions UI. See `docs/features/trading-session-capture.md`.
+
 Initial scope:
 
 - Session open, close, and market regime metadata.

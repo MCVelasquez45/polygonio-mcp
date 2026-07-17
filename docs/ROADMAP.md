@@ -43,6 +43,13 @@ Milestones:
 7. AI Coach
 8. Historical Intelligence Workspace
 
+Milestone 1 implementation docs:
+
+- `docs/V2_ARCHITECTURE.md`
+- `docs/features/trading-session-capture.md`
+- `docs/architecture/v2-trading-session-source-map.md`
+- `docs/api/trading-intelligence-sessions.md`
+
 ## Live Trading Readiness Track
 
 Status: Not started.

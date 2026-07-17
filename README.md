@@ -72,6 +72,7 @@ Some server automation and dev-platform tests bind local ports. In restricted sa
 - Version history: `docs/VERSION_HISTORY.md`
 - Roadmap: `docs/ROADMAP.md`
 - Trading Intelligence plan: `docs/plans/trading-intelligence-engine.md`
+- Trading Session Capture: `docs/features/trading-session-capture.md`
 
 ## Local Development
 
