@@ -18,6 +18,7 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
 import { CockpitLayout } from './components/cockpit/CockpitLayout';
+import { TradingSessionsPage } from './components/intelligence/TradingSessionsPage';
 import { ChatDock } from './components/chat/ChatDock';
 import { Dashboard } from './components/dashboard';
 import { analysisApi, chatApi, marketApi } from './api';
@@ -344,7 +345,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit' | 'intelligence';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -2914,6 +2915,7 @@ function App() {
                   <CockpitLayout />
                 </div>
               )}
+              {view === 'intelligence' && <TradingSessionsPage />}
             </div>
           )}
         </main>

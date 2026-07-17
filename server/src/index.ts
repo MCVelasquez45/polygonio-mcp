@@ -41,6 +41,7 @@ import {
   stopAutomationVisibilityBroadcaster,
 } from './features/portfolio/automationVisibilitySocket.service';
 import { marketDataRouter } from './features/marketData/marketData.routes';
+import { intelligenceRouter } from './features/intelligence/intelligence.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
@@ -122,6 +123,7 @@ app.use('/api/watchlist', watchlistRouter);
 app.use('/api/system', systemHealthRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
+app.use('/api/intelligence', intelligenceRouter);
 
 app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
   writeStructuredLog({

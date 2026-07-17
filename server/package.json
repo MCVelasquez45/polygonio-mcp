@@ -12,6 +12,8 @@
     "seed:docker": "bash ../scripts/seed-mongo.sh --docker",
     "seed:drop": "bash ../scripts/seed-mongo.sh --drop",
     "test:automation": "npm run build && node --test tests/automation*.test.mjs",
+    "test:intelligence": "npm run build && node --test tests/intelligence*.test.mjs",
+    "intelligence:backfill-session": "npm run build && node scripts/backfill-trading-session.mjs",
     "automation:preflight": "npm run build && node scripts/preflight.mjs",
     "automation:preflight:launch": "npm run build && node scripts/preflight.mjs --launch"
   },
