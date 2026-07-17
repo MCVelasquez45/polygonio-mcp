@@ -5,13 +5,19 @@ import { http } from './http';
 // confirm → submit (server-side execution gateway). Automation is separate.
 
 export type ManualIntentInput = {
+  executionMode?: 'MANUAL';
+  orderSource?: 'MANUAL_UI';
+  action?: 'OPEN_ORDER' | 'CLOSE_POSITION';
   optionSymbol: string;
   side: 'buy' | 'sell';
   quantity: number;
   orderType: string;
   limitPrice?: number | null;
   timeInForce?: 'day' | 'gtc';
-  positionIntent?: string;
+  positionIntent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
+  brokerPositionQuantity?: number;
+  authorizationId?: string;
+  idempotencyKey?: string;
   marketDataSource?: string | null;
 };
 
@@ -20,9 +26,13 @@ export type ManualIntent = {
   status: 'CREATED' | 'CONFIRMED' | 'SUBMITTING' | 'SUBMITTED' | 'REJECTED' | 'FAILED';
   executionMode: 'MANUAL';
   orderSource: 'MANUAL_UI';
+  action: 'OPEN_ORDER' | 'CLOSE_POSITION';
   optionSymbol: string;
   side: 'buy' | 'sell';
   quantity: number;
+  brokerPositionQuantity: number | null;
+  authorizationId: string;
+  idempotencyKey: string;
   orderType: string;
   limitPrice: number | null;
   timeInForce: string;

@@ -7,10 +7,11 @@ from polygon import RESTClient
 ET = ZoneInfo("America/New_York")
 
 def make_client():
-    key = os.getenv("POLYGON_API_KEY")
+    key = os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY")
     if not key:
         raise ValueError("POLYGON_API_KEY not found in environment")
-    return RESTClient(api_key=key)
+    base = os.getenv("MASSIVE_BASE_URL") or os.getenv("POLYGON_BASE_URL") or "https://api.polygon.io"
+    return RESTClient(api_key=key, base=base)
 
 def today_et() -> datetime:
     return datetime.now(ET)

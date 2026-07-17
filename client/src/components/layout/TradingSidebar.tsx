@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { marketApi } from '../../api';
+import { listWatchlist, removeWatchlistItem, upsertWatchlistItem } from '../../api/watchlist';
 import type { WatchlistSnapshot } from '../../types/market';
 import { formatExpirationDate } from '../../utils/expirations';
 
@@ -21,42 +22,33 @@ type WatchlistEntry = {
   change: number;
 };
 
-// Hard-coded seed data used when the user has no stored watchlist yet. These
-// values get overwritten once Massive snapshots are fetched.
-const WATCHLIST_DATA: Record<string, Omit<WatchlistEntry, 'symbol'>> = {
-  SPY: { name: 'S&P 500 ETF', price: 512.4, change: 0.36 },
-  AAPL: { name: 'Apple', price: 227.1, change: -0.42 },
-  TSLA: { name: 'Tesla', price: 194.3, change: 1.12 },
-  NVDA: { name: 'NVIDIA', price: 131.8, change: 0.87 },
-  MSFT: { name: 'Microsoft', price: 423.2, change: -0.25 },
-  META: { name: 'Meta Platforms', price: 486.9, change: 0.52 },
-  AMZN: { name: 'Amazon', price: 175.43, change: 1.66 },
-  AMD: { name: 'Advanced Micro Devices', price: 118.67, change: -1.75 },
-  GOOG: { name: 'Alphabet', price: 142.54, change: 0.61 },
-  NFLX: { name: 'Netflix', price: 605.21, change: 0.97 },
+const WATCHLIST_SNAPSHOT_TTL_MS = 60_000;
+const WATCHLIST_SNAPSHOT_BATCH_SIZE = 25;
+const WATCHLIST_PROVIDER_COOLDOWN_MS = 60_000;
+
+type SnapshotBatchResult = {
+  entries: WatchlistSnapshot[];
+  error?: any;
 };
 
-const defaultWatchlist: WatchlistEntry[] = ['SPY', 'AAPL', 'TSLA', 'NVDA', 'MSFT', 'META'].map(symbol => ({
-  symbol,
-  ...WATCHLIST_DATA[symbol],
-}));
-
-const WATCHLIST_STORAGE_KEY = 'market-copilot.watchlist';
-
-// Resolves a symbol to a watchlist entry, falling back to mock data when we
-// haven't fetched a live snapshot yet.
+// The server-side watchlist (/api/watchlist) is the SINGLE source of truth for
+// the symbol universe — the same records drive research, the options browser,
+// and automation. This sidebar hydrates from it and keeps NO hardcoded seed
+// list and NO localStorage copy (either of which would resurrect removed
+// symbols and diverge from the authoritative automation universe). Prices/names
+// are filled in from live Massive snapshots once fetched; before then we show
+// the bare symbol.
 function hydrateWatchlistEntry(symbol: string, overrides?: Partial<WatchlistEntry>): WatchlistEntry {
   const upper = symbol.toUpperCase();
-  const base = WATCHLIST_DATA[upper];
-  const resolvedName = overrides?.name ?? base?.name ?? upper;
+  const resolvedName = overrides?.name ?? upper;
   const resolvedPrice =
     typeof overrides?.price === 'number' && Number.isFinite(overrides.price)
       ? overrides.price
-      : base?.price ?? Number.NaN;
+      : Number.NaN;
   const resolvedChange =
     typeof overrides?.change === 'number' && Number.isFinite(overrides.change)
       ? overrides.change
-      : base?.change ?? Number.NaN;
+      : Number.NaN;
   return {
     symbol: upper,
     name: resolvedName,
@@ -110,32 +102,18 @@ export const TradingSidebar = memo(function TradingSidebar({
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
   const [tickerInput, setTickerInput] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
-  // Hydrate watchlist from localStorage so the user's custom list persists.
-  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = window.localStorage.getItem(WATCHLIST_STORAGE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length) {
-            const hydrated = parsed
-              .map(entry => (entry?.symbol ? hydrateWatchlistEntry(entry.symbol, entry) : null))
-              .filter(Boolean);
-            if (hydrated.length) {
-              return hydrated as WatchlistEntry[];
-            }
-          }
-        }
-      } catch {
-        // ignore corrupted cache
-      }
-    }
-    return defaultWatchlist;
-  });
+  // The watchlist is loaded from the server (single source of truth); it starts
+  // empty and is populated by loadWatchlist() on mount and after every mutation.
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [snapshots, setSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
+  const [snapshotsStale, setSnapshotsStale] = useState(false);
+  const snapshotCacheRef = useRef<Record<string, WatchlistSnapshot>>({});
+  const lastSnapshotFetchAtRef = useRef(0);
+  const snapshotInFlightRef = useRef<Promise<void> | null>(null);
+  const providerCooldownUntilRef = useRef(0);
 
   const watchlistSymbols = useMemo(
     () => watchlist.map(entry => entry.symbol.toUpperCase()),
@@ -143,18 +121,24 @@ export const TradingSidebar = memo(function TradingSidebar({
   );
   const watchlistSymbolsKey = watchlistSymbols.join(',');
 
-  // Persist the watchlist whenever it changes.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
+  // Load the authoritative watchlist from the server (single source of truth).
+  const loadWatchlist = useCallback(async () => {
     try {
-      window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
+      const items = await listWatchlist();
+      setWatchlist(items.map(item => hydrateWatchlistEntry(item.symbol)));
+      setWatchlistError(null);
     } catch {
-      // ignore persistence failures
+      setWatchlistError('Failed to load watchlist');
     }
-  }, [watchlist]);
+  }, []);
 
-  // Adds a new ticker to the list (basic validation and duplicate guard).
-  const handleAddTicker = (event?: React.FormEvent) => {
+  useEffect(() => {
+    void loadWatchlist();
+  }, [loadWatchlist]);
+
+  // Adds a new ticker to the SERVER watchlist (research-visible, automation
+  // opt-in defaults to false server-side), then reloads from the server.
+  const handleAddTicker = async (event?: React.FormEvent) => {
     event?.preventDefault();
     const normalized = tickerInput.trim().toUpperCase();
     if (!normalized) {
@@ -165,63 +149,126 @@ export const TradingSidebar = memo(function TradingSidebar({
       setFeedback(`${normalized} is already on the watchlist.`);
       return;
     }
-    const entry = hydrateWatchlistEntry(normalized);
-    setWatchlist(prev => [...prev, entry]);
-    setTickerInput('');
-    setFeedback(null);
+    try {
+      await upsertWatchlistItem({ symbol: normalized });
+      setTickerInput('');
+      setFeedback(null);
+      await loadWatchlist();
+    } catch {
+      setFeedback(`Failed to add ${normalized} to the watchlist.`);
+    }
   };
 
-  const handleRemoveTicker = (symbol: string) => {
+  const handleRemoveTicker = async (symbol: string) => {
     const nextList = watchlist.filter(entry => entry.symbol !== symbol);
+    try {
+      await removeWatchlistItem(symbol);
+    } catch {
+      setFeedback(`Failed to remove ${symbol} from the watchlist.`);
+      return;
+    }
     setWatchlist(nextList);
     if (selectedTicker === symbol) {
-      const fallback = nextList[0]?.symbol ?? '';
-      if (fallback) {
-        onSelectTicker(fallback);
-      } else {
-        onSelectTicker('');
-      }
+      onSelectTicker(nextList[0]?.symbol ?? '');
     }
   };
 
-  // Fetches live snapshots for the watchlist whenever the set of symbols changes
-  // or the user forces a refresh. Keeps a per-symbol cache for quick lookups.
-  useEffect(() => {
-    if (!watchlistSymbolsKey) return;
-    let cancelled = false;
-    setWatchlistError(null);
-    setIsRefreshing(true);
-    const symbols = watchlistSymbolsKey.split(',').filter(Boolean);
-    const batches: string[][] = [];
-    for (let i = 0; i < symbols.length; i += 25) {
-      batches.push(symbols.slice(i, i + 25));
-    }
-    Promise.all(
-      batches.map(batch =>
-        marketApi.getWatchlistSnapshots(batch).catch(error => ({ entries: [], error }))
-      )
-    )
-      .then(results => {
-        if (cancelled) return;
-        const nextMap: Record<string, WatchlistSnapshot> = {};
+  const refreshSnapshots = useCallback(
+    async ({ force = false }: { force?: boolean } = {}) => {
+      if (!watchlistSymbolsKey) return;
+      if (typeof document !== 'undefined' && document.hidden && !force) return;
+
+      const symbols = watchlistSymbolsKey.split(',').filter(Boolean);
+      const now = Date.now();
+      const cached = snapshotCacheRef.current;
+      const hasCachedValues = Object.keys(cached).length > 0;
+      const cacheCoversSymbols = symbols.every(symbol => Boolean(cached[symbol]));
+      if (!force && hasCachedValues && cacheCoversSymbols && now - lastSnapshotFetchAtRef.current < WATCHLIST_SNAPSHOT_TTL_MS) {
+        setSnapshots(cached);
+        setSnapshotsStale(false);
+        return;
+      }
+
+      if (now < providerCooldownUntilRef.current && !force) {
+        if (hasCachedValues) {
+          setSnapshots(cached);
+          setSnapshotsStale(true);
+          setWatchlistError('Using cached watchlist data while provider cooldown is active.');
+        }
+        return;
+      }
+
+      if (snapshotInFlightRef.current) {
+        return snapshotInFlightRef.current;
+      }
+
+      const run = (async () => {
+        setWatchlistError(null);
+        setIsRefreshing(true);
+        const batches: string[][] = [];
+        for (let i = 0; i < symbols.length; i += WATCHLIST_SNAPSHOT_BATCH_SIZE) {
+          batches.push(symbols.slice(i, i + WATCHLIST_SNAPSHOT_BATCH_SIZE));
+        }
+
+        const results = await Promise.all(
+          batches.map<Promise<SnapshotBatchResult>>(batch =>
+            marketApi.getWatchlistSnapshots(batch).catch(error => ({ entries: [], error }))
+          )
+        );
+        const nextMap: Record<string, WatchlistSnapshot> = { ...snapshotCacheRef.current };
         let hadEntries = false;
         let hadErrors = false;
+        let rateLimited = false;
+        let retryAfterMs: number | null = null;
+
         results.forEach(result => {
-          if ((result as any)?.error) hadErrors = true;
-          const snapshots: WatchlistSnapshot[] = Array.isArray((result as any)?.entries) ? (result as any).entries : [];
-          if (snapshots.length) hadEntries = true;
-          snapshots.forEach((entry: WatchlistSnapshot) => {
+          if (result.error) {
+            hadErrors = true;
+            if (result.error?.response?.status === 429) {
+              rateLimited = true;
+              const retryHeader = result.error?.response?.headers?.['retry-after'] ?? result.error?.response?.headers?.['Retry-After'];
+              const retrySeconds = Number(retryHeader);
+              const retryFromBody = Number(result.error?.response?.data?.retryAfterMs);
+              if (Number.isFinite(retryFromBody) && retryFromBody > 0) {
+                retryAfterMs = Math.max(retryAfterMs ?? 0, retryFromBody);
+              } else if (Number.isFinite(retrySeconds) && retrySeconds > 0) {
+                retryAfterMs = Math.max(retryAfterMs ?? 0, retrySeconds * 1000);
+              }
+            }
+          }
+          const entries = Array.isArray(result.entries) ? result.entries : [];
+          if (entries.length) hadEntries = true;
+          entries.forEach(entry => {
             if (entry?.ticker) {
               nextMap[entry.ticker.toUpperCase()] = entry;
             }
           });
         });
+
+        if (rateLimited) {
+          const cooldownMs = retryAfterMs ?? WATCHLIST_PROVIDER_COOLDOWN_MS;
+          providerCooldownUntilRef.current = Date.now() + cooldownMs;
+        }
+
         if (!hadEntries) {
-          setWatchlistError(hadErrors ? 'Failed to refresh watchlist' : null);
-          setSnapshots({});
+          const cachedValues = snapshotCacheRef.current;
+          const hasCache = Object.keys(cachedValues).length > 0;
+          if (hasCache) {
+            setSnapshots(cachedValues);
+            setSnapshotsStale(true);
+            setWatchlistError(rateLimited ? 'Using cached watchlist data while provider cooldown is active.' : null);
+          } else {
+            setWatchlistError(hadErrors ? 'Failed to refresh watchlist' : null);
+            setSnapshots({});
+            setSnapshotsStale(false);
+          }
           return;
         }
+
+        snapshotCacheRef.current = nextMap;
+        lastSnapshotFetchAtRef.current = Date.now();
         setSnapshots(nextMap);
+        setSnapshotsStale(rateLimited);
         setWatchlist(prev =>
           prev.map(item => {
             const snapshot = nextMap[item.symbol.toUpperCase()];
@@ -231,33 +278,53 @@ export const TradingSidebar = memo(function TradingSidebar({
             return item;
           })
         );
-      })
-      .catch(error => {
-        if (cancelled) return;
-        const message = error?.response?.data?.error ?? error?.message ?? 'Failed to refresh watchlist';
-        setWatchlistError(message);
-        setSnapshots({});
-      })
-      .finally(() => {
-        if (!cancelled) {
+      })()
+        .catch(error => {
+          const cachedValues = snapshotCacheRef.current;
+          if (Object.keys(cachedValues).length) {
+            setSnapshots(cachedValues);
+            setSnapshotsStale(true);
+            return;
+          }
+          const message = error?.response?.data?.error ?? error?.message ?? 'Failed to refresh watchlist';
+          setWatchlistError(message);
+          setSnapshots({});
+          setSnapshotsStale(false);
+        })
+        .finally(() => {
           setIsRefreshing(false);
-        }
-      });
+          snapshotInFlightRef.current = null;
+        });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [watchlistSymbolsKey, refreshNonce]);
+      snapshotInFlightRef.current = run;
+      return run;
+    },
+    [watchlistSymbolsKey]
+  );
+
+  useEffect(() => {
+    void refreshSnapshots({ force: refreshNonce > 0 });
+  }, [watchlistSymbolsKey, refreshNonce, refreshSnapshots]);
 
   useEffect(() => {
     if (!watchlistSymbolsKey) return;
     const interval = setInterval(() => {
-      setRefreshNonce(prev => prev + 1);
-    }, 60_000);
+      void refreshSnapshots();
+    }, WATCHLIST_SNAPSHOT_TTL_MS);
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined' || document.hidden) return;
+      void refreshSnapshots();
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
     return () => {
       clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
-  }, [watchlistSymbolsKey]);
+  }, [watchlistSymbolsKey, refreshSnapshots]);
 
   useEffect(() => {
     onWatchlistChange?.(watchlistSymbols);
@@ -269,20 +336,22 @@ export const TradingSidebar = memo(function TradingSidebar({
       const detail = (event as CustomEvent<{ symbol?: string }>).detail;
       const normalized = detail?.symbol?.trim().toUpperCase();
       if (!normalized) return;
-      setWatchlist(prev => {
-        if (prev.some(entry => entry.symbol === normalized)) {
-          setFeedback(`${normalized} is already on the watchlist.`);
-          return prev;
-        }
-        setFeedback(`${normalized} added to the watchlist.`);
-        return [...prev, hydrateWatchlistEntry(normalized)];
-      });
+      if (watchlistSymbols.includes(normalized)) {
+        setFeedback(`${normalized} is already on the watchlist.`);
+        return;
+      }
+      upsertWatchlistItem({ symbol: normalized })
+        .then(() => {
+          setFeedback(`${normalized} added to the watchlist.`);
+          return loadWatchlist();
+        })
+        .catch(() => setFeedback(`Failed to add ${normalized} to the watchlist.`));
     };
     window.addEventListener('watchlist:add', handler as EventListener);
     return () => {
       window.removeEventListener('watchlist:add', handler as EventListener);
     };
-  }, []);
+  }, [watchlistSymbols, loadWatchlist]);
 
   useEffect(() => {
     if (!watchlist.length) return;
@@ -363,6 +432,7 @@ export const TradingSidebar = memo(function TradingSidebar({
                   </span>
                 </button>
               </div>
+              {snapshotsStale && <p className="text-[11px] uppercase tracking-wide text-amber-400">Stale</p>}
               {onRequestAutoSelect && (
                 <button
                   type="button"

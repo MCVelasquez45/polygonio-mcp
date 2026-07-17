@@ -7,17 +7,20 @@ import mongoose, { Document, Schema } from 'mongoose';
 // SEPARATE stores so neither can borrow the other's authority.
 
 export type ManualIntentStatus = 'CREATED' | 'CONFIRMED' | 'SUBMITTING' | 'SUBMITTED' | 'REJECTED' | 'FAILED';
+export type ManualIntentAction = 'OPEN_ORDER' | 'CLOSE_POSITION';
 
 export interface ManualOrderIntentDocument extends Document {
   // Execution authority is explicit and fixed for this record.
   executionMode: 'MANUAL';
   orderSource: 'MANUAL_UI';
+  action: ManualIntentAction;
   status: ManualIntentStatus;
 
   // The reviewed order (normalized broker request).
   optionSymbol: string;
   side: 'buy' | 'sell';
   quantity: number;
+  brokerPositionQuantity: number | null;
   orderType: string;
   limitPrice: number | null;
   timeInForce: string;
@@ -44,16 +47,19 @@ export interface ManualOrderIntentDocument extends Document {
 }
 
 const STATUSES: ManualIntentStatus[] = ['CREATED', 'CONFIRMED', 'SUBMITTING', 'SUBMITTED', 'REJECTED', 'FAILED'];
+const ACTIONS: ManualIntentAction[] = ['OPEN_ORDER', 'CLOSE_POSITION'];
 
 const ManualOrderIntentSchema = new Schema<ManualOrderIntentDocument>(
   {
     executionMode: { type: String, enum: ['MANUAL'], required: true, default: 'MANUAL' },
     orderSource: { type: String, enum: ['MANUAL_UI'], required: true, default: 'MANUAL_UI' },
+    action: { type: String, enum: ACTIONS, required: true, default: 'OPEN_ORDER' },
     status: { type: String, enum: STATUSES, required: true, default: 'CREATED', index: true },
 
     optionSymbol: { type: String, required: true, uppercase: true, trim: true },
     side: { type: String, enum: ['buy', 'sell'], required: true },
     quantity: { type: Number, required: true, min: 1 },
+    brokerPositionQuantity: { type: Number, default: null },
     orderType: { type: String, required: true },
     limitPrice: { type: Number, default: null },
     timeInForce: { type: String, required: true, default: 'day' },

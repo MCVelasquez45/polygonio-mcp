@@ -15,11 +15,19 @@ export type AutomationPositionStatus =
   | 'OPEN' // confirmed fill, actively monitored
   | 'EXITING' // exit intent submitted, awaiting close
   | 'CLOSED' // broker-confirmed flat, realized P&L computed
-  | 'MANUAL_REVIEW'; // ambiguous/unresolved — needs operator attention
+  | 'MANUAL_REVIEW' // ambiguous/unresolved — needs operator attention (blocks engine)
+  | 'RECOVERY_FAILED'; // recovery exhausted with NO live broker exit order — a
+// deterministic terminal-failed state. Distinct from MANUAL_REVIEW: it preserves
+// full audit history but does NOT block new autonomous entries (the engine has
+// given up managing this position; the broker position, if any, remains and is
+// Portfolio-display only). Reached only when exit retries are exhausted AND
+// there is no acknowledged broker exit order (exitBrokerOrderId == null) AND no
+// partial exit fill — i.e. nothing is silently left working at the broker.
 
 export type ExitReason =
   | 'EMERGENCY_STOP'
   | 'END_OF_DAY'
+  | 'OVERNIGHT_RECOVERY' // position carried past its intended flatten window — mandatory recovery flatten
   | 'HARD_STOP'
   | 'BROKER_MANUAL_CLOSE'
   | 'OPERATOR_CLOSE'
@@ -92,6 +100,23 @@ export interface AutomationPositionDocument extends Document {
   /** Why the position was parked in MANUAL_REVIEW (operator-facing). */
   manualReviewReason: string | null;
 
+  // Overnight recovery (Critical lifecycle repair). An automation position that
+  // survives past its intended intraday flatten window (process down during the
+  // flatten window, discovered OPEN at startup while the options market is
+  // closed, etc.) is a POLICY VIOLATION that must be recovered — never treated
+  // as a healthy open position. These are ADDITIVE: the position keeps its
+  // broker-true status (OPEN) and these fields drive the recovery lifecycle.
+  /** True while this position must be flattened at the earliest valid session. */
+  overnightRecoveryRequired: boolean;
+  /** When the overnight carry was first detected (durable across restarts). */
+  overnightDetectedAt: Date | null;
+  /** Why recovery is required (e.g. CARRIED_PAST_FLATTEN_WINDOW). */
+  overnightReason: string | null;
+  /** Earliest broker-clock time a recovery exit may be submitted (next session open). */
+  recoveryExitEligibleAt: Date | null;
+  /** When the recovery exit was actually submitted (idempotency/audit). */
+  recoveryExitSubmittedAt: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -102,11 +127,13 @@ const STATUSES: AutomationPositionStatus[] = [
   'EXITING',
   'CLOSED',
   'MANUAL_REVIEW',
+  'RECOVERY_FAILED',
 ];
 
 const EXIT_REASONS: ExitReason[] = [
   'EMERGENCY_STOP',
   'END_OF_DAY',
+  'OVERNIGHT_RECOVERY',
   'HARD_STOP',
   'BROKER_MANUAL_CLOSE',
   'OPERATOR_CLOSE',
@@ -176,6 +203,13 @@ const AutomationPositionSchema = new Schema<AutomationPositionDocument>(
     exitSubmittedAt: { type: Date, default: null },
     exitFilledQty: { type: Number, required: true, default: 0 },
     manualReviewReason: { type: String, default: null },
+
+    // Overnight recovery (additive — never treated as a healthy open position).
+    overnightRecoveryRequired: { type: Boolean, required: true, default: false, index: true },
+    overnightDetectedAt: { type: Date, default: null },
+    overnightReason: { type: String, default: null },
+    recoveryExitEligibleAt: { type: Date, default: null },
+    recoveryExitSubmittedAt: { type: Date, default: null },
   },
   { timestamps: true, collection: 'automation_positions' }
 );

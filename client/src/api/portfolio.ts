@@ -46,11 +46,64 @@ export type PortfolioOperations = {
   };
   manualBrokerActivity: { positions: OwnedPosition[]; orders: any[] };
   health: any;
+  runtime?: {
+    evaluationScheduler?: { state?: string; ownerId?: string | null; lastTickAt?: string | null; lastError?: string | null };
+    monitorScheduler?: { state?: string; ownerId?: string | null; lastTickAt?: string | null; lastError?: string | null };
+  };
   risk: PortfolioRisk[];
+};
+
+export type AutomationVisibilityEvent = {
+  id?: string;
+  timestamp?: string | null;
+  service?: string;
+  event?: string;
+  severity?: string;
+  automationSessionId?: string | null;
+  intentId?: string | null;
+  brokerOrderId?: string | null;
+  symbol?: string | null;
+  payload?: Record<string, unknown>;
+};
+
+export type AutomationVisibility = {
+  generatedAt: string;
+  engineStatus: any;
+  watchlistEvaluation: {
+    evaluationId: string | null;
+    evaluatedAt: string | null;
+    symbolCount: number;
+    symbols: string[];
+    outcome: string | null;
+    reasonCodes: string[];
+    selectedSymbol: string | null;
+    selectedContract: string | null;
+    riskApproved: boolean | null;
+    riskReasonCodes: string[];
+    results: any[];
+    ranking: any[];
+    dataHealth: any;
+  };
+  activeTrades: any[];
+  pendingOrders: any[];
+  timeline: AutomationVisibilityEvent[];
+  metrics: any;
+  schedulerPanel: any;
+  tradeHistory: any[];
+  portfolioIntegration: {
+    automationPositions: OwnedPosition[];
+    manualPositions: OwnedPosition[];
+  };
+  configuration: any;
 };
 
 export async function getOperations(): Promise<PortfolioOperations> {
   const { data } = await http.get<PortfolioOperations>('/api/portfolio/operations');
+  return data;
+}
+
+export async function getAutomationVisibility(): Promise<AutomationVisibility> {
+  const { data } = await http.get<AutomationVisibility>('/api/portfolio/automation/visibility');
   return data;
 }
 
@@ -81,6 +134,39 @@ export async function emergencyStop(sessionId: string, reason = 'operator emerge
 
 export async function cancelOrder(intentId: string) {
   const { data } = await http.post(`/api/portfolio/orders/${intentId}/cancel`, {});
+  return data;
+}
+
+export type PositionLiveSnapshot = {
+  positionId: string;
+  asOf: string;
+  available: boolean;
+  reason?: string;
+  optionSymbol?: string;
+  underlying?: string | null;
+  greeks?: {
+    delta: number | null;
+    gamma: number | null;
+    theta: number | null;
+    vega: number | null;
+    rho: number | null;
+  };
+  impliedVolatility?: number | null;
+  openInterest?: number | null;
+  dayVolume?: number | null;
+  breakEvenPrice?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  mid?: number | null;
+  daysToExpiration?: number | null;
+  source?: string;
+};
+
+/** Live greeks/IV/OI/day snapshot for a held position (cockpit 3s poll). */
+export async function getPositionLive(positionId: string): Promise<PositionLiveSnapshot> {
+  const { data } = await http.get<PositionLiveSnapshot>(
+    `/api/portfolio/automation/position/${positionId}/live`
+  );
   return data;
 }
 

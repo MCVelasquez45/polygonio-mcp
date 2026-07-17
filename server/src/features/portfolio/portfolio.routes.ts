@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import {
   getAutomation,
+  getAutomationVisibility,
+  getPositionLive,
   getOperations,
   getOrders,
   getPositions,
@@ -24,6 +26,8 @@ portfolioRouter.get('/operations', getOperations);
 portfolioRouter.get('/positions', getPositions);
 portfolioRouter.get('/orders', getOrders);
 portfolioRouter.get('/automation', getAutomation);
+portfolioRouter.get('/automation/visibility', getAutomationVisibility);
+portfolioRouter.get('/automation/position/:id/live', getPositionLive);
 portfolioRouter.get('/timeline/:sessionId', getTimeline);
 portfolioRouter.get('/trades', getTrades);
 

@@ -292,6 +292,29 @@ export function getExitPolicyConfig(): ExitPolicyConfig {
   };
 }
 
+export type OvernightRecoveryConfig = {
+  /**
+   * Master switch for auto-submitting the recovery flatten at the earliest valid
+   * options session. Default ON — an overnight automation position is a policy
+   * violation that must be flattened. Turn OFF only to require an operator to
+   * flip the switch (detection + blocking still run; the exit waits).
+   */
+  autoRecoverEnabled: boolean;
+  /**
+   * Grace skew (ms) added to the broker session open before the recovery exit is
+   * eligible, so we do not fire on the opening auction microstructure. Small by
+   * design — risk reduction overrides squeezing the open.
+   */
+  sessionOpenSkewMs: number;
+};
+
+export function getOvernightRecoveryConfig(): OvernightRecoveryConfig {
+  return {
+    autoRecoverEnabled: envBool('AUTOMATION_OVERNIGHT_AUTO_RECOVER', true),
+    sessionOpenSkewMs: envNumber('AUTOMATION_OVERNIGHT_SESSION_OPEN_SKEW_MS', 60_000),
+  };
+}
+
 export type AutomationConfigValidation = {
   ok: boolean;
   errors: string[];
@@ -527,6 +550,11 @@ export const REASON = {
   EXIT_ALREADY_IN_PROGRESS: 'EXIT_ALREADY_IN_PROGRESS',
   MONITOR_QUOTE_STALE: 'MONITOR_QUOTE_STALE',
   POSITION_NOT_CONFIRMED_CLOSED: 'POSITION_NOT_CONFIRMED_CLOSED',
+  // overnight recovery (critical lifecycle repair)
+  OVERNIGHT_RECOVERY_REQUIRED: 'OVERNIGHT_RECOVERY_REQUIRED',
+  OVERNIGHT_POSITION_BLOCKS_ENTRY: 'OVERNIGHT_POSITION_BLOCKS_ENTRY',
+  OVERNIGHT_RECOVERY_WAITING_SESSION: 'OVERNIGHT_RECOVERY_WAITING_SESSION',
+  OVERNIGHT_RECOVERY_EXIT_SUBMITTED: 'OVERNIGHT_RECOVERY_EXIT_SUBMITTED',
   // exit lifecycle recovery (Phase 2C finalization)
   EXIT_RETRY_SCHEDULED: 'EXIT_RETRY_SCHEDULED',
   EXIT_TIMEOUT_ESCALATED: 'EXIT_TIMEOUT_ESCALATED',

@@ -108,6 +108,13 @@ function normalizePosition(raw: any): BrokerPosition {
   };
 }
 
+export function positionIntentForAlpacaOrder(
+  intent: Pick<ApprovedOrderIntent, 'intentType' | 'side'>
+): 'buy_to_close' | 'sell_to_close' | undefined {
+  if (intent.intentType !== 'EXIT') return undefined;
+  return intent.side === 'SELL' ? 'sell_to_close' : 'buy_to_close';
+}
+
 export function createAlpacaPaperBrokerAdapter(): PaperBrokerAdapter {
   // Guard at construction AND before every submit — belt and braces.
   assertPaperConfiguration();
@@ -182,6 +189,7 @@ export function createAlpacaPaperBrokerAdapter(): PaperBrokerAdapter {
               symbol: intent.symbol,
               qty: intent.quantity,
               side: intent.side.toLowerCase() as 'buy' | 'sell',
+              position_intent: positionIntentForAlpacaOrder(intent),
             },
           ],
           quantity: intent.quantity,

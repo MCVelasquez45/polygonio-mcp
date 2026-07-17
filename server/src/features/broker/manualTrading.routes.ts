@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { logAutomationEvent } from '../automation/services/automationAudit.service';
 import { getAlpacaClock, submitAlpacaOptionsOrder } from './services/alpaca';
-import { orderPayloadHash } from './executionGateway';
+import { manualClientOrderId, orderPayloadHash } from './executionGateway';
 import {
   confirmManualIntent,
   createManualIntent,
@@ -38,10 +38,22 @@ async function gatherGates(): Promise<ManualGateState> {
 router.post('/intents', async (req, res, next) => {
   try {
     const b = req.body ?? {};
+    if (b.executionMode != null && b.executionMode !== 'MANUAL') {
+      return res.status(400).json({ error: 'executionMode must be MANUAL' });
+    }
+    if (b.orderSource != null && b.orderSource !== 'MANUAL_UI') {
+      return res.status(400).json({ error: 'orderSource must be MANUAL_UI' });
+    }
+    if (b.action != null && b.action !== 'OPEN_ORDER' && b.action !== 'CLOSE_POSITION') {
+      return res.status(400).json({ error: 'action must be OPEN_ORDER or CLOSE_POSITION' });
+    }
     if (!b.optionSymbol || !b.side || !b.quantity || !b.orderType) {
       return res.status(400).json({ error: 'optionSymbol, side, quantity, orderType are required' });
     }
     const intent = await createManualIntent({
+      executionMode: 'MANUAL',
+      orderSource: 'MANUAL_UI',
+      action: b.action === 'CLOSE_POSITION' ? 'CLOSE_POSITION' : 'OPEN_ORDER',
       optionSymbol: String(b.optionSymbol),
       side: b.side === 'sell' ? 'sell' : 'buy',
       quantity: Number(b.quantity),
@@ -49,6 +61,7 @@ router.post('/intents', async (req, res, next) => {
       limitPrice: b.limitPrice ?? b.limit_price ?? null,
       timeInForce: b.timeInForce ?? b.time_in_force ?? 'day',
       positionIntent: b.positionIntent ?? b.position_intent,
+      brokerPositionQuantity: b.brokerPositionQuantity ?? b.broker_position_quantity ?? null,
       requestedByUserId: b.requestedByUserId ?? null,
       marketDataSource: b.marketDataSource ?? null,
     });
@@ -132,14 +145,20 @@ router.post('/intents/:id/submit', async (req, res, next) => {
 
 /** Strip internal Mongoose fields for the API response. */
 function sanitize(doc: any) {
+  const authorizationId = String(doc._id);
+  const idempotencyKey = doc.clientOrderId ?? manualClientOrderId(authorizationId, 1);
   return {
-    id: String(doc._id),
+    id: authorizationId,
     status: doc.status,
     executionMode: doc.executionMode,
     orderSource: doc.orderSource,
+    action: doc.action ?? 'OPEN_ORDER',
     optionSymbol: doc.optionSymbol,
     side: doc.side,
     quantity: doc.quantity,
+    brokerPositionQuantity: doc.brokerPositionQuantity ?? null,
+    authorizationId,
+    idempotencyKey,
     orderType: doc.orderType,
     limitPrice: doc.limitPrice,
     timeInForce: doc.timeInForce,

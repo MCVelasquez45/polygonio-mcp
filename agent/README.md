@@ -25,10 +25,10 @@ GPT‑5 powered financial analyst that pairs the OpenAI Agents SDK with Polygon.
   - `POLYGON_API_KEY`
   - `FRED_API_KEY` (required for macro queries)
 
-Duplicate the supplied `env.example` to `.env` and fill in the keys:
+Duplicate the supplied `.env.example` to `.env` and fill in the keys:
 
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
 
 ---
@@ -97,7 +97,7 @@ agent/
 │   ├── __init__.py
 │   └── polygon_agent.py   # Agent factory, guardrails, Polygon/FRED tools
 ├── main.py                # Thin entrypoint that runs the CLI app
-├── env.example            # Sample environment variables
+├── .env.example           # Sample environment variables
 ├── pyproject.toml         # Dependencies + packaging metadata
 └── reports/               # Markdown reports generated via save_analysis_report
 ```

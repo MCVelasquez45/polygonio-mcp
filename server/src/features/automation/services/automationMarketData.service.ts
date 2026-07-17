@@ -1,8 +1,9 @@
 import { resolveAggregates } from '../../market/services/aggregatesService';
+import { getMassiveOptionQuoteSnapshot } from '../../../shared/data/massive';
 import { getAutomationChain } from '../../marketData/optionsMarketDataOrchestrator.service';
 import type { ChainCompleteness, UnderlyingContext } from '../../marketData/optionsData.types';
 import type { AutomationStrategyConfig } from '../automation.config';
-import { REASON } from '../automation.config';
+import { getStrategyConfig, REASON } from '../automation.config';
 import type { AutomationBar } from './indicatorAdapter.service';
 import type { SignalDirection } from '../models/tradeCandidate.model';
 
@@ -232,6 +233,113 @@ export async function fetchOptionChain(
     completeness: response.completeness,
     underlyingContext: response.underlyingContext,
   };
+}
+
+/** Parsed underlying root of an OCC option symbol (O:SPY260724P00756000 → SPY). */
+export function underlyingFromOccSymbol(optionSymbol: string): string {
+  const bare = optionSymbol.toUpperCase().replace(/^O:/, '');
+  const m = bare.match(/^([A-Z]+)\d{6}[CP]\d{8}$/);
+  return m ? m[1] : bare;
+}
+
+/**
+ * Pure mark-freshness decision. A mark is stale when: there is no usable mark,
+ * the provider gave no quote timestamp (we refuse to trust an untimed quote), or
+ * the quote's age (from ITS OWN provider timestamp, never the request cadence)
+ * exceeds the threshold. This is the single source of truth for staleness so a
+ * slow paginated fetch cannot fake freshness and an old quote cannot look fresh.
+ */
+export function isMarkStale(
+  params: { mark: number | null; providerQuoteTimestamp: number | null; computedAgeMs: number | null },
+  thresholdMs: number
+): boolean {
+  const hasMark = params.mark != null && Number.isFinite(params.mark) && params.mark > 0;
+  if (!hasMark) return true;
+  if (params.providerQuoteTimestamp == null) return true;
+  if (params.computedAgeMs != null && params.computedAgeMs > thresholdMs) return true;
+  return false;
+}
+
+export type HeldContractMarkResult = {
+  mark: number | null;
+  providerQuoteTimestamp: number | null;
+  fetchStartedAt: number;
+  fetchCompletedAt: number;
+  computedAgeMs: number | null;
+  source: 'contract-snapshot' | 'chain-fallback' | 'none';
+  cacheStatus: 'LIVE' | 'FALLBACK' | 'NONE';
+};
+
+/**
+ * Targeted held-contract mark for the monitoring path. Uses the NARROWEST
+ * authorized request — a single direct option-contract snapshot by OCC symbol
+ * (one request, routed through the shared request manager with OPEN_POSITION
+ * priority + dedup + cache), NOT a full-chain download. The mark's freshness is
+ * derived from the contract's OWN provider quote timestamp, never the fetch
+ * start/finish, so a slow request cannot fake staleness and a stale quote cannot
+ * look fresh. Full-chain fetch is a guarded last-resort fallback only.
+ */
+export async function fetchHeldContractMark(
+  optionSymbol: string,
+  now: number = Date.now()
+): Promise<HeldContractMarkResult> {
+  const symbol = optionSymbol.toUpperCase();
+  const underlying = underlyingFromOccSymbol(symbol);
+  const fetchStartedAt = now;
+
+  const midFrom = (bid: number | null, ask: number | null, mid: number | null): number | null => {
+    if (mid != null && mid > 0) return mid;
+    if (bid != null && ask != null && bid > 0 && ask >= bid) return Number(((bid + ask) / 2).toFixed(4));
+    return null;
+  };
+
+  try {
+    const quote = await getMassiveOptionQuoteSnapshot(underlying, symbol);
+    const fetchCompletedAt = Date.now();
+    const mark = midFrom(quote.bid, quote.ask, quote.mid);
+    return {
+      mark: mark != null && mark > 0 ? mark : null,
+      providerQuoteTimestamp: quote.quoteTimestamp,
+      fetchStartedAt,
+      fetchCompletedAt,
+      computedAgeMs: quote.quoteTimestamp != null ? fetchCompletedAt - quote.quoteTimestamp : null,
+      source: 'contract-snapshot',
+      cacheStatus: 'LIVE',
+    };
+  } catch {
+    // Guarded fallback: a single chain read (still one orchestrated fetch), only
+    // when the direct snapshot is unavailable. Never the default hot path.
+    try {
+      const config = getStrategyConfig(underlying);
+      const direction: SignalDirection = symbol.replace(/^O:/, '').match(/\d{6}P\d{8}$/)
+        ? 'BEARISH'
+        : 'BULLISH';
+      const chain = await fetchOptionChain(config, direction, null, now);
+      const contract = chain.contracts.find(c => c.symbol === symbol);
+      const fetchCompletedAt = Date.now();
+      const mark = contract ? midFrom(contract.bid, contract.ask, contract.mid) : null;
+      return {
+        mark: mark != null && mark > 0 ? mark : null,
+        providerQuoteTimestamp: contract?.quoteTimestamp ?? null,
+        fetchStartedAt,
+        fetchCompletedAt,
+        computedAgeMs:
+          contract?.quoteTimestamp != null ? fetchCompletedAt - contract.quoteTimestamp : null,
+        source: 'chain-fallback',
+        cacheStatus: 'FALLBACK',
+      };
+    } catch {
+      return {
+        mark: null,
+        providerQuoteTimestamp: null,
+        fetchStartedAt,
+        fetchCompletedAt: Date.now(),
+        computedAgeMs: null,
+        source: 'none',
+        cacheStatus: 'NONE',
+      };
+    }
+  }
 }
 
 export function normalizeChainLeg(

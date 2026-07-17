@@ -144,7 +144,6 @@ vi.mock('../api', () => ({
 // OrderTicketPanel imports these directly (not via the api index).
 vi.mock('../api/alpaca', () => ({
   getBrokerAccount: vi.fn(async () => ({ buying_power: '10000' })),
-  submitOptionOrder: vi.fn(async () => ({})),
 }));
 
 import App from '../App';

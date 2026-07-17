@@ -24,6 +24,7 @@ import { getMarketClockDecision } from './marketClock.service';
 import { createOrderIntent } from './orderIntent.service';
 import { selectContract } from './optionSelector.service';
 import { evaluateRisk } from './riskEngine.service';
+import { countOvernightRecoveryPositions } from './overnightRecovery.service';
 import { ensureDailyReset } from './sessionDailyReset.service';
 import { isAutomationReady } from './sessionRecovery.service';
 import { evaluateStrategy } from './strategyEvaluator.service';
@@ -264,6 +265,7 @@ export async function processClosedBar(
     automationSessionId: String(session._id),
     status: { $in: ['SUBMITTING', 'MANUAL_REVIEW', 'APPROVED_AWAITING_EXECUTION'] },
   });
+  const overnightRecoveryPositions = await countOvernightRecoveryPositions(String(session._id));
 
   const evaluation = evaluateStrategy(indicators, config, {
     hasOpenAutomationPosition: openAutomationPositions > 0,
@@ -369,6 +371,7 @@ export async function processClosedBar(
     selectedContract: selectionResult.selected,
     openAutomationPositions,
     unresolvedAutomationOrders,
+    overnightRecoveryPositions,
     marketDataOk: validation.ok,
     underlyingBarAgeMs: Math.max(0, barAgeMs),
     clockDecision,

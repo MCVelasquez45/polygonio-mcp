@@ -120,11 +120,26 @@ export function applyEntryFill(position: AutomationPositionDocument, order: Brok
   }
 }
 
-/** Update the monitored mark + unrealized P&L + excursions from an authoritative quote. */
-export function applyMark(position: AutomationPositionDocument, mark: number | null, now: Date = new Date()): void {
+/**
+ * Update the monitored mark + unrealized P&L + excursions from an authoritative
+ * quote. `lastMarkAt` reflects the DATA's freshness, not the loop cadence: when
+ * the provider supplies the quote's own timestamp we stamp THAT, so a mark
+ * fetched during a long paginated request is not falsely "refreshed" to now, and
+ * a market-closed quote stays honestly frozen at the last real quote time. Only
+ * when no provider timestamp exists do we fall back to `now`.
+ */
+export function applyMark(
+  position: AutomationPositionDocument,
+  mark: number | null,
+  now: Date = new Date(),
+  providerQuoteTimestamp?: number | null
+): void {
   if (mark == null || !Number.isFinite(mark) || position.avgEntryPrice == null) return;
   position.currentMark = mark;
-  position.lastMarkAt = now;
+  position.lastMarkAt =
+    providerQuoteTimestamp != null && Number.isFinite(providerQuoteTimestamp)
+      ? new Date(providerQuoteTimestamp)
+      : now;
   const unrealized = Number(((mark - position.avgEntryPrice) * position.filledQty * 100).toFixed(2));
   position.unrealizedPnl = unrealized;
   position.maxFavorableExcursion =
@@ -141,6 +156,18 @@ export type MonitorContext = {
   /** Authoritative current option mark (mid). Null = data unavailable. */
   currentMark: number | null;
   quoteStale: boolean;
+  /** The held contract's provider quote timestamp (ms epoch), if known. */
+  markProviderTimestamp?: number | null;
+  /** When the mark fetch completed (ms epoch), for freshness diagnostics. */
+  markFetchCompletedAt?: number | null;
+  /** Computed age of the mark at receipt (ms), for freshness diagnostics. */
+  markComputedAgeMs?: number | null;
+  /** Freshness threshold in force (ms), for freshness diagnostics. */
+  markFreshnessThresholdMs?: number | null;
+  /** Where the mark came from (e.g. contract-snapshot / chain / cache). */
+  markSource?: string | null;
+  /** Cache status for the mark request (HIT / MISS / DEDUP), if known. */
+  markCacheStatus?: string | null;
 };
 
 /**
@@ -155,10 +182,57 @@ export async function monitorAndMaybeExit(
 ): Promise<{ exited: boolean; reason: ExitReason | null }> {
   if (position.status !== 'OPEN') return { exited: false, reason: null };
 
-  applyMark(position, ctx.currentMark, now);
+  applyMark(position, ctx.currentMark, now, ctx.markProviderTimestamp);
+
+  // Structured freshness diagnostics — the authoritative signal for WHY a mark
+  // was (or was not) usable. Age is computed against the DATA's own timestamp,
+  // never the loop cadence, so a slow paginated fetch cannot fake staleness and
+  // a truly old quote cannot masquerade as fresh.
+  const markDiagnostics = {
+    symbol: position.optionSymbol,
+    providerQuoteTimestamp: ctx.markProviderTimestamp ?? null,
+    providerQuoteAt:
+      ctx.markProviderTimestamp != null ? new Date(ctx.markProviderTimestamp).toISOString() : null,
+    fetchCompletedAt:
+      ctx.markFetchCompletedAt != null ? new Date(ctx.markFetchCompletedAt).toISOString() : null,
+    computedAgeMs: ctx.markComputedAgeMs ?? null,
+    freshnessThresholdMs: ctx.markFreshnessThresholdMs ?? null,
+    dataSource: ctx.markSource ?? null,
+    cacheStatus: ctx.markCacheStatus ?? null,
+    lastMarkAt: position.lastMarkAt?.toISOString() ?? null,
+  };
+  if (ctx.currentMark == null) {
+    logAutomationEvent({
+      service: 'position',
+      event: 'MONITOR_MARK_MISSING',
+      severity: 'warning',
+      automationSessionId: position.automationSessionId,
+      symbol: position.optionSymbol,
+      payload: markDiagnostics,
+    });
+  } else if (ctx.quoteStale) {
+    logAutomationEvent({
+      service: 'position',
+      event: 'MONITOR_MARK_STALE',
+      severity: 'warning',
+      automationSessionId: position.automationSessionId,
+      symbol: position.optionSymbol,
+      payload: markDiagnostics,
+    });
+  } else {
+    logAutomationEvent({
+      service: 'position',
+      event: 'MONITOR_MARK_FRESH',
+      severity: 'info',
+      automationSessionId: position.automationSessionId,
+      symbol: position.optionSymbol,
+      payload: markDiagnostics,
+    });
+  }
 
   // Data outage: never invent a mark. Suppress price triggers, raise a warning,
-  // keep reconciling. (Entry blocking is handled by the scheduler.)
+  // keep reconciling. (Entry blocking is handled by the scheduler.) Retained for
+  // backward-compatible alerting alongside the richer MONITOR_MARK_* events.
   if (ctx.quoteStale || ctx.currentMark == null) {
     logAutomationEvent({
       service: 'position',
@@ -166,7 +240,7 @@ export async function monitorAndMaybeExit(
       severity: 'warning',
       automationSessionId: position.automationSessionId,
       symbol: position.optionSymbol,
-      payload: { reason: REASON.MONITOR_QUOTE_STALE, lastMarkAt: position.lastMarkAt?.toISOString() ?? null },
+      payload: { reason: REASON.MONITOR_QUOTE_STALE, ...markDiagnostics },
     });
   }
 
@@ -237,6 +311,69 @@ export async function submitExit(
 
   const { intent } = await placeExitOrder(position, adapter, reason, now);
   return intent;
+}
+
+/**
+ * Retry a recovery exit that was parked in MANUAL_REVIEW only because every
+ * prior attempt failed before Alpaca acknowledged an exit order. This is a
+ * narrow operator/recovery path, not a generic MANUAL_REVIEW escape hatch.
+ */
+export async function retryManualReviewRecoveryExit(
+  positionId: string,
+  adapter: PaperBrokerAdapter,
+  now: Date = new Date()
+): Promise<{ intent: OrderIntentDocument; closed: boolean }> {
+  const position = await AutomationPositionModel.findById(positionId);
+  if (!position) throw new Error(`position ${positionId} not found`);
+  const nothingWorkingAtBroker = position.exitBrokerOrderId == null && (position.exitFilledQty ?? 0) === 0;
+  const retryable =
+    position.status === 'MANUAL_REVIEW' &&
+    position.overnightRecoveryRequired &&
+    position.exitReason === 'OVERNIGHT_RECOVERY' &&
+    nothingWorkingAtBroker &&
+    String(position.manualReviewReason ?? '').includes(REASON.EXIT_RETRIES_EXHAUSTED);
+  if (!retryable) {
+    throw new Error(`position ${positionId} is not a retryable overnight recovery failure`);
+  }
+
+  const nextAttempt = Math.max(0, position.exitAttemptCount ?? 0) + 1;
+  const claim = await AutomationPositionModel.updateOne(
+    {
+      _id: position._id,
+      status: 'MANUAL_REVIEW',
+      overnightRecoveryRequired: true,
+      exitReason: 'OVERNIGHT_RECOVERY',
+      exitBrokerOrderId: null,
+      exitFilledQty: 0,
+    },
+    {
+      $set: {
+        status: 'EXITING',
+        exitAttemptCount: nextAttempt,
+        exitFilledQty: 0,
+        manualReviewReason: null,
+      },
+    }
+  );
+  if (claim.modifiedCount !== 1) {
+    throw new Error(`position ${positionId} recovery retry was already claimed`);
+  }
+
+  position.status = 'EXITING';
+  position.exitAttemptCount = nextAttempt;
+  position.exitFilledQty = 0;
+  position.manualReviewReason = null;
+
+  logAutomationEvent({
+    service: 'position',
+    event: 'MANUAL_REVIEW_RECOVERY_RETRY_CLAIMED',
+    severity: 'warning',
+    automationSessionId: position.automationSessionId,
+    symbol: position.optionSymbol,
+    payload: { reason: 'OVERNIGHT_RECOVERY', attempt: nextAttempt },
+  });
+
+  return placeExitOrder(position, adapter, 'OVERNIGHT_RECOVERY', now);
 }
 
 /**
@@ -315,6 +452,11 @@ async function finalizeClose(
 ): Promise<void> {
   const account = await adapter.getAccount().catch(() => null);
   await recordClosedTradeRisk(String(position._id), account?.equity ?? null, now);
+  // Release the single-position slot: the entry+exit intents' round trip is now
+  // complete, so they must no longer count as an open position. Idempotent and
+  // never regresses an already-terminal intent. This is what lets the next
+  // entry be approved AFTER (and only after) a broker-confirmed close.
+  await completeRoundTripIntents(position, now);
   logAutomationEvent({
     service: 'position',
     event: 'POSITION_CLOSED',
@@ -322,6 +464,21 @@ async function finalizeClose(
     symbol: position.optionSymbol,
     payload: { avgExitPrice: position.avgExitPrice, exitReason: position.exitReason },
   });
+}
+
+/**
+ * Mark the entry and exit intents COMPLETED once the position is broker-closed.
+ * These are the only intents that represent "an open automation position" to
+ * the entry gate (SUBMITTED count), so completing them releases the slot. Never
+ * regresses an intent already in a terminal state.
+ */
+async function completeRoundTripIntents(position: AutomationPositionDocument, now: Date): Promise<void> {
+  const ids = [position.entryIntentId, position.exitIntentId].filter((id): id is string => Boolean(id));
+  if (!ids.length) return;
+  await OrderIntentModel.updateMany(
+    { _id: { $in: ids }, status: { $nin: ['BROKER_REJECTED', 'FAILED', 'MANUAL_REVIEW', 'COMPLETED'] } },
+    { $set: { status: 'COMPLETED', completedAt: now } }
+  );
 }
 
 /** Whether the current exit has exceeded the configured EXITING timeout. */
@@ -359,6 +516,68 @@ async function escalateExitToManualReview(
   return { closed: false, escalated: true, retried: false };
 }
 
+/**
+ * Terminate an EXITING position as RECOVERY_FAILED — the deterministic
+ * recovery-exhausted state. Preserves ALL history (never deletes), leaves the
+ * broker position untouched, and releases the entry-gate slot so the engine can
+ * resume evaluating new opportunities. It does this by marking the round-trip
+ * intents terminal (the documented slot-release mechanism): the failed recovery
+ * EXIT orders → FAILED, and the ENTRY order → COMPLETED (its order lifecycle is
+ * genuinely done — it filled). A RECOVERY_FAILED position is excluded from every
+ * live-management query, so the scheduler ignores it for concurrency and never
+ * touches it again. Idempotent.
+ */
+async function escalateExitToRecoveryFailed(
+  position: AutomationPositionDocument,
+  reasonCode: string,
+  detail: string,
+  now: Date
+): Promise<ReconcileExitResult> {
+  const claim = await AutomationPositionModel.updateOne(
+    { _id: position._id, status: 'EXITING' },
+    { $set: { status: 'RECOVERY_FAILED', manualReviewReason: `${reasonCode}: ${detail}`, lastBrokerReconciledAt: now } }
+  );
+  if (claim.modifiedCount !== 1) return { closed: false, escalated: false, retried: false };
+  position.status = 'RECOVERY_FAILED';
+  position.manualReviewReason = `${reasonCode}: ${detail}`;
+
+  // Release the entry-gate slot WITHOUT deleting data. The dead recovery EXIT
+  // attempts for this contract become terminal failures; the ENTRY order (which
+  // filled) becomes COMPLETED. This drops both the concurrency (SUBMITTED) and
+  // unresolved-order (SUBMITTING/…) counts to zero for this position.
+  await OrderIntentModel.updateMany(
+    {
+      automationSessionId: position.automationSessionId,
+      optionSymbol: position.optionSymbol,
+      intentType: 'EXIT',
+      status: { $nin: ['BROKER_REJECTED', 'FAILED', 'MANUAL_REVIEW', 'COMPLETED'] },
+    },
+    { $set: { status: 'FAILED', rejectionReason: `${reasonCode}: ${detail}`, completedAt: now } }
+  );
+  if (position.entryIntentId) {
+    await OrderIntentModel.updateOne(
+      { _id: position.entryIntentId, status: { $nin: ['BROKER_REJECTED', 'FAILED', 'MANUAL_REVIEW', 'COMPLETED'] } },
+      { $set: { status: 'COMPLETED', completedAt: now } }
+    );
+  }
+
+  logAutomationEvent({
+    service: 'position',
+    event: 'POSITION_RECOVERY_FAILED',
+    severity: 'critical',
+    automationSessionId: position.automationSessionId,
+    symbol: position.optionSymbol,
+    payload: {
+      reason: reasonCode,
+      detail,
+      exitAttemptCount: position.exitAttemptCount,
+      exitBrokerOrderId: position.exitBrokerOrderId,
+      note: 'terminal, non-blocking; broker position (if any) untouched and Portfolio-display only',
+    },
+  });
+  return { closed: false, escalated: true, retried: false };
+}
+
 /** Retry the exit if attempts remain and it is over-sell safe; else escalate. */
 async function retryOrEscalateExit(
   position: AutomationPositionDocument,
@@ -368,12 +587,18 @@ async function retryOrEscalateExit(
 ): Promise<ReconcileExitResult> {
   const { maxExitRetries } = getExitPolicyConfig();
   if (position.exitAttemptCount >= maxExitRetries) {
-    return escalateExitToManualReview(
-      position,
-      REASON.EXIT_RETRIES_EXHAUSTED,
-      `exit failed after ${position.exitAttemptCount} attempt(s) (${reasonCode})`,
-      now
-    );
+    const detail = `exit failed after ${position.exitAttemptCount} attempt(s) (${reasonCode})`;
+    // Deterministic split: when the recovery is exhausted AND nothing is left
+    // working at the broker (no acknowledged exit order, no partial exit fill),
+    // this is RECOVERY_FAILED — terminal, audit-preserving, and NON-blocking so
+    // the engine is never frozen forever by a dead recovery. Otherwise (a
+    // partial fill or a still-acknowledged exit order exists) it stays
+    // MANUAL_REVIEW: a human must resolve the over-sell / working-order risk.
+    const nothingWorkingAtBroker = position.exitBrokerOrderId == null && (position.exitFilledQty ?? 0) === 0;
+    if (nothingWorkingAtBroker) {
+      return escalateExitToRecoveryFailed(position, REASON.EXIT_RETRIES_EXHAUSTED, detail, now);
+    }
+    return escalateExitToManualReview(position, REASON.EXIT_RETRIES_EXHAUSTED, detail, now);
   }
   position.exitAttemptCount += 1;
   logAutomationEvent({

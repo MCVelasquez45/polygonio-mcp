@@ -1,4 +1,5 @@
 import { getBrokerLifecycleConfig } from '../automation.config';
+import { AutomationPositionModel } from '../models/automationPosition.model';
 import { BrokerOrderModel } from '../models/brokerOrder.model';
 import { OrderIntentModel } from '../models/orderIntent.model';
 import { logAutomationEvent } from './automationAudit.service';
@@ -161,16 +162,67 @@ async function countUnresolvedContradictions(): Promise<number> {
   return BrokerOrderModel.countDocuments({ status: 'MANUAL_REVIEW', intentId: { $ne: null } });
 }
 
+type ManualReviewIntentSnapshot = {
+  _id: unknown;
+  automationSessionId: string;
+  intentType: string;
+  brokerOrderId: string | null;
+  idempotencyInputs?: { idempotencyScope?: string | null } | null;
+};
+
+function parseExitAttemptScope(scope: string | null | undefined): { positionId: string; attempt: number } | null {
+  const match = /^exit:([a-f0-9]{24}):(\d+)$/i.exec(scope ?? '');
+  if (!match) return null;
+  return { positionId: match[1], attempt: Number(match[2]) };
+}
+
+async function isSupersededNoBrokerRecoveryExit(intent: ManualReviewIntentSnapshot): Promise<boolean> {
+  if (intent.intentType !== 'EXIT') return false;
+  if (intent.brokerOrderId) return false;
+  const parsed = parseExitAttemptScope(intent.idempotencyInputs?.idempotencyScope);
+  if (!parsed || !Number.isFinite(parsed.attempt)) return false;
+  const closedByLaterRecovery = await AutomationPositionModel.exists({
+    _id: parsed.positionId,
+    automationSessionId: intent.automationSessionId,
+    status: 'CLOSED',
+    exitReason: 'OVERNIGHT_RECOVERY',
+    overnightRecoveryRequired: true,
+    exitBrokerOrderId: { $ne: null },
+    exitIntentId: { $ne: String(intent._id) },
+  });
+  return closedByLaterRecovery != null;
+}
+
+/**
+ * Count MANUAL_REVIEW intents that still represent unresolved order risk.
+ * Superseded overnight-recovery EXIT attempts with no broker order are terminal
+ * failed attempts once a later recovery EXIT broker-confirms the position closed;
+ * keeping them in MANUAL_REVIEW preserves the audit trail but must not freeze
+ * unrelated future entries.
+ */
+export async function countBlockingManualReviewIntents(automationSessionId?: string): Promise<number> {
+  const query: Record<string, unknown> = { status: 'MANUAL_REVIEW' };
+  if (automationSessionId) query.automationSessionId = automationSessionId;
+  const intents = await OrderIntentModel.find(query)
+    .select('_id automationSessionId intentType brokerOrderId idempotencyInputs')
+    .lean<ManualReviewIntentSnapshot[]>();
+  let blocking = 0;
+  for (const intent of intents) {
+    if (await isSupersededNoBrokerRecoveryExit(intent)) continue;
+    blocking += 1;
+  }
+  return blocking;
+}
+
 /**
  * Whether an unresolved automation order exists — new submissions must be
- * blocked while one does (a nonterminal order needing verification, or an order
- * in MANUAL_REVIEW).
+ * blocked while one does (a nonterminal order needing verification, or a
+ * blocking order/intention in MANUAL_REVIEW).
  */
 export async function hasUnresolvedAutomationOrder(): Promise<boolean> {
   const manualReview = await BrokerOrderModel.countDocuments({ status: 'MANUAL_REVIEW', intentId: { $ne: null } });
   if (manualReview > 0) return true;
-  const manualReviewIntents = await OrderIntentModel.countDocuments({ status: 'MANUAL_REVIEW' });
-  return manualReviewIntents > 0;
+  return (await countBlockingManualReviewIntents()) > 0;
 }
 
 // ---------------------------------------------------------------------------

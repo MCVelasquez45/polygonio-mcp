@@ -17,9 +17,15 @@ import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
 import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { OptionsScanner } from './components/screener/OptionsScanner';
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
+import { CockpitLayout } from './components/cockpit/CockpitLayout';
 import { ChatDock } from './components/chat/ChatDock';
 import { Dashboard } from './components/dashboard';
-import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
+import { analysisApi, chatApi, marketApi } from './api';
+import {
+  LEGACY_SUBMISSION_DISABLED_MESSAGE,
+  classifyOrderHistoryError,
+  getOptionOrdersForPolling,
+} from './api/orderHistory';
 import { computeExpirationDte } from './utils/expirations';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
@@ -338,7 +344,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -533,7 +539,6 @@ function App() {
   const autoContractSelectionKeyRef = useRef<string | null>(null);
   const [contractAnalysisRequestId, setContractAnalysisRequestId] = useState(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
-  const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSnapshotSymbolRef = useRef<string | null>(null);
   const [tradeMarkers, setTradeMarkers] = useState<SeriesMarker<UTCTimestamp>[]>([]);
 
@@ -1607,9 +1612,12 @@ function App() {
     }
 
     let isMounted = true;
+    let structuralFailure = false;
+    const controller = new AbortController();
     const fetchOrders = async () => {
+      if (structuralFailure) return;
       try {
-        const { orders } = await alpacaApi.getOptionOrders({ status: 'filled', limit: 50 });
+        const { orders } = await getOptionOrdersForPolling({ status: 'filled', limit: 50 }, controller.signal);
         if (!isMounted) return;
 
         // Filter and map orders for the current display ticker
@@ -1635,7 +1643,30 @@ function App() {
           .filter((m): m is SeriesMarker<UTCTimestamp> => m !== null);
 
         setTradeMarkers(markers);
-      } catch (err) {
+      } catch (err: any) {
+        if (!isMounted) return;
+        const classification = classifyOrderHistoryError(err);
+        if (classification === 'canceled') {
+          console.debug('fetchOrders canceled');
+          return;
+        }
+        if (classification === 'legacy-disabled') {
+          structuralFailure = true;
+          console.warn(LEGACY_SUBMISSION_DISABLED_MESSAGE);
+          return;
+        }
+        if (classification === 'structural') {
+          structuralFailure = true;
+          console.warn('Order-history polling stopped after structural HTTP error', {
+            status: err?.response?.status,
+            url: err?.config?.url,
+          });
+          return;
+        }
+        if (err?.code === 'BACKEND_UNAVAILABLE' || classification === 'network') {
+          console.debug('Order-history polling paused while backend health recovers');
+          return;
+        }
         console.error('Failed to fetch trade markers:', err);
       }
     };
@@ -1644,36 +1675,10 @@ function App() {
     const interval = setInterval(fetchOrders, 30000); // Poll every 30s
     return () => {
       isMounted = false;
+      controller.abort();
       clearInterval(interval);
     };
   }, [displayTicker, chartDataSymbol]);
-
-  useEffect(() => {
-    const targets = new Set<string>();
-    watchlistSymbols.forEach((symbol: string) => {
-      const normalized = symbol.toUpperCase();
-      if (!normalized.startsWith('O:')) {
-        targets.add(normalized);
-      }
-    });
-    if (chartTicker && !chartTicker.startsWith('O:')) targets.add(chartTicker.toUpperCase());
-    const tickers = Array.from(targets).filter(Boolean);
-    if (!tickers.length) return;
-    if (warmTickersTimeoutRef.current) {
-      clearTimeout(warmTickersTimeoutRef.current);
-    }
-    warmTickersTimeoutRef.current = setTimeout(() => {
-      marketApi.warmAggregates(tickers).catch(error => {
-        console.warn('Failed to warm aggregate cache', error);
-      });
-    }, 500);
-    return () => {
-      if (warmTickersTimeoutRef.current) {
-        clearTimeout(warmTickersTimeoutRef.current);
-        warmTickersTimeoutRef.current = null;
-      }
-    };
-  }, [watchlistSignature, chartTicker, activeContractSymbol, watchlistSymbols]);
 
   const handleChartAnalysisRun = useCallback(async () => {
     if (!chartAnalysisAllowed) {
@@ -2902,6 +2907,11 @@ function App() {
               {view === 'portfolio' && (
                 <div className="pb-24">
                   <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+                </div>
+              )}
+              {view === 'cockpit' && (
+                <div className="pb-24">
+                  <CockpitLayout />
                 </div>
               )}
             </div>

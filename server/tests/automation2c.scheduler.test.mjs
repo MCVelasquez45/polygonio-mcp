@@ -72,7 +72,8 @@ test('evaluation scheduler tick', async (t) => {
     await mods.runEvaluationTick({ adapter: mock, ownerId: 'owner-A', now: NOW, evaluate: countingEvaluator });
     const second = await mods.runEvaluationTick({ adapter: mock, ownerId: 'owner-A', now: NOW, evaluate: countingEvaluator });
     assert.equal(evalCalls.length, 1, 'the window is evaluated exactly once');
-    assert.equal(second.sessions[0].skippedReason, 'WINDOW_ALREADY_EVALUATED');
+    assert.equal(second.sessions[0].skippedReason, 'WINDOW_ALREADY_CLAIMED');
+    assert.equal(second.skipReasons.WINDOW_ALREADY_CLAIMED, 1);
   });
 
   await t.test('a new window evaluates again', async () => {
@@ -90,7 +91,7 @@ test('evaluation scheduler tick', async (t) => {
     await session.save();
     const result = await mods.runEvaluationTick({ adapter: mock, ownerId: 'owner-A', now: NOW, evaluate: countingEvaluator });
     assert.equal(evalCalls.length, 0);
-    assert.equal(result.sessions[0].skippedReason, 'WINDOW_ALREADY_EVALUATED');
+    assert.equal(result.sessions[0].skippedReason, 'WINDOW_ALREADY_CLAIMED');
   });
 
   await t.test('market closed → no evaluation', async () => {

@@ -27,28 +27,6 @@ export type OptionPosition = {
   current_price?: string;
 };
 
-export type OptionsOrderLegPayload = {
-  symbol: string;
-  qty: number;
-  side: 'buy' | 'sell';
-  type?: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
-  limit_price?: number;
-  position_intent?: 'buy_to_open' | 'buy_to_close' | 'sell_to_open' | 'sell_to_close';
-};
-
-export type SubmitOptionsOrderPayload = {
-  legs: OptionsOrderLegPayload[];
-  quantity?: number;
-  time_in_force?: 'day' | 'gtc';
-  client_order_id?: string;
-  order_class?: 'simple' | 'multi-leg';
-  order_type?: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
-  limit_price?: number;
-  stop_price?: number;
-  trail_price?: number;
-  trail_percent?: number;
-};
-
 export async function getBrokerAccount(): Promise<BrokerAccountResponse> {
   const { data } = await http.get<BrokerAccountResponse>('/api/broker/alpaca/account');
   return data;
@@ -61,11 +39,6 @@ export async function getBrokerClock(): Promise<BrokerClockResponse> {
 
 export async function getOptionPositions(): Promise<{ positions: OptionPosition[] }> {
   const { data } = await http.get<{ positions: OptionPosition[] }>('/api/broker/alpaca/options/positions');
-  return data;
-}
-
-export async function submitOptionOrder(payload: SubmitOptionsOrderPayload) {
-  const { data } = await http.post('/api/broker/alpaca/options/orders', payload);
   return data;
 }
 
@@ -97,7 +70,10 @@ export type OptionOrder = {
   }[];
 };
 
-export async function getOptionOrders(params?: { status?: string; limit?: number }): Promise<{ orders: OptionOrder[] }> {
-  const { data } = await http.get<{ orders: OptionOrder[] }>('/api/broker/alpaca/options/orders', { params });
+export async function getOptionOrders(
+  params?: { status?: string; limit?: number },
+  signal?: AbortSignal
+): Promise<{ orders: OptionOrder[] }> {
+  const { data } = await http.get<{ orders: OptionOrder[] }>('/api/broker/alpaca/options/orders', { params, signal });
   return data;
 }

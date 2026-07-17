@@ -13,6 +13,7 @@ import type { ExitReason } from '../models/automationPosition.model';
 // fire on the same evaluation.
 export const EXIT_PRIORITY: ExitReason[] = [
   'EMERGENCY_STOP',
+  'OVERNIGHT_RECOVERY', // mandatory flatten of a policy-violating overnight carry
   'END_OF_DAY',
   'HARD_STOP',
   'BROKER_MANUAL_CLOSE',

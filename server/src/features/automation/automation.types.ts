@@ -204,7 +204,7 @@ export type ReconciliationMismatch = {
   kind:
     | 'LOCAL_ORDER_MISSING_AT_BROKER'
     | 'BROKER_ORDER_MISSING_LOCALLY'
-    | 'ORPHANED_BROKER_POSITION'
+    | 'AUTOMATION_POSITION_ORDER_MISSING'
     | 'STATUS_CONFLICT';
   detail: string;
   automationSessionId?: string | null;
@@ -222,7 +222,8 @@ export type ReconciliationReport = {
   sessionsScanned: number;
   intentsScanned: number;
   brokerOpenOrders: number;
-  brokerPositions: number;
+  /** Count of AUTOMATION-owned live positions proven against broker orders. */
+  automationPositionsReconciled: number;
   matchedOrders: number;
   mismatches: ReconciliationMismatch[];
   pausedSessionIds: string[];

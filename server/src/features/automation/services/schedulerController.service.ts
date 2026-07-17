@@ -10,11 +10,12 @@ import {
   RUNNABLE_SESSION_STATUSES,
   type AutomationSessionDocument,
 } from '../models/automationSession.model';
+import { UniverseEvaluationModel } from '../models/universeEvaluation.model';
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import { deriveMarketSession, type MarketSessionState } from './marketSession.service';
 import { hasUnresolvedAutomationOrder, isBrokerTruthCurrent } from './orderReconciliation.service';
-import { submitApprovedIntent, type SubmissionOutcome } from './orderSubmission.service';
+import { cancelTimedOutEntryOrders, submitApprovedIntent, type EntryOrderTimeoutSummary, type SubmissionOutcome } from './orderSubmission.service';
 import { exchangeTradingDate } from './sessionDailyReset.service';
 import { getAutomationRuntime, isAutomationReady, resolveBrokerAdapter } from './sessionRecovery.service';
 
@@ -48,6 +49,10 @@ type ControllerRuntime = {
   startedAt: Date | null;
   lastTickAt: Date | null;
   lastError: string | null;
+  inFlight: boolean;
+  lastResult: EvaluationTickResult | null;
+  lastCompletedEvaluationAt: string | null;
+  lastCompletedWindowKey: string | null;
 };
 
 const controller: ControllerRuntime = {
@@ -57,6 +62,10 @@ const controller: ControllerRuntime = {
   startedAt: null,
   lastTickAt: null,
   lastError: null,
+  inFlight: false,
+  lastResult: null,
+  lastCompletedEvaluationAt: null,
+  lastCompletedWindowKey: null,
 };
 
 /** The universe evaluation → Approved Evaluation Request. Never submits. */
@@ -116,13 +125,28 @@ export type SessionEvaluationOutcome = {
 };
 
 export type EvaluationTickResult = {
+  tickId: string;
   ranAt: string;
+  schedulerIntervalMs: number;
+  flowWindowMinutes: number;
+  currentWindowKey: string | null;
+  lastEvaluatedWindowKey: string | null;
+  nextEligibleEvaluationAt: string | null;
   ownsLease: boolean;
   marketSession: MarketSessionState | null;
+  entryOrderTimeouts: EntryOrderTimeoutSummary | null;
+  entryOrdersCancelled: number;
   evaluated: number;
   skipped: number;
   submitted: number;
+  sessionsFound: number;
+  sessionsEvaluated: number;
+  sessionsSkipped: number;
+  watchlistSymbolCount: number | null;
+  candidateCount: number | null;
+  submittedCount: number;
   skippedReason: string | null;
+  skipReasons: Record<string, number>;
   sessions: SessionEvaluationOutcome[];
 };
 
@@ -132,6 +156,32 @@ export type EvaluationTickResult = {
  */
 export function windowKeyFor(now: number, windowMs: number, tradingDate: string): string {
   return `${tradingDate}:${Math.floor(now / windowMs)}`;
+}
+
+function nextWindowBoundary(now: number, windowMs: number): string | null {
+  if (!Number.isFinite(now) || !Number.isFinite(windowMs) || windowMs <= 0) return null;
+  return new Date((Math.floor(now / windowMs) + 1) * windowMs).toISOString();
+}
+
+function observableSkipReason(reason: string | null): string | null {
+  if (!reason) return null;
+  if (reason === 'WINDOW_ALREADY_EVALUATED') return 'WINDOW_ALREADY_CLAIMED';
+  if (reason.startsWith('MARKET_')) return 'MARKET_CLOSED';
+  if (reason === 'RECONCILIATION_NOT_CLEAN' || reason === 'EMERGENCY_STOP_ACTIVE') return 'SESSION_NOT_READY';
+  if (reason === 'UNRESOLVED_AUTOMATION_ORDER') return 'EXISTING_POSITION';
+  return reason;
+}
+
+function recordSkip(result: EvaluationTickResult, reason: string | null): void {
+  const normalized = observableSkipReason(reason);
+  if (!normalized) return;
+  result.skipReasons[normalized] = (result.skipReasons[normalized] ?? 0) + 1;
+}
+
+function skippedTick(base: EvaluationTickResult, reason: string, extra: Partial<EvaluationTickResult> = {}): EvaluationTickResult {
+  const result = { ...base, ...extra, skippedReason: reason, skipReasons: { ...base.skipReasons } };
+  recordSkip(result, reason);
+  return result;
 }
 
 /**
@@ -150,25 +200,40 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
     });
   const submissionEnabled = deps.submissionEnabled ?? getSubmissionEnabled();
   const base: EvaluationTickResult = {
+    tickId: randomUUID(),
     ranAt: new Date(now).toISOString(),
+    schedulerIntervalMs: config.intervalMs,
+    flowWindowMinutes: config.windowMs / 60_000,
+    currentWindowKey: null,
+    lastEvaluatedWindowKey: null,
+    nextEligibleEvaluationAt: nextWindowBoundary(now, config.windowMs),
     ownsLease: false,
     marketSession: null,
+    entryOrderTimeouts: null,
+    entryOrdersCancelled: 0,
     evaluated: 0,
     skipped: 0,
     submitted: 0,
+    sessionsFound: 0,
+    sessionsEvaluated: 0,
+    sessionsSkipped: 0,
+    watchlistSymbolCount: null,
+    candidateCount: null,
+    submittedCount: 0,
     skippedReason: null,
+    skipReasons: {},
     sessions: [],
   };
 
   // Reconciliation gate — never run before automation is READY.
   if (mongoose.connection?.readyState !== 1 || !isAutomationReady()) {
-    return { ...base, skippedReason: 'AUTOMATION_NOT_READY' };
+    return skippedTick(base, 'AUTOMATION_NOT_READY');
   }
 
   // Single-owner lease — a second process cannot evaluate concurrently.
   const ownsLease = await acquireSchedulerLease(SCHEDULER_SCOPE, deps.ownerId, config.leaseTtlMs, new Date(now));
   if (!ownsLease) {
-    return { ...base, skippedReason: 'LEASE_NOT_OWNED' };
+    return skippedTick(base, 'LEASE_NOT_OWNED');
   }
   base.ownsLease = true;
 
@@ -178,24 +243,46 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
     const clock = await deps.adapter.getClock();
     marketSession = deriveMarketSession(clock, getMarketHoursConfig(), now);
   } catch (error) {
-    return { ...base, skippedReason: 'CLOCK_UNAVAILABLE', marketSession: null };
+    return skippedTick(base, 'CLOCK_UNAVAILABLE', { marketSession: null });
   }
   base.marketSession = marketSession;
 
-  // Market-hours + entry-cutoff gate — evaluate ONLY in the entry window.
-  if (!marketSession.entriesAllowed) {
-    return { ...base, skippedReason: `MARKET_${marketSession.phase}` };
-  }
-
   const tradingDateNow = exchangeTradingDate(new Date(now));
   const windowKey = windowKeyFor(now, config.windowMs, tradingDateNow);
+  base.currentWindowKey = windowKey;
+
+  // Submitted ENTRY intents occupy automation exposure even before a fill creates
+  // an AutomationPosition. Keep their lifecycle moving from broker truth so a
+  // working order cannot block the one-position slot indefinitely.
+  try {
+    const entryOrderTimeouts = await cancelTimedOutEntryOrders(deps.adapter, new Date(now));
+    base.entryOrderTimeouts = entryOrderTimeouts;
+    base.entryOrdersCancelled = entryOrderTimeouts.cancelRequested;
+  } catch (error: any) {
+    logAutomationEvent({
+      service: 'scheduler',
+      event: 'ENTRY_ORDER_TIMEOUT_SCAN_FAILED',
+      severity: 'warning',
+      payload: { message: String(error?.message ?? error).slice(0, 300) },
+    });
+  }
+
+  // Market-hours + entry-cutoff gate — evaluate ONLY in the entry window.
+  if (!marketSession.entriesAllowed) {
+    return skippedTick(base, `MARKET_${marketSession.phase}`);
+  }
 
   const sessions = await AutomationSessionModel.find({ status: { $in: RUNNABLE_SESSION_STATUSES } });
+  base.sessionsFound = sessions.length;
+  base.lastEvaluatedWindowKey = sessions.find(session => typeof session.lastEvaluatedWindowKey === 'string')?.lastEvaluatedWindowKey ?? null;
   for (const session of sessions) {
     const outcome = await evaluateSessionOnce(session, deps.adapter, windowKey, evaluate);
     base.sessions.push(outcome);
     if (outcome.evaluated) base.evaluated += 1;
-    else base.skipped += 1;
+    else {
+      base.skipped += 1;
+      recordSkip(base, outcome.skippedReason);
+    }
 
     // Sprint 2/3: submit the Approved Order Intent (gated). Persist-then-STOP —
     // no fills, positions, or P&L. Idempotent; ambiguity → MANUAL_REVIEW.
@@ -217,15 +304,46 @@ export async function runEvaluationTick(deps: EvaluationTickDeps): Promise<Evalu
     }
   }
 
+  base.sessionsEvaluated = base.evaluated;
+  base.sessionsSkipped = base.skipped;
+  base.submittedCount = base.submitted;
+  base.lastEvaluatedWindowKey = windowKey;
+  if (base.evaluated === 0 && base.skipped > 0 && !base.skippedReason) {
+    base.skippedReason = base.sessions.find(session => session.skippedReason)?.skippedReason ?? null;
+  }
+  const latestEvaluation = await UniverseEvaluationModel.findOne().sort({ evaluatedAt: -1 });
+  if (latestEvaluation) {
+    base.watchlistSymbolCount = Array.isArray((latestEvaluation as any).configuredSymbols)
+      ? (latestEvaluation as any).configuredSymbols.length
+      : null;
+    base.candidateCount = Array.isArray((latestEvaluation as any).eligibleSymbols)
+      ? (latestEvaluation as any).eligibleSymbols.length
+      : null;
+  }
+
   logAutomationEvent({
     service: 'scheduler',
     event: 'SCHEDULER_TICK',
     payload: {
+      tickId: base.tickId,
+      schedulerIntervalMs: base.schedulerIntervalMs,
+      flowWindowMinutes: base.flowWindowMinutes,
       windowKey,
+      currentWindowKey: base.currentWindowKey,
+      lastEvaluatedWindowKey: base.lastEvaluatedWindowKey,
+      nextEligibleEvaluationAt: base.nextEligibleEvaluationAt,
       phase: marketSession.phase,
       evaluated: base.evaluated,
       skipped: base.skipped,
       submitted: base.submitted,
+      sessionsFound: base.sessionsFound,
+      sessionsEvaluated: base.sessionsEvaluated,
+      sessionsSkipped: base.sessionsSkipped,
+      watchlistSymbolCount: base.watchlistSymbolCount,
+      candidateCount: base.candidateCount,
+      submittedCount: base.submittedCount,
+      skipReasons: base.skipReasons,
+      entryOrdersCancelled: base.entryOrdersCancelled,
       minutesToClose: marketSession.minutesToClose,
     },
   });
@@ -258,7 +376,7 @@ async function evaluateSessionOnce(
     { _id: session._id, lastEvaluatedWindowKey: { $ne: windowKey } },
     { $set: { lastEvaluatedWindowKey: windowKey } }
   );
-  if (claim.modifiedCount !== 1) return skip('WINDOW_ALREADY_EVALUATED');
+  if (claim.modifiedCount !== 1) return skip('WINDOW_ALREADY_CLAIMED');
 
   try {
     const { approvedIntentId, outcome } = await evaluate(sessionId, adapter);
@@ -291,12 +409,44 @@ async function evaluateSessionOnce(
 // ---------------------------------------------------------------------------
 
 export function getSchedulerStatus() {
+  const config = getSchedulerConfig();
+  const last = controller.lastResult;
   return {
     state: controller.state,
     ownerId: controller.ownerId,
     startedAt: controller.startedAt ? controller.startedAt.toISOString() : null,
     lastTickAt: controller.lastTickAt ? controller.lastTickAt.toISOString() : null,
     lastError: controller.lastError,
+    inFlight: controller.inFlight,
+    intervalMs: config.intervalMs,
+    flowWindowMinutes: config.windowMs / 60_000,
+    lastCompletedEvaluation: controller.lastCompletedEvaluationAt,
+    lastCompletedWindow: controller.lastCompletedWindowKey,
+    lastWindow: last?.currentWindowKey ?? null,
+    nextWindow: last?.nextEligibleEvaluationAt ?? null,
+    lastSkipReason: last?.skippedReason ?? null,
+    watchlistCount: last?.watchlistSymbolCount ?? null,
+    candidateCount: last?.candidateCount ?? null,
+    submittedCount: last?.submittedCount ?? 0,
+    skipReasons: last?.skipReasons ?? {},
+    lastTick: last
+      ? {
+          tickId: last.tickId,
+          ranAt: last.ranAt,
+          ownsLease: last.ownsLease,
+          marketPhase: last.marketSession?.phase ?? null,
+          currentWindowKey: last.currentWindowKey,
+          lastEvaluatedWindowKey: last.lastEvaluatedWindowKey,
+          nextEligibleEvaluationAt: last.nextEligibleEvaluationAt,
+          sessionsFound: last.sessionsFound,
+          sessionsEvaluated: last.sessionsEvaluated,
+          sessionsSkipped: last.sessionsSkipped,
+          watchlistSymbolCount: last.watchlistSymbolCount,
+          candidateCount: last.candidateCount,
+          submittedCount: last.submittedCount,
+          skipReasons: last.skipReasons,
+        }
+      : null,
   };
 }
 
@@ -330,9 +480,51 @@ export function startAutomationScheduler(adapter?: PaperBrokerAdapter): boolean 
   const tick = () => {
     if (controller.state !== 'ACTIVE' || !controller.ownerId) return;
     controller.lastTickAt = new Date();
+    if (controller.inFlight) {
+      const config = getSchedulerConfig();
+      const skipped: EvaluationTickResult = {
+        tickId: randomUUID(),
+        ranAt: controller.lastTickAt.toISOString(),
+        schedulerIntervalMs: config.intervalMs,
+        flowWindowMinutes: config.windowMs / 60_000,
+        currentWindowKey: null,
+        lastEvaluatedWindowKey: controller.lastResult?.lastEvaluatedWindowKey ?? null,
+        nextEligibleEvaluationAt: nextWindowBoundary(Date.now(), config.windowMs),
+        ownsLease: false,
+        marketSession: null,
+        entryOrderTimeouts: null,
+        entryOrdersCancelled: 0,
+        evaluated: 0,
+        skipped: 1,
+        submitted: 0,
+        sessionsFound: 0,
+        sessionsEvaluated: 0,
+        sessionsSkipped: 1,
+        watchlistSymbolCount: controller.lastResult?.watchlistSymbolCount ?? null,
+        candidateCount: controller.lastResult?.candidateCount ?? null,
+        submittedCount: 0,
+        skippedReason: 'EVALUATION_RUNNING',
+        skipReasons: { EVALUATION_RUNNING: 1 },
+        sessions: [],
+      };
+      controller.lastResult = skipped;
+      logAutomationEvent({
+        service: 'scheduler',
+        event: 'EVALUATION_HEARTBEAT',
+        severity: 'warning',
+        payload: skipped,
+      });
+      return;
+    }
+    controller.inFlight = true;
     runEvaluationTick({ adapter: brokerAdapter, ownerId: controller.ownerId })
       .then(result => {
         controller.lastError = null;
+        controller.lastResult = result;
+        if (result.evaluated > 0) {
+          controller.lastCompletedEvaluationAt = result.ranAt;
+          controller.lastCompletedWindowKey = result.currentWindowKey;
+        }
         // Every tick emits an evaluation heartbeat — visible even when the tick
         // no-ops (market closed, lease not owned), so the evaluation loop's
         // liveness is observable at all hours (mirrors MONITOR_HEARTBEAT).
@@ -340,12 +532,25 @@ export function startAutomationScheduler(adapter?: PaperBrokerAdapter): boolean 
           service: 'scheduler',
           event: 'EVALUATION_HEARTBEAT',
           payload: {
+            tickId: result.tickId,
             ranAt: result.ranAt,
+            schedulerIntervalMs: result.schedulerIntervalMs,
+            flowWindowMinutes: result.flowWindowMinutes,
+            currentWindowKey: result.currentWindowKey,
+            lastEvaluatedWindowKey: result.lastEvaluatedWindowKey,
+            nextEligibleEvaluationAt: result.nextEligibleEvaluationAt,
             ownsLease: result.ownsLease,
             phase: result.marketSession?.phase ?? null,
             skippedReason: result.skippedReason,
+            sessionsFound: result.sessionsFound,
+            sessionsEvaluated: result.sessionsEvaluated,
+            sessionsSkipped: result.sessionsSkipped,
+            watchlistSymbolCount: result.watchlistSymbolCount,
+            candidateCount: result.candidateCount,
             evaluated: result.evaluated,
             submitted: result.submitted,
+            submittedCount: result.submittedCount,
+            skipReasons: result.skipReasons,
           },
         });
       })
@@ -357,6 +562,9 @@ export function startAutomationScheduler(adapter?: PaperBrokerAdapter): boolean 
           severity: 'warning',
           payload: { error: controller.lastError },
         });
+      })
+      .finally(() => {
+        controller.inFlight = false;
       });
   };
 
@@ -387,6 +595,7 @@ export async function stopAutomationScheduler(reason = 'shutdown'): Promise<void
   controller.ownerId = null;
   controller.state = 'STOPPED';
   controller.startedAt = null;
+  controller.inFlight = false;
   if (ownerId) {
     await releaseSchedulerLease(SCHEDULER_SCOPE, ownerId).catch(() => undefined);
   }
@@ -402,4 +611,8 @@ export function resetSchedulerControllerForTests(): void {
   controller.startedAt = null;
   controller.lastTickAt = null;
   controller.lastError = null;
+  controller.inFlight = false;
+  controller.lastResult = null;
+  controller.lastCompletedEvaluationAt = null;
+  controller.lastCompletedWindowKey = null;
 }

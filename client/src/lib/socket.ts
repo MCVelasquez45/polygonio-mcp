@@ -9,6 +9,8 @@ import { getApiBaseUrl } from '../api/http';
 // The socket lives for the lifetime of the page; consumers MUST remove their
 // listeners on unmount (socket.off) and MUST NOT call socket.disconnect().
 let sharedSocket: Socket | null = null;
+let lastConnectErrorLogAt = 0;
+const CONNECT_ERROR_LOG_INTERVAL_MS = 15_000;
 
 export function getSharedSocket(): Socket {
   if (sharedSocket) return sharedSocket;
@@ -27,8 +29,10 @@ export function getSharedSocket(): Socket {
     path: '/socket.io',
     timeout: 10_000,
     reconnection: true,
+    reconnectionAttempts: 12,
     reconnectionDelay: 1_000,
     reconnectionDelayMax: 5_000,
+    randomizationFactor: 0.5,
   });
 
   // Transport-level failure handling lives here (module-owned), so every
@@ -49,10 +53,14 @@ export function getSharedSocket(): Socket {
       typeof (error as { description?: unknown })?.description === 'string'
         ? (error as { description?: string }).description
         : undefined;
-    console.warn('[CLIENT] shared socket connect error', {
-      message: error?.message,
-      ...(description ? { description } : {}),
-    });
+    const now = Date.now();
+    if (now - lastConnectErrorLogAt > CONNECT_ERROR_LOG_INTERVAL_MS) {
+      lastConnectErrorLogAt = now;
+      console.warn('[CLIENT] shared socket connect error', {
+        message: error?.message,
+        ...(description ? { description } : {}),
+      });
+    }
     const shouldForcePolling =
       isMixedContent || String(error?.message ?? '').toLowerCase().includes('websocket');
     if (shouldForcePolling) {

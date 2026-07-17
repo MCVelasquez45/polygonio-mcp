@@ -132,28 +132,80 @@ let queueSeq = 0;
 let activeRequests = 0;
 let nextAvailableTimestamp = Date.now();
 let scheduledDrain: NodeJS.Timeout | null = null;
+let providerCooldownUntil = 0;
+
+type MassiveRequestMetrics = {
+  cacheHits: number;
+  cacheMisses: number;
+  deduplicatedRequests: number;
+  rateLimitResponses: number;
+  backgroundDropped: number;
+  requestsByPriority: Record<string, number>;
+};
+
+const requestMetrics: MassiveRequestMetrics = {
+  cacheHits: 0,
+  cacheMisses: 0,
+  deduplicatedRequests: 0,
+  rateLimitResponses: 0,
+  backgroundDropped: 0,
+  requestsByPriority: {},
+};
+
+const PRIORITY_NAME_BY_VALUE = new Map<number, string>(
+  Object.entries(REQUEST_PRIORITY).map(([name, value]) => [value, name])
+);
+
+function priorityName(priority: RequestPriority): string {
+  return PRIORITY_NAME_BY_VALUE.get(priority) ?? String(priority);
+}
+
+function isBackgroundPriority(priority: RequestPriority): boolean {
+  return priority >= REQUEST_PRIORITY.WATCHLIST;
+}
+
+function recordPriorityRequest(priority: RequestPriority): void {
+  const name = priorityName(priority);
+  requestMetrics.requestsByPriority[name] = (requestMetrics.requestsByPriority[name] ?? 0) + 1;
+}
+
+function setProviderCooldown(delayMs: number): void {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+  providerCooldownUntil = Math.max(providerCooldownUntil, Date.now() + delayMs);
+}
 
 /**
  * Sprint 2F — read-only observability into the SINGLE shared Massive request
  * manager (queue + inflight dedup + response cache). Used by /api/system/health.
  */
 export function getMassiveRequestStats() {
+  const totalCacheReads = requestMetrics.cacheHits + requestMetrics.cacheMisses;
+  const now = Date.now();
+  const cooldownUntil =
+    providerCooldownUntil > now ? new Date(providerCooldownUntil).toISOString() : null;
   return {
+    state: cooldownUntil ? 'COOLDOWN' : 'OK',
+    cooldownUntil,
     queueDepth: requestQueue.length,
     activeRequests,
     inflightDeduped: inflightRequests.size,
     responseCacheEntries: responseCache.size,
+    cacheHits: requestMetrics.cacheHits,
+    cacheMisses: requestMetrics.cacheMisses,
+    cacheHitRate: totalCacheReads > 0 ? requestMetrics.cacheHits / totalCacheReads : null,
+    deduplicatedRequests: requestMetrics.deduplicatedRequests,
+    rateLimitResponses: requestMetrics.rateLimitResponses,
+    backgroundDropped: requestMetrics.backgroundDropped,
+    requestsByPriority: { ...requestMetrics.requestsByPriority },
+    pendingRequestsByPriority: getPendingRequestsByPriority(),
   };
 }
 
 /** Pending request counts by priority (for the market-data health endpoint). */
 export function getPendingRequestsByPriority(): Record<string, number> {
-  const nameByValue = new Map<number, string>(
-    Object.entries(REQUEST_PRIORITY).map(([name, value]) => [value, name])
-  );
   const counts: Record<string, number> = {};
   for (const task of requestQueue) {
-    const name = nameByValue.get(task.priority) ?? String(task.priority);
+    const name = priorityName(task.priority);
     counts[name] = (counts[name] ?? 0) + 1;
   }
   return counts;
@@ -288,8 +340,10 @@ export async function massiveGet<T = any>(
   const cachedEntry = responseCache.get(cacheKey);
   const now = Date.now();
   if (ttl > 0 && cachedEntry && cachedEntry.expiresAt > now) {
+    requestMetrics.cacheHits += 1;
     return cachedEntry.value;
   }
+  requestMetrics.cacheMisses += 1;
 
   // Entitlement-blocked endpoint classes fail fast without consuming queue or
   // provider capacity — a plan limitation is not a transient error.
@@ -302,10 +356,31 @@ export async function massiveGet<T = any>(
     entitlementBlocks.delete(endpointClass);
   }
 
+  if (providerCooldownUntil > now && isBackgroundPriority(priority)) {
+    if (cachedEntry) {
+      requestMetrics.cacheHits += 1;
+      console.warn('[MASSIVE] serving stale cache during provider cooldown', {
+        path,
+        priority: priorityName(priority),
+        cooldownUntil: new Date(providerCooldownUntil).toISOString(),
+        ageMs: now - cachedEntry.cachedAt,
+      });
+      return cachedEntry.value;
+    }
+    requestMetrics.backgroundDropped += 1;
+    const error: any = new Error('Massive provider cooldown active');
+    error.status = 429;
+    error.code = 'MASSIVE_PROVIDER_COOLDOWN';
+    error.cooldownUntil = new Date(providerCooldownUntil).toISOString();
+    throw error;
+  }
+
   if (inflightRequests.has(cacheKey)) {
+    requestMetrics.deduplicatedRequests += 1;
     return inflightRequests.get(cacheKey)! as Promise<T>;
   }
 
+  recordPriorityRequest(priority);
   const requestPromise = scheduleRequest(() => executeMassiveRequest<T>(path, normalizedParams), priority);
 
   inflightRequests.set(cacheKey, requestPromise);
@@ -318,6 +393,7 @@ export async function massiveGet<T = any>(
     return payload;
   } catch (error) {
     if (cachedEntry) {
+      requestMetrics.cacheHits += 1;
       console.warn('[MASSIVE] returning stale cache after failure', {
         path,
         ageMs: Date.now() - cachedEntry.cachedAt,
@@ -399,6 +475,10 @@ async function executeMassiveRequest<T>(
         baseMs: MASSIVE_RETRY_BASE_MS,
         maxMs: MASSIVE_RETRY_MAX_MS
       });
+      if (status === 429) {
+        requestMetrics.rateLimitResponses += 1;
+        setProviderCooldown(delayMs);
+      }
       console.warn('[MASSIVE] request failed, retrying', {
         path,
         status,
@@ -407,6 +487,10 @@ async function executeMassiveRequest<T>(
       });
       await delay(delayMs);
       return executeMassiveRequest(path, normalizedParams, attempt + 1);
+    }
+    if (status === 429) {
+      requestMetrics.rateLimitResponses += 1;
+      setProviderCooldown(MASSIVE_RETRY_MAX_MS);
     }
     throw error;
   }
@@ -1811,10 +1895,65 @@ export async function getMassiveOptionsSnapshot(
   return snapshotResult;
 }
 
+export type HeldContractQuote = {
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  price: number | null;
+  /** Provider quote timestamp (ms epoch) from the contract's own last_quote. */
+  quoteTimestamp: number | null;
+};
+
+/**
+ * Narrowest authorized held-contract quote: ONE direct option-contract snapshot
+ * by OCC symbol (`/v3/snapshot/options/{underlying}/{contract}`), no reference
+ * pages, no chain pagination. Routed through `massiveGet`, so it inherits the
+ * shared request manager: in-flight dedup (a UI and the monitor asking for the
+ * same contract share one request), TTL cache, priority queue, and Retry-After
+ * backoff. Callers pass `REQUEST_PRIORITY.OPEN_POSITION` so a held-position mark
+ * outranks watchlist/research refreshes. The underlying is taken from the OCC
+ * symbol — no metadata round-trip is needed to build the URL.
+ */
+export async function getMassiveOptionQuoteSnapshot(
+  underlying: string,
+  contractTicker: string,
+  options: { cacheTtlMs?: number; priority?: RequestPriority } = {}
+): Promise<HeldContractQuote> {
+  const u = underlying.toUpperCase().replace(/^O:/, '');
+  const c = contractTicker.toUpperCase();
+  const requestOptions = {
+    cacheTtlMs: options.cacheTtlMs ?? 3_000,
+    priority: options.priority ?? REQUEST_PRIORITY.OPEN_POSITION,
+  };
+  let snapshot: any;
+  try {
+    snapshot = await massiveGet(`/v3/snapshot/options/${u}/${c}`, {}, requestOptions);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    snapshot = await massiveGet(`/v2/snapshot/options/${u}/${c}`, {}, requestOptions);
+  }
+  const payload = snapshot?.results ?? snapshot ?? {};
+  const optionData = payload?.option ?? payload ?? {};
+  const lastQuote = optionData?.last_quote ?? optionData?.lastQuote ?? {};
+  const lastTrade = optionData?.last_trade ?? optionData?.lastTrade ?? {};
+  const day = optionData?.day ?? {};
+  const bid = resolveNumber(lastQuote?.bid);
+  const ask = resolveNumber(lastQuote?.ask);
+  const mid = computeMid(lastQuote?.bid, lastQuote?.ask);
+  const price = resolveNumber(lastTrade?.price) ?? mid ?? resolveNumber(day?.close);
+  const quoteTimestamp = normalizeProviderTimestamp(
+    lastQuote?.last_updated ?? lastQuote?.sip_timestamp ?? lastQuote?.timestamp ?? lastQuote?.t
+  );
+  return { bid, ask, mid, price, quoteTimestamp };
+}
+
 /**
  * Fetches the snapshot for a specific contract (bid/ask/last, greeks, etc.).
  */
-export async function getMassiveOptionContractSnapshot(contractTicker: string) {
+export async function getMassiveOptionContractSnapshot(
+  contractTicker: string,
+  options: { priority?: RequestPriority; cacheTtlMs?: number } = {}
+) {
   const contractSymbol = contractTicker.toUpperCase();
   const contractDetail = await getMassiveOptionContract(contractSymbol);
   if (!contractDetail?.underlying) {
@@ -1826,7 +1965,7 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
     snapshot = await massiveGet(
       `/v3/snapshot/options/${underlyingSymbol}/${contractSymbol}`,
       {},
-      { cacheTtlMs: 3_000 }
+      { cacheTtlMs: options.cacheTtlMs ?? 3_000, priority: options.priority }
     );
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
@@ -1834,7 +1973,7 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
     snapshot = await massiveGet(
       `/v2/snapshot/options/${underlyingSymbol}/${contractSymbol}`,
       {},
-      { cacheTtlMs: 3_000 }
+      { cacheTtlMs: options.cacheTtlMs ?? 3_000, priority: options.priority }
     );
   }
   console.log('[MASSIVE] contract snapshot resolved payload', {
@@ -1922,14 +2061,17 @@ export async function getMassiveOptionContractSnapshot(contractTicker: string) {
  * Retrieves a snapshot for a stock ticker.
  * Note: Falls back to previous close endpoint if real-time snapshot is forbidden (e.g. free tier).
  */
-export async function getMassiveStockSnapshot(ticker: string) {
+export async function getMassiveStockSnapshot(
+  ticker: string,
+  options: { priority?: RequestPriority; cacheTtlMs?: number } = {}
+) {
   const symbol = ticker.toUpperCase();
   // Try previous close first as it's available on all plans (including free).
   // Real-time snapshots require paid plans and return 403 on free tier.
   const payload = await massiveGet(
     `/v2/aggs/ticker/${symbol}/prev`,
     {},
-    { cacheTtlMs: 60_000 }
+    { cacheTtlMs: options.cacheTtlMs ?? 60_000, priority: options.priority }
   );
 
   const result = payload?.results?.[0] ?? {};

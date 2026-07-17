@@ -34,6 +34,11 @@ import {
 } from './features/automation/services/orderReconciliation.service';
 import { getAutomationRuntime } from './features/automation/services/sessionRecovery.service';
 import { portfolioRouter } from './features/portfolio/portfolio.routes';
+import {
+  registerAutomationVisibilityHandlers,
+  startAutomationVisibilityBroadcaster,
+  stopAutomationVisibilityBroadcaster,
+} from './features/portfolio/automationVisibilitySocket.service';
 import { marketDataRouter } from './features/marketData/marketData.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
@@ -111,12 +116,14 @@ app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 initFuturesRuntime(io);
+startAutomationVisibilityBroadcaster(io);
 
 io.on('connection', socket => {
   console.log('[SERVER] WebSocket client connected:', socket.id);
   socket.emit('connected', { msg: 'WebSocket connected' });
   registerLiveFeedHandlers(socket);
   registerChartHubHandlers(socket);
+  registerAutomationVisibilityHandlers(io, socket);
 
   socket.on('disconnect', reason => {
     console.log('[SERVER] WebSocket client disconnected:', socket.id, reason);
@@ -200,6 +207,7 @@ async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[SERVER] ${signal} received — stopping automation schedulers`);
+  stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
   await Promise.all([
     stopAutomationScheduler(signal).catch(() => undefined),

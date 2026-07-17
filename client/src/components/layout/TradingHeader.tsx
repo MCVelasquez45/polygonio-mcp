@@ -1,7 +1,7 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
-import { Briefcase, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
+import { Briefcase, Gauge, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit';
 
 type Props = {
   selectedTicker: string;
@@ -21,6 +21,7 @@ const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'trading', label: 'Trading', icon: <TrendingUp className="h-4 w-4" /> },
   { id: 'scanner', label: 'Scanner', icon: <ScanSearch className="h-4 w-4" /> },
   { id: 'portfolio', label: 'Portfolio', icon: <Briefcase className="h-4 w-4" /> },
+  { id: 'cockpit', label: 'Cockpit', icon: <Gauge className="h-4 w-4" /> },
   { id: 'dashboard', label: 'The Lab', icon: <LayoutDashboard className="h-4 w-4" /> },
 ];
 

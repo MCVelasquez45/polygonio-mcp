@@ -62,6 +62,9 @@ test('WS client authenticates, subscribes, and reconnects+resubscribes', async (
     for (let i = 0; i < 120 && connectCount < 2; i++) await wait(100); // up to 12s
     assert.equal(connectCount, 2, 'onConnect should fire again after reconnect');
     assert.equal(mock.received.auths, 2, 'client should re-authenticate on reconnect');
+    for (let i = 0; i < 40 && mock.received.subscribes.filter((p) => p.includes('T.AAPL')).length < 2; i++) {
+      await wait(50);
+    }
     assert.ok(
       mock.received.subscribes.filter((p) => p.includes('T.AAPL')).length >= 2,
       'client should re-subscribe tracked channels after reconnect'

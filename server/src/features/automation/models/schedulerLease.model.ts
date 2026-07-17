@@ -50,7 +50,7 @@ export async function acquireSchedulerLease(
     const res = await SchedulerLeaseModel.findOneAndUpdate(
       { scope, $or: [{ ownerId }, { expiresAt: { $lte: now } }] },
       { $set: { ownerId, renewedAt: now, expiresAt }, $setOnInsert: { scope, acquiredAt: now } },
-      { new: true, upsert: true, includeResultMetadata: true }
+      { returnDocument: 'after', upsert: true, includeResultMetadata: true }
     );
     const doc = res.value as SchedulerLeaseDocument | null;
     return doc?.ownerId === ownerId;

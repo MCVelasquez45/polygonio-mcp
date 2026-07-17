@@ -64,6 +64,17 @@ export type LoggedAutomationEvent = {
   payload?: unknown;
 };
 
+type AutomationEventSubscriber = (event: LoggedAutomationEvent) => void;
+
+const subscribers = new Set<AutomationEventSubscriber>();
+
+export function subscribeAutomationEvents(handler: AutomationEventSubscriber): () => void {
+  subscribers.add(handler);
+  return () => {
+    subscribers.delete(handler);
+  };
+}
+
 /**
  * Emit a structured automation event: JSON console line + Mongo append.
  * Returns the console-shaped record (useful for tests).
@@ -117,12 +128,28 @@ export function logAutomationEvent(input: AutomationEventInput): LoggedAutomatio
     });
   }
 
+  for (const subscriber of subscribers) {
+    try {
+      subscriber(record);
+    } catch {
+      // Observability subscribers must never affect the trading path.
+    }
+  }
+
   return record;
 }
 
 /** Query helper for the session events endpoint. */
 export async function listSessionEvents(automationSessionId: string, limit = 100) {
   return AutomationEventModel.find({ automationSessionId })
+    .sort({ timestamp: -1 })
+    .limit(Math.min(Math.max(limit, 1), 500))
+    .lean();
+}
+
+/** Query helper for global automation visibility. */
+export async function listAutomationEvents(limit = 200) {
+  return AutomationEventModel.find({})
     .sort({ timestamp: -1 })
     .limit(Math.min(Math.max(limit, 1), 500))
     .lean();

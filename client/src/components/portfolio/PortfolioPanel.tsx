@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { analysisApi, marketApi } from '../../api';
+import { analysisApi, marketApi, portfolioApi } from '../../api';
 import { AutomationCommandCenter } from './AutomationCommandCenter';
-import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
+import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions } from '../../api/alpaca';
+import {
+  confirmManualIntent,
+  createManualIntent,
+  submitManualIntent,
+  type ManualIntent,
+} from '../../api/manualTrading';
 import type { DeskInsight } from '../../api/analysis';
+import type { PortfolioOperations } from '../../api/portfolio';
 import type { WatchlistSnapshot } from '../../types/market';
 
 type PositionView = {
@@ -69,6 +76,10 @@ function getUnderlyingSymbol(symbol: string) {
   const cleaned = normalized.startsWith('O:') ? normalized.slice(2) : normalized;
   const match = cleaned.match(/^([A-Z]+)(?=\d)/);
   return match?.[1] ?? normalized;
+}
+
+function normalizePositionSymbol(symbol: string) {
+  return symbol.toUpperCase().replace(/^O:/, '');
 }
 
 function resolveSentimentStyles(label?: string | null) {
@@ -165,6 +176,11 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const [loading, setLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+  const [closeDialogPosition, setCloseDialogPosition] = useState<PositionView | null>(null);
+  const [closeIntent, setCloseIntent] = useState<ManualIntent | null>(null);
+  const [closeCreating, setCloseCreating] = useState(false);
+  const [closeSubmitting, setCloseSubmitting] = useState(false);
+  const [closeDialogError, setCloseDialogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -174,11 +190,14 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const positionInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
+  const closeCreatingRef = useRef(false);
+  const closeSubmittingRef = useRef(false);
   const [insightsRefreshId, setInsightsRefreshId] = useState(0);
   const lastInsightsRefreshRef = useRef(0);
   const [insightsUpdatedAt, setInsightsUpdatedAt] = useState<number | null>(null);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [portfolioOperations, setPortfolioOperations] = useState<PortfolioOperations | null>(null);
   const insightsAllowed = aiEnabled && sentimentEnabled;
 
   const loadPortfolio = useCallback(async () => {
@@ -187,11 +206,12 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
     setError(null);
     setOrdersError(null);
     try {
-      const [account, positionResponse, ordersResponse, clockResponse] = await Promise.all([
+      const [account, positionResponse, ordersResponse, clockResponse, operationsResponse] = await Promise.all([
         getBrokerAccount(),
         getOptionPositions(),
         getOptionOrders({ status: 'all', limit: 20 }),
-        getBrokerClock()
+        getBrokerClock(),
+        portfolioApi.getOperations().catch(() => null)
       ]);
       const normalizedPositions: PositionView[] =
         positionResponse.positions?.map(pos => ({
@@ -203,19 +223,6 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           marketValue: Number(pos.market_value ?? 0),
           unrealizedPnl: Number(pos.unrealized_pl ?? 0)
         })) ?? [];
-      const warmTargets = Array.from(
-        new Set(
-          normalizedPositions.flatMap(position => [
-            position.symbol.toUpperCase(),
-            getUnderlyingSymbol(position.symbol)
-          ])
-        )
-      ).filter(Boolean);
-      if (warmTargets.length) {
-        marketApi.warmAggregates(warmTargets).catch(error => {
-          console.warn('Failed to warm aggregate cache', error);
-        });
-      }
       setPositions(normalizedPositions);
       setAccountSummary({
         buyingPower: Number(account.buying_power ?? 0),
@@ -244,6 +251,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           };
         }) ?? [];
       setOrders(normalizedOrders);
+      setPortfolioOperations(operationsResponse);
       setIsMarketOpen(Boolean(clockResponse?.is_open));
       setNextOpen(clockResponse?.next_open ?? null);
       setLastUpdated(new Date().toLocaleTimeString());
@@ -392,48 +400,189 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   }, [positions]);
 
   const handleClosePosition = useCallback(
-    async (position: PositionView) => {
+    (position: PositionView) => {
       if (closingSymbol) return;
       if (isMarketOpen === false) {
         setError('Options market orders are only allowed during market hours.');
         return;
       }
-      setClosingSymbol(position.symbol);
       setError(null);
-      try {
-        const qty = Math.max(1, Math.abs(position.qty));
-        const side = position.side === 'long' ? 'sell' : 'buy';
-        const intent = position.side === 'long' ? 'sell_to_close' : 'buy_to_close';
-        await submitOptionOrder({
-          order_type: 'market',
-          legs: [
-            {
-              symbol: position.symbol,
-              qty,
-              side,
-              position_intent: intent
-            }
-          ]
-        });
-        await loadPortfolio();
-      } catch (err: any) {
-        const payloadMessage = err?.response?.data?.message;
-        const message =
-          payloadMessage === 'options market orders are only allowed during market hours'
-            ? 'Options market orders are only allowed during market hours.'
-            : err?.response?.data?.error ?? err?.message ?? 'Failed to close position';
-        setError(message);
-      } finally {
-        setClosingSymbol(null);
-      }
+      setCloseDialogError(null);
+      setCloseIntent(null);
+      setCloseDialogPosition(position);
     },
-    [closingSymbol, isMarketOpen, loadPortfolio]
+    [closingSymbol, isMarketOpen]
   );
 
+  const handleCancelCloseDialog = useCallback(() => {
+    if (closeCreating || closeSubmitting) return;
+    setCloseDialogPosition(null);
+    setCloseIntent(null);
+    setCloseDialogError(null);
+  }, [closeCreating, closeSubmitting]);
+
+  const handleCreateCloseIntent = useCallback(async () => {
+    const position = closeDialogPosition;
+    if (!position || closeIntent || closeCreatingRef.current) return;
+    closeCreatingRef.current = true;
+    setCloseCreating(true);
+    setClosingSymbol(position.symbol);
+    setCloseDialogError(null);
+    try {
+      const qty = Math.max(1, Math.abs(position.qty));
+      const side = position.side === 'long' ? 'sell' : 'buy';
+      const positionIntent = position.side === 'long' ? 'sell_to_close' : 'buy_to_close';
+      const intent = await createManualIntent({
+        executionMode: 'MANUAL',
+        orderSource: 'MANUAL_UI',
+        action: 'CLOSE_POSITION',
+        optionSymbol: position.symbol,
+        side,
+        quantity: qty,
+        brokerPositionQuantity: qty,
+        orderType: 'market',
+        timeInForce: 'day',
+        positionIntent,
+        marketDataSource: 'alpaca-paper-position'
+      });
+      setCloseIntent(intent);
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.response?.data?.error ?? err?.message ?? 'Failed to create close intent';
+      setCloseDialogError(message);
+    } finally {
+      closeCreatingRef.current = false;
+      setCloseCreating(false);
+      setClosingSymbol(null);
+    }
+  }, [closeDialogPosition, closeIntent]);
+
+  const handleConfirmCloseIntent = useCallback(async () => {
+    const position = closeDialogPosition;
+    const intent = closeIntent;
+    if (!position || !intent || closeSubmittingRef.current) return;
+    closeSubmittingRef.current = true;
+    setCloseSubmitting(true);
+    setClosingSymbol(position.symbol);
+    setCloseDialogError(null);
+    try {
+      await confirmManualIntent(intent.id);
+      const result = await submitManualIntent(intent.id);
+      if (result.outcome !== 'SUBMITTED' && result.outcome !== 'ALREADY_SUBMITTED') {
+        setCloseDialogError(result.reason ?? 'Manual close was blocked by the execution gateway.');
+        setCloseIntent(result.intent ?? intent);
+        return;
+      }
+      await loadPortfolio();
+      setCloseDialogPosition(null);
+      setCloseIntent(null);
+    } catch (err: any) {
+      const payloadMessage = err?.response?.data?.message ?? err?.response?.data?.reason;
+      const message =
+        err?.response?.status === 410
+          ? 'This submission path is disabled. Use the governed order ticket.'
+          : payloadMessage === 'options market orders are only allowed during market hours'
+            ? 'Options market orders are only allowed during market hours.'
+            : err?.response?.data?.error ?? payloadMessage ?? err?.message ?? 'Failed to close position';
+      setCloseDialogError(message);
+    } finally {
+      closeSubmittingRef.current = false;
+      setCloseSubmitting(false);
+      setClosingSymbol(null);
+    }
+  }, [closeDialogPosition, closeIntent, loadPortfolio]);
+
   const totalPnl = useMemo(() => positions.reduce((sum, row) => sum + row.unrealizedPnl, 0), [positions]);
+  const automationPositionSymbols = useMemo(() => {
+    const rows = portfolioOperations?.automationContext?.positionsBySymbol ?? [];
+    return new Set(
+      rows
+        .filter(row => row.source === 'AUTOMATION')
+        .map(row => normalizePositionSymbol(row.symbol))
+    );
+  }, [portfolioOperations]);
+  const automationPositions = useMemo(
+    () => positions.filter(position => automationPositionSymbols.has(normalizePositionSymbol(position.symbol))),
+    [positions, automationPositionSymbols]
+  );
+  const manualPositions = useMemo(
+    () => positions.filter(position => !automationPositionSymbols.has(normalizePositionSymbol(position.symbol))),
+    [positions, automationPositionSymbols]
+  );
+  const positionGroups = useMemo(
+    () => [
+      { label: 'AUTOMATION', rows: automationPositions },
+      { label: 'MANUAL', rows: manualPositions },
+    ],
+    [automationPositions, manualPositions]
+  );
+
+  const closeDialogQuantity = closeDialogPosition ? Math.max(1, Math.abs(closeDialogPosition.qty)) : 0;
+  const closeDialogAction =
+    closeDialogPosition?.side === 'short' ? 'Buy to close' : 'Sell to close';
+  const closeDialogActionLower =
+    closeDialogPosition?.side === 'short' ? 'buy to close' : 'sell to close';
 
   return (
     <div className="space-y-4">
+    {closeDialogPosition && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
+        <div className="w-full max-w-md rounded-lg border border-gray-800 bg-gray-950 p-5 shadow-xl">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Governed Close</p>
+            <h3 className="text-xl font-semibold text-white">Close {closeDialogPosition.symbol}</h3>
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 text-sm text-gray-200">
+              <p>{closeDialogAction}: {closeDialogQuantity} contract{closeDialogQuantity === 1 ? '' : 's'}</p>
+              <p>Account: Alpaca Paper</p>
+            </div>
+            {closeIntent ? (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                <p>Manual close intent created.</p>
+                <p className="mt-1 break-all text-emerald-200">Authorization: {closeIntent.authorizationId}</p>
+                <p className="mt-1 break-all text-emerald-200">Idempotency: {closeIntent.idempotencyKey}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">
+                This creates a MANUAL close intent first. No broker order is submitted until you confirm it.
+              </p>
+            )}
+            {closeDialogError && (
+              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                {closeDialogError}
+              </div>
+            )}
+          </div>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleCancelCloseDialog}
+              disabled={closeCreating || closeSubmitting}
+              className="rounded-lg border border-gray-800 px-3 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            {!closeIntent ? (
+              <button
+                type="button"
+                onClick={handleCreateCloseIntent}
+                disabled={closeCreating}
+                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
+              >
+                {closeCreating ? 'Creating intent…' : 'Create close intent'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConfirmCloseIntent}
+                disabled={closeSubmitting}
+                className="rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+              >
+                {closeSubmitting ? 'Submitting close…' : `Confirm ${closeDialogActionLower}`}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
     <AutomationCommandCenter />
     <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
       <header className="flex flex-col gap-2">
@@ -493,7 +642,13 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
             Options market orders pause outside market hours. Next open: {nextOpen ? formatTimestamp(nextOpen) : 'TBD'}.
           </div>
         )}
-        {positions.map(pos => {
+        {positionGroups.map(group => (
+          <div key={group.label} className="space-y-3 rounded-lg border border-gray-900 bg-black/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-gray-500">{group.label}</p>
+              <span className="rounded-full border border-gray-800 px-2 py-0.5 text-[11px] text-gray-400">{group.rows.length}</span>
+            </div>
+            {group.rows.map(pos => {
           const underlyingSymbol = getUnderlyingSymbol(pos.symbol);
           const insight = positionInsights[underlyingSymbol];
           const sentimentLabel = insight?.sentiment?.label ?? null;
@@ -623,7 +778,12 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
             </div>
           </div>
           );
-        })}
+            })}
+            {!group.rows.length && !loading && (
+              <p className="text-sm text-gray-500">No {group.label.toLowerCase()} option positions.</p>
+            )}
+          </div>
+        ))}
         {!positions.length && !loading && <p className="text-sm text-gray-500">No option positions in Alpaca paper account.</p>}
       </div>
       <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">

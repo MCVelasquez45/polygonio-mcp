@@ -128,6 +128,18 @@ export const http = axios.create({
 // payloads) under live market traffic. Enable with VITE_DEBUG_HTTP=true.
 const HTTP_DEBUG = import.meta.env.VITE_DEBUG_HTTP === 'true';
 
+function isCancellation(error: any): boolean {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
+function isLegacyBrokerSubmissionDisabled(error: any): boolean {
+  return (
+    error?.response?.status === 410 &&
+    error?.response?.data?.error === 'DIRECT_BROKER_SUBMISSION_DISABLED' &&
+    String(error?.config?.url ?? '').includes('/api/broker/alpaca/options/orders')
+  );
+}
+
 http.interceptors.request.use(config => {
   config.baseURL = getActiveBaseUrl();
   if (HTTP_DEBUG) {
@@ -162,6 +174,23 @@ http.interceptors.response.use(
         config.baseURL = fallback;
         return http.request(config);
       }
+    }
+    if (isCancellation(error)) {
+      if (HTTP_DEBUG) {
+        console.debug('[CLIENT] HTTP canceled', {
+          url: error?.config?.url,
+          method: error?.config?.method,
+        });
+      }
+      return Promise.reject(error);
+    }
+    if (isLegacyBrokerSubmissionDisabled(error)) {
+      console.warn('[CLIENT] Direct broker submission disabled', {
+        url: error?.config?.url,
+        method: error?.config?.method,
+        message: 'This submission path is disabled. Use the governed order ticket.',
+      });
+      return Promise.reject(error);
     }
     console.error('[CLIENT] HTTP error', {
       message: error?.message,

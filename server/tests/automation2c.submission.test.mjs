@@ -25,6 +25,16 @@ function guardSubmit(adapter) {
   return () => calls;
 }
 
+function guardCancel(adapter) {
+  const original = adapter.cancelOrder.bind(adapter);
+  let calls = 0;
+  adapter.cancelOrder = async (...args) => {
+    calls += 1;
+    return original(...args);
+  };
+  return () => calls;
+}
+
 const OPEN_SESSION = { isOpen: true, phase: 'PRE_CUTOFF', entriesAllowed: true, shouldCancelEntries: false, shouldFlatten: false, minutesToClose: 120, nextClose: null, nextOpen: null, asOf: '' };
 const CLOSED_SESSION = { ...OPEN_SESSION, isOpen: false, phase: 'CLOSED', entriesAllowed: false };
 const CUTOFF_SESSION = { ...OPEN_SESSION, phase: 'POST_ENTRY_CUTOFF', entriesAllowed: false };
@@ -55,6 +65,7 @@ test('order submission (Sprint 2)', async (t) => {
 
   let mock;
   let submitCalls;
+  let cancelCalls;
   let session;
   t.beforeEach(async () => {
     await dropAutomationCollections();
@@ -64,6 +75,7 @@ test('order submission (Sprint 2)', async (t) => {
     mock = new mods.MockPaperBrokerAdapter();
     mock.setClock('open');
     submitCalls = guardSubmit(mock);
+    cancelCalls = guardCancel(mock);
     const init = await mods.initializeAutomation({ adapter: mock });
     assert.equal(init.ready, true);
     session = await createReadySession(mods, { underlying: 'SPY', reconciliationStatus: 'CLEAN' });
@@ -99,6 +111,46 @@ test('order submission (Sprint 2)', async (t) => {
 
     // Sprint 2 boundary: no position was created.
     assert.equal(await mods.AutomationPositionModel.countDocuments({}), 0);
+  });
+
+  await t.test('entry timeout cancels a submitted unfilled order exactly once and releases the slot', async () => {
+    const intent = await approvedEntry(mods, String(session._id));
+    mock.scriptOrder(intent.clientOrderId, { onSubmit: 'accept' });
+    const res = await mods.submitApprovedIntent(String(intent._id), mock, ctx());
+    assert.equal(res.outcome, 'SUBMITTED');
+
+    const submitted = await mods.OrderIntentModel.findById(intent._id);
+    submitted.submittedAt = new Date('2026-07-10T15:00:00.000Z');
+    await submitted.save();
+    assert.equal(
+      await mods.OrderIntentModel.countDocuments({ automationSessionId: String(session._id), status: { $in: ['SUBMITTED'] } }),
+      1,
+      'submitted entry occupies the automation slot before timeout'
+    );
+
+    const first = await mods.cancelTimedOutEntryOrders(mock, new Date('2026-07-10T15:02:30.000Z'));
+    assert.equal(first.scanned, 1);
+    assert.equal(first.reconciled, 1);
+    assert.equal(first.cancelRequested, 1);
+    assert.equal(first.errors, 0);
+    assert.equal(cancelCalls(), 1);
+
+    const saved = await mods.OrderIntentModel.findById(intent._id);
+    assert.equal(saved.status, 'FAILED');
+    assert.equal(saved.brokerOrderId, res.brokerOrderId);
+    const brokerOrder = await mods.BrokerOrderModel.findOne({ clientOrderId: intent.clientOrderId }).lean();
+    assert.equal(brokerOrder.status, 'CANCELLED');
+    assert.equal(brokerOrder.filledQty, 0);
+    assert.equal(await mods.AutomationPositionModel.countDocuments({}), 0);
+    assert.equal(
+      await mods.OrderIntentModel.countDocuments({ automationSessionId: String(session._id), status: { $in: ['SUBMITTED'] } }),
+      0,
+      'terminal zero-fill cancel releases the automation slot'
+    );
+
+    const second = await mods.cancelTimedOutEntryOrders(mock, new Date('2026-07-10T15:03:30.000Z'));
+    assert.equal(second.scanned, 0);
+    assert.equal(cancelCalls(), 1, 'terminal canceled entry is not canceled again');
   });
 
   // ---- idempotency: one intent = one broker order --------------------------
@@ -170,6 +222,16 @@ test('order submission (Sprint 2)', async (t) => {
     assert.equal(submitCalls(), 0);
   });
 
+  await t.test('gate: paused session cannot submit', async () => {
+    session.status = 'PAUSED';
+    session.pauseReason = 'operator pause';
+    await session.save();
+    const intent = await approvedEntry(mods, String(session._id));
+    const res = await mods.submitApprovedIntent(String(intent._id), mock, ctx());
+    assert.equal(res.refusedReason, 'SESSION_NOT_RUNNABLE');
+    assert.equal(submitCalls(), 0);
+  });
+
   await t.test('gate: emergency stop → REFUSED', async () => {
     session.emergencyStop = { active: true, reason: 'test', at: new Date() };
     await session.save();
@@ -228,6 +290,7 @@ test('scheduler submits approved intents only when execution is enabled', async 
 
   let mock;
   let submitCalls;
+  let cancelCalls;
   let session;
   t.beforeEach(async () => {
     await dropAutomationCollections();
@@ -238,6 +301,7 @@ test('scheduler submits approved intents only when execution is enabled', async 
     mock = new mods.MockPaperBrokerAdapter();
     mock.setClock('open');
     submitCalls = guardSubmit(mock);
+    cancelCalls = guardCancel(mock);
     await mods.initializeAutomation({ adapter: mock });
     session = await createReadySession(mods, { underlying: 'SPY', reconciliationStatus: 'CLEAN' });
   });
@@ -273,5 +337,32 @@ test('scheduler submits approved intents only when execution is enabled', async 
     assert.equal(await mods.BrokerOrderModel.countDocuments({}), 1);
     // Still no positions/fills in Sprint 2.
     assert.equal(await mods.AutomationPositionModel.countDocuments({}), 0);
+  });
+
+  await t.test('entry timeout scan still runs when the tick is past the entry cutoff', async () => {
+    const intent = await approvedEntry(mods, String(session._id));
+    mock.scriptOrder(intent.clientOrderId, { onSubmit: 'accept' });
+    await mods.submitApprovedIntent(String(intent._id), mock, { ownsLease: true, marketSession: OPEN_SESSION });
+    const submitted = await mods.OrderIntentModel.findById(intent._id);
+    submitted.submittedAt = new Date('2026-07-10T15:00:00.000Z');
+    await submitted.save();
+
+    const result = await mods.runEvaluationTick({
+      adapter: mock,
+      ownerId: 'owner-timeout',
+      now: Date.parse('2026-07-10T19:50:00.000Z'),
+      evaluate: async () => {
+        throw new Error('entry evaluation should be skipped after cutoff');
+      },
+      submissionEnabled: true,
+    });
+
+    assert.equal(result.skippedReason, 'MARKET_FLATTEN');
+    assert.equal(result.evaluated, 0);
+    assert.equal(result.entryOrdersCancelled, 1);
+    assert.equal(result.entryOrderTimeouts.cancelRequested, 1);
+    assert.equal(cancelCalls(), 1);
+    const saved = await mods.OrderIntentModel.findById(intent._id);
+    assert.equal(saved.status, 'FAILED');
   });
 });

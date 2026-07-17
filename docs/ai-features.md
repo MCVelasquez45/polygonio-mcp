@@ -103,7 +103,7 @@ Audit logs are written to Mongo via `server/src/shared/ai/audit.ts` (collection:
 Node -> Python bridge:
 - `AGENT_API_URL` / `FASTAPI_URL` / `PYTHON_URL` (defaults to `http://localhost:5001`)
 
-Python agent env (see `agent/env.example`):
+Python agent env (see `agent/.env.example`):
 - `OPENAI_API_KEY`
 - `POLYGON_API_KEY`
 - `FRED_API_KEY`

@@ -132,6 +132,31 @@ test('Phase 2C lifecycle', async (t) => {
     assert.equal(pos.riskCounted, true);
   });
 
+  await t.test('durable resume clears PAUSED and a healthy resumed session can evaluate', async () => {
+    session.status = 'PAUSED';
+    session.pauseReason = 'operator pause';
+    session.pausedAt = new Date();
+    await session.save();
+
+    const resumed = await mods.resumeSession(String(session._id));
+    assert.equal(resumed.status, 'READY');
+    assert.equal(resumed.pauseReason, null);
+
+    let evaluateCalls = 0;
+    const tick = await mods.runEvaluationTick({
+      adapter: mock,
+      ownerId: 'owner-resume',
+      now: Date.parse('2026-07-10T15:30:00.000Z'),
+      evaluate: async () => {
+        evaluateCalls += 1;
+        return { approvedIntentId: null, outcome: 'NO_TRADE' };
+      },
+    });
+    assert.equal(tick.skippedReason, null);
+    assert.equal(evaluateCalls, 1);
+    assert.ok(tick.sessions.some(s => s.automationSessionId === String(session._id) && s.evaluated));
+  });
+
   await t.test('partial fills aggregate correctly and do not regress (pure)', () => {
     const order = (filledQty, avgFillPrice, status) => ({
       brokerOrderId: 'o1', clientOrderId: 'c1', symbol: 'SPY260724C00500000', side: 'BUY',
@@ -151,6 +176,18 @@ test('Phase 2C lifecycle', async (t) => {
     // A stale duplicate (lower filledQty) must not regress.
     mods.applyEntryFill(pos, order(1, 0.5, 'PARTIALLY_FILLED'));
     assert.equal(pos.filledQty, 4);
+  });
+
+  await t.test('entry price policy uses option bid/ask and rejects invalid markets', () => {
+    const base = { ...mods.getExecutionConfig(), entryLimitPolicy: 'MID', entryMaxSlippagePct: 0.05 };
+    assert.equal(mods.computeEntryLimitPrice(1.08, 1.16, base), 1.12);
+    assert.equal(mods.computeEntryLimitPrice(null, 1.16, base), null);
+    assert.equal(mods.computeEntryLimitPrice(1.08, null, base), null);
+    assert.equal(mods.computeEntryLimitPrice(0, 1.16, base), null);
+    assert.equal(mods.computeEntryLimitPrice(1.2, 1.16, base), null);
+
+    const askPolicy = { ...base, entryLimitPolicy: 'ASK' };
+    assert.equal(mods.computeEntryLimitPrice(1.08, 1.4, askPolicy), 1.3);
   });
 
   await t.test('duplicate evaluation creates no duplicate broker order', async () => {

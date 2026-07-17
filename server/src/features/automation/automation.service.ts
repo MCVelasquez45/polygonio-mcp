@@ -99,7 +99,9 @@ export async function reconcileNow(): Promise<ReconciliationReport> {
  * it to CLEAN. A session is created as CREATED/PENDING; the evaluation scheduler
  * only runs READY + CLEAN sessions, so this is the operator's "go live" action
  * for a session. Reconciliation (which processes READY/PAUSED sessions) sets the
- * reconciliation status; if it finds an orphan it pauses the session instead.
+ * reconciliation status; if a proven automation position has lost its broker
+ * order it pauses the session instead. Manual/external broker positions are
+ * never inspected and can never pause a session.
  * Idempotent: an already-READY session is simply re-reconciled.
  */
 export async function activateSession(id: string) {

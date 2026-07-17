@@ -23,23 +23,30 @@ test('startup reconciliation', async (t) => {
     mods.resetAutomationRuntimeForTests();
   });
 
-  await t.test('10. orphaned broker position pauses the session', async () => {
+  await t.test('10. manual/external broker position on a session underlying NEVER pauses the session (no symbol adoption)', async () => {
     const session = await createReadySession(mods, { underlying: 'SPY' });
     const mock = new mods.MockPaperBrokerAdapter();
-    // Position on the session's underlying with NO local intent anywhere.
+    // A manual/external option position on the session's OWN underlying, with NO
+    // automation intent and NO AutomationPosition. Ownership cannot be proven, so
+    // automation must ignore it completely — never infer ownership from symbol.
     mock.seedPosition({ symbol: 'SPY260821C00450000', qty: 3 });
 
     const report = await mods.runStartupReconciliation(mock);
-    assert.equal(report.status, 'MISMATCH');
-    assert.ok(report.mismatches.some(m => m.kind === 'ORPHANED_BROKER_POSITION'));
-    assert.ok(report.pausedSessionIds.includes(String(session._id)));
+    assert.equal(report.status, 'CLEAN');
+    assert.equal(report.mismatches.length, 0);
+    assert.deepEqual(report.pausedSessionIds, []);
+
+    // No AutomationPosition was adopted/created from the broker position.
+    const adopted = await mongoose.connection.db
+      .collection('automation_positions')
+      .countDocuments({});
+    assert.equal(adopted, 0, 'reconciliation must never create a position from broker truth');
 
     const stored = await mongoose.connection.db
       .collection('automation_sessions')
       .findOne({ _id: session._id });
-    assert.equal(stored.status, 'PAUSED');
-    assert.equal(stored.reconciliationStatus, 'MANUAL_REVIEW');
-    assert.match(stored.pauseReason, /orphaned broker position/i);
+    assert.equal(stored.status, 'READY');
+    assert.equal(stored.reconciliationStatus, 'CLEAN');
   });
 
   await t.test('unrelated broker positions do not pause sessions (manual trading is expected)', async () => {
@@ -166,15 +173,15 @@ test('startup reconciliation', async (t) => {
   await t.test('readiness stays false when reconciliation fails', async () => {
     await createReadySession(mods);
     const mock = new mods.MockPaperBrokerAdapter();
-    mock.failAccount(); // account probe irrelevant; break listPositions instead
+    mock.failAccount(); // account probe irrelevant; break listOpenOrders instead
     const brokenAdapter = {
       ...Object.fromEntries(
-        ['describe', 'getAccount', 'getClock', 'listOpenOrders', 'getOrder', 'getOrderByClientOrderId', 'submitOrder', 'cancelOrder', 'getPosition', 'closePosition'].map(
+        ['describe', 'getAccount', 'getClock', 'listPositions', 'getOrder', 'getOrderByClientOrderId', 'submitOrder', 'cancelOrder', 'getPosition', 'closePosition'].map(
           name => [name, mock[name].bind(mock)]
         )
       ),
-      listPositions: async () => {
-        throw new Error('positions endpoint down');
+      listOpenOrders: async () => {
+        throw new Error('open-orders endpoint down');
       },
     };
 

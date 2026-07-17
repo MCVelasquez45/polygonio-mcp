@@ -35,6 +35,13 @@ export type RiskEngineInputs = {
   selectedContract: Pick<RankedContract, 'symbol' | 'ask' | 'bid' | 'spreadPct' | 'quoteTimestamp'> | null;
   openAutomationPositions: number;
   unresolvedAutomationOrders: number;
+  /**
+   * Count of automation-owned positions currently flagged for overnight recovery
+   * (a policy-violating carry being flattened at the next session). Any such
+   * position hard-blocks new entries with a distinct reason, independent of the
+   * ordinary concurrency cap. Defaults to 0 when omitted.
+   */
+  overnightRecoveryPositions?: number;
   marketDataOk: boolean;
   underlyingBarAgeMs: number;
   clockDecision: Pick<MarketClockDecision, 'state' | 'canEnter'>;
@@ -144,6 +151,18 @@ export function evaluateRisk(inputs: RiskEngineInputs): RiskEngineResult {
     REASON.RISK_EXISTING_POSITION,
     inputs.openAutomationPositions,
     config.risk.maxConcurrentPositions
+  );
+  // Overnight carry hard-block: a policy-violating position awaiting/undergoing
+  // recovery must freeze ALL new entries until it is broker-confirmed closed —
+  // independent of, and in addition to, the ordinary concurrency cap.
+  const overnightRecoveryPositions = inputs.overnightRecoveryPositions ?? 0;
+  push(
+    'noOvernightRecoveryPosition',
+    overnightRecoveryPositions === 0,
+    `overnightRecoveryPositions=${overnightRecoveryPositions}`,
+    REASON.OVERNIGHT_POSITION_BLOCKS_ENTRY,
+    overnightRecoveryPositions,
+    0
   );
   push(
     'noUnresolvedAutomationOrder',

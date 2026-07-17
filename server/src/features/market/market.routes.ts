@@ -476,7 +476,16 @@ router.get('/watchlist', async (req, res, next) => {
             type,
             { ticker: symbol },
             30_000,
-            () => (isOptionContract ? getMassiveOptionContractSnapshot(symbol) : getMassiveStockSnapshot(symbol)),
+            () =>
+              isOptionContract
+                ? getMassiveOptionContractSnapshot(symbol, {
+                    priority: REQUEST_PRIORITY.WATCHLIST,
+                    cacheTtlMs: 60_000,
+                  })
+                : getMassiveStockSnapshot(symbol, {
+                    priority: REQUEST_PRIORITY.WATCHLIST,
+                    cacheTtlMs: 60_000,
+                  }),
             { ticker: symbol }
           );
           return {

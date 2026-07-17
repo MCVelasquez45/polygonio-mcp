@@ -45,6 +45,22 @@ export async function getAutomation(_req: Request, res: Response, next: NextFunc
   }
 }
 
+export async function getAutomationVisibility(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await portfolio.getAutomationVisibility());
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPositionLive(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await portfolio.getPositionLiveSnapshot(req.params.id));
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getTimeline(req: Request, res: Response, next: NextFunction) {
   try {
     const limit = Number(req.query.limit ?? 200);

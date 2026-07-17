@@ -7,8 +7,13 @@ import {
   RECOVERABLE_SESSION_STATUSES,
   type AutomationSessionDocument,
 } from '../models/automationSession.model';
+import {
+  AutomationPositionModel,
+  LIVE_POSITION_STATUSES,
+} from '../models/automationPosition.model';
 import { OrderIntentModel, UNRESOLVED_INTENT_STATUSES } from '../models/orderIntent.model';
 import { logAutomationEvent } from './automationAudit.service';
+import { isAutomationOwned } from './automationOwnership.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import { recordBrokerOrderSnapshot } from './orderIntent.service';
 
@@ -53,9 +58,11 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
     // 2. Unresolved local intents.
     const intents = await OrderIntentModel.find({ status: { $in: UNRESOLVED_INTENT_STATUSES } });
 
-    // 3+4. Broker truth.
+    // 3+4. Broker truth. We enumerate broker ORDERS (each carries our
+    //      deterministic client_order_id, the only proof of ownership) but we
+    //      NEVER enumerate broker positions to look for automation work —
+    //      ownership can never be inferred from a position's symbol/underlying.
     const brokerOpenOrders = await adapter.listOpenOrders();
-    const brokerPositions = await adapter.listPositions();
     const openByClientId = new Map(
       brokerOpenOrders.filter(order => order.clientOrderId).map(order => [order.clientOrderId as string, order])
     );
@@ -170,40 +177,73 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
       });
     }
 
-    // 8. Orphaned broker positions on a session's underlying with no local intent.
-    const intentSymbols = new Set(
-      (await OrderIntentModel.find({}, { optionSymbol: 1, underlying: 1 }).lean()).flatMap(doc =>
-        [doc.optionSymbol, doc.underlying].filter(Boolean).map(sym => String(sym).toUpperCase().replace(/^O:/, ''))
-      )
-    );
-    for (const position of brokerPositions) {
-      const symbol = position.symbol.toUpperCase().replace(/^O:/, '');
-      if (intentSymbols.has(symbol)) continue;
-      // A session owns a symbol via its single underlying OR its universe.
-      const owningSessions = sessions.filter(session =>
-        [session.underlying, ...(session.universe ?? [])]
-          .filter((entry): entry is string => Boolean(entry))
-          .some(entry => symbol.startsWith(entry.toUpperCase()))
-      );
-      if (!owningSessions.length) continue; // not on any automation underlying → manual trading, ignore
-      for (const session of owningSessions) {
-        mismatches.push({
-          kind: 'ORPHANED_BROKER_POSITION',
-          detail: `Broker position ${position.symbol} (${position.qty}) has no local intent for session symbols ${session.underlying ?? (session.universe ?? []).join(',')}`,
-          automationSessionId: String(session._id),
-          symbol: position.symbol,
-          resolution: 'SESSION_PAUSED',
-        });
-        logAutomationEvent({
-          service: 'reconciliation',
-          event: 'ORPHANED_BROKER_POSITION',
-          severity: 'critical',
-          automationSessionId: String(session._id),
-          symbol: position.symbol,
-          payload: { qty: position.qty, side: position.side },
-        });
-        await pauseSession(session, `Reconciliation: orphaned broker position ${position.symbol}`);
+    // 8. Reconcile AUTOMATION-OWNED positions against broker truth. This is the
+    //    ONLY position-level reconciliation, and it starts from durable
+    //    AutomationPosition records — never from broker positions. Ownership is
+    //    proven by the position's deterministic entry client_order_id (the chain
+    //    session → intent → client_order_id → broker order → position). A broker
+    //    position we cannot reach through this chain is manual/external and is
+    //    left completely untouched (Portfolio-only). We never infer ownership
+    //    from symbol, underlying, strike, expiration, side, or quantity.
+    let automationPositionsReconciled = 0;
+    const livePositions = await AutomationPositionModel.find({
+      status: { $in: LIVE_POSITION_STATUSES },
+    });
+    for (const position of livePositions) {
+      // Fail closed: only reconcile provably automation-owned positions.
+      if (!isAutomationOwned(position)) continue;
+      const session = sessionsById.get(position.automationSessionId);
+
+      // Prove the automation entry order behind this position still exists at
+      // the broker — resolve by broker order id first, then our client_order_id.
+      let brokerOrder = null;
+      try {
+        if (position.entryBrokerOrderId) {
+          brokerOrder = await adapter.getOrder(position.entryBrokerOrderId).catch(() => null);
+        }
+        if (!brokerOrder) {
+          brokerOrder = await adapter.getOrderByClientOrderId(position.entryClientOrderId);
+        }
+      } catch {
+        brokerOrder = null;
       }
+
+      if (brokerOrder) {
+        // Ownership proven → advance the position's broker-truth timestamp only.
+        automationPositionsReconciled += 1;
+        position.lastBrokerReconciledAt = new Date();
+        await position.save();
+        continue;
+      }
+
+      // Our own entry order has vanished at the broker — a genuine automation
+      // ambiguity (never a manual position, which has no AutomationPosition).
+      // Park for operator review and pause the session. Never touch broker truth.
+      position.status = 'MANUAL_REVIEW';
+      position.manualReviewReason =
+        `Reconciliation: automation entry order ${position.entryClientOrderId} missing at broker`;
+      position.lastBrokerReconciledAt = new Date();
+      await position.save();
+      mismatches.push({
+        kind: 'AUTOMATION_POSITION_ORDER_MISSING',
+        detail: `Automation position ${position.optionSymbol} (${position.entryClientOrderId}) has no matching broker order`,
+        automationSessionId: position.automationSessionId,
+        clientOrderId: position.entryClientOrderId,
+        symbol: position.optionSymbol,
+        resolution: 'MANUAL_REVIEW',
+      });
+      logAutomationEvent({
+        service: 'reconciliation',
+        event: 'AUTOMATION_POSITION_ORDER_MISSING',
+        severity: 'critical',
+        automationSessionId: position.automationSessionId,
+        symbol: position.optionSymbol,
+        payload: { entryClientOrderId: position.entryClientOrderId, status: position.status },
+      });
+      await pauseSession(
+        session,
+        `Reconciliation: automation entry order ${position.entryClientOrderId} missing at broker`
+      );
     }
 
     // 9–11. Persist outcomes on the clean sessions.
@@ -222,7 +262,7 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
       sessionsScanned: sessions.length,
       intentsScanned: intents.length,
       brokerOpenOrders: brokerOpenOrders.length,
-      brokerPositions: brokerPositions.length,
+      automationPositionsReconciled,
       matchedOrders,
       mismatches,
       pausedSessionIds: [...pausedSessionIds],
@@ -239,7 +279,7 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
         sessionsScanned: report.sessionsScanned,
         intentsScanned: report.intentsScanned,
         brokerOpenOrders: report.brokerOpenOrders,
-        brokerPositions: report.brokerPositions,
+        automationPositionsReconciled: report.automationPositionsReconciled,
         matchedOrders,
         mismatchCount: mismatches.length,
         pausedSessionIds: report.pausedSessionIds,
@@ -254,7 +294,7 @@ export async function runStartupReconciliation(adapter: PaperBrokerAdapter): Pro
       sessionsScanned: 0,
       intentsScanned: 0,
       brokerOpenOrders: 0,
-      brokerPositions: 0,
+      automationPositionsReconciled: 0,
       matchedOrders,
       mismatches,
       pausedSessionIds: [...pausedSessionIds],

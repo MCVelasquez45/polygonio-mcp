@@ -16,6 +16,9 @@ import {
 // explicit confirm followed by an explicit submit.
 
 export type ManualOrderInput = {
+  executionMode?: 'MANUAL';
+  orderSource?: 'MANUAL_UI';
+  action?: 'OPEN_ORDER' | 'CLOSE_POSITION';
   optionSymbol: string;
   side: 'buy' | 'sell';
   quantity: number;
@@ -23,6 +26,7 @@ export type ManualOrderInput = {
   limitPrice?: number | null;
   timeInForce?: string;
   positionIntent?: string;
+  brokerPositionQuantity?: number | null;
   requestedByUserId?: string | null;
   /** Market-data provenance only — never execution authority. */
   marketDataSource?: string | null;
@@ -52,10 +56,18 @@ export function buildManualOrder(input: ManualOrderInput): Record<string, unknow
 
 export async function createManualIntent(input: ManualOrderInput): Promise<ManualOrderIntentDocument> {
   const order = buildManualOrder(input);
+  const brokerPositionQuantity =
+    input.brokerPositionQuantity != null && Number.isFinite(Number(input.brokerPositionQuantity))
+      ? Math.abs(Number(input.brokerPositionQuantity))
+      : null;
   const doc = await ManualOrderIntentModel.create({
+    executionMode: 'MANUAL',
+    orderSource: 'MANUAL_UI',
+    action: input.action ?? 'OPEN_ORDER',
     optionSymbol: input.optionSymbol.trim().toUpperCase(),
     side: input.side,
     quantity: Number(input.quantity),
+    brokerPositionQuantity,
     orderType: input.orderType,
     limitPrice: input.limitPrice != null ? Number(input.limitPrice) : null,
     timeInForce: input.timeInForce ?? 'day',

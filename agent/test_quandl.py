@@ -2,10 +2,14 @@ import httpx
 import asyncio
 import os
 
-API_KEY = "enHZ5z7PmUXsGxYi2YvM"
+API_KEY = os.getenv("QUANDL_API_KEY", "").strip()
 BASE_URL = "https://data.nasdaq.com/api/v3"
 
 async def test_quandl():
+    if not API_KEY:
+        print("QUANDL_API_KEY is not configured; skipping Quandl smoke check.")
+        return
+
     datasets = [
         "CHRIS/CME_ES1",  # Continuous ES
         "WIKI/FB",        # WIKI free dataset (should default work)
@@ -13,7 +17,7 @@ async def test_quandl():
     
     async with httpx.AsyncClient() as client:
         # Test 1: Check key on WIKI dataset (usually free)
-        print(f"Testing API Key: {API_KEY[:4]}...{API_KEY[-4:]}")
+        print("Testing Quandl API key from environment.")
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

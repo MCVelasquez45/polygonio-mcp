@@ -42,6 +42,8 @@ import {
 } from './optionsFlowSignal.service';
 import { selectContract } from './optionSelector.service';
 import { evaluateRisk } from './riskEngine.service';
+import { countBlockingManualReviewIntents } from './orderReconciliation.service';
+import { countOvernightRecoveryPositions } from './overnightRecovery.service';
 import { ensureDailyReset, exchangeTradingDate } from './sessionDailyReset.service';
 import { isAutomationReady } from './sessionRecovery.service';
 
@@ -106,6 +108,80 @@ type FlowOpportunity = {
   /** Watchlist priority (lower = higher priority); a ranking tiebreak. */
   priority: number;
 };
+
+type WatchlistSymbolOutcome = 'NO_SIGNAL' | 'DATA_REJECTED' | 'RISK_REJECTED' | 'ORDER_SUBMITTED';
+
+type WatchlistSymbolEvaluationRecord = {
+  symbol: string;
+  eligible: boolean;
+  reasonCodes: string[];
+  symbolScore: number;
+  barCount: number;
+  closedBarTimestamp: Date | null;
+  liquidity: Record<string, unknown> | null;
+  candidateId: string | null;
+  candidateStatus: string | null;
+  direction: 'BULLISH' | 'BEARISH' | null;
+  outcome: WatchlistSymbolOutcome;
+  signalDirection: 'BULLISH' | 'BEARISH' | 'NO_TRADE' | null;
+  confidence: number | null;
+  selectedContract: string | null;
+  riskDecision: 'APPROVED' | 'REJECTED' | 'NOT_EVALUATED' | null;
+};
+
+function buildSymbolRecord(args: {
+  symbol: string;
+  outcome: WatchlistSymbolOutcome;
+  reasonCodes?: string[];
+  candidateId?: string | null;
+  candidateStatus?: string | null;
+  direction?: 'BULLISH' | 'BEARISH' | null;
+  confidence?: number | null;
+  selectedContract?: string | null;
+  riskDecision?: 'APPROVED' | 'REJECTED' | 'NOT_EVALUATED' | null;
+  eligible?: boolean;
+  at: number;
+}): WatchlistSymbolEvaluationRecord {
+  return {
+    symbol: args.symbol,
+    eligible: args.eligible ?? false,
+    reasonCodes: args.reasonCodes ?? [],
+    symbolScore: args.confidence ?? 0,
+    barCount: 0,
+    closedBarTimestamp: new Date(args.at),
+    liquidity: null,
+    candidateId: args.candidateId ?? null,
+    candidateStatus: args.candidateStatus ?? null,
+    direction: args.direction ?? null,
+    outcome: args.outcome,
+    signalDirection: args.direction ?? (args.outcome === 'NO_SIGNAL' ? 'NO_TRADE' : null),
+    confidence: args.confidence ?? null,
+    selectedContract: args.selectedContract ?? null,
+    riskDecision: args.riskDecision ?? null,
+  };
+}
+
+function emitWatchlistSymbolEvaluations(
+  sessionId: string,
+  records: WatchlistSymbolEvaluationRecord[]
+): void {
+  for (const record of records) {
+    logAutomationEvent({
+      service: 'options-flow',
+      event: 'WATCHLIST_SYMBOL_EVALUATED',
+      automationSessionId: sessionId,
+      symbol: record.symbol,
+      payload: {
+        outcome: record.outcome,
+        signalDirection: record.signalDirection,
+        confidence: record.confidence,
+        reasonCodes: record.reasonCodes,
+        selectedContract: record.selectedContract,
+        riskDecision: record.riskDecision,
+      },
+    });
+  }
+}
 
 /**
  * Effective per-symbol strategy config: the env defaults overlaid with this
@@ -242,7 +318,11 @@ function snapshotToChain(doc: OptionsFlowSnapshotDocument): NormalizedChain {
  * recorded on a trade candidate). NEVER throws upward — one symbol's failure
  * must not fail the run.
  */
-type SymbolFlowResult = { opportunity: FlowOpportunity | null; baselineInitialized: boolean };
+type SymbolFlowResult = {
+  opportunity: FlowOpportunity | null;
+  baselineInitialized: boolean;
+  record: WatchlistSymbolEvaluationRecord;
+};
 
 async function evaluateSymbolFlow(
   session: AutomationSessionDocument,
@@ -272,8 +352,19 @@ async function evaluateSymbolFlow(
 
   // Data availability: an empty/absent chain is a hard data gate, not NO_TRADE.
   if (!merged || merged.contracts.length === 0) {
-    await recordCandidate('DATA_REJECTED', [REASON.OPTIONS_DATA_UNAVAILABLE]);
-    return { opportunity: null, baselineInitialized: false };
+    const candidate = await recordCandidate('DATA_REJECTED', [REASON.OPTIONS_DATA_UNAVAILABLE]);
+    return {
+      opportunity: null,
+      baselineInitialized: false,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'DATA_REJECTED',
+        reasonCodes: [REASON.OPTIONS_DATA_UNAVAILABLE],
+        candidateId: String(candidate._id),
+        candidateStatus: 'DATA_REJECTED',
+        at: now,
+      }),
+    };
   }
 
   const baseline = await OptionsFlowSnapshotModel.findOne({ automationSessionId: sessionId, underlying: symbol });
@@ -285,7 +376,7 @@ async function evaluateSymbolFlow(
 
   if (!baselineValid) {
     // First window (or first after restart / new trading day): baseline only.
-    await recordCandidate('NO_TRADE', [REASON.OPTIONS_BASELINE_INITIALIZED], {
+    const candidate = await recordCandidate('NO_TRADE', [REASON.OPTIONS_BASELINE_INITIALIZED], {
       baselineInitialized: true,
       hadStaleBaseline: baseline != null,
     });
@@ -296,7 +387,18 @@ async function evaluateSymbolFlow(
       symbol,
       payload: { windowKey, tradingDate, contracts: merged.contracts.length },
     });
-    return { opportunity: null, baselineInitialized: true };
+    return {
+      opportunity: null,
+      baselineInitialized: true,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'NO_SIGNAL',
+        reasonCodes: [REASON.OPTIONS_BASELINE_INITIALIZED],
+        candidateId: String(candidate._id),
+        candidateStatus: 'NO_TRADE',
+        at: now,
+      }),
+    };
   }
 
   const window = buildFlowWindowFromSnapshots({
@@ -310,21 +412,58 @@ async function evaluateSymbolFlow(
   const signal = evaluateOptionsFlow(window, flowConfig, now);
 
   if (signal.dataRejected) {
-    await recordCandidate('DATA_REJECTED', signal.reasonCodes, { featureSnapshot: signal.featureSnapshot });
-    return { opportunity: null, baselineInitialized: false };
+    const candidate = await recordCandidate('DATA_REJECTED', signal.reasonCodes, { featureSnapshot: signal.featureSnapshot });
+    return {
+      opportunity: null,
+      baselineInitialized: false,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'DATA_REJECTED',
+        reasonCodes: signal.reasonCodes,
+        candidateId: String(candidate._id),
+        candidateStatus: 'DATA_REJECTED',
+        confidence: signal.score,
+        at: now,
+      }),
+    };
   }
   if (signal.direction === 'NO_TRADE') {
-    await recordCandidate('NO_TRADE', signal.reasonCodes, { featureSnapshot: signal.featureSnapshot });
-    return { opportunity: null, baselineInitialized: false };
+    const candidate = await recordCandidate('NO_TRADE', signal.reasonCodes, { featureSnapshot: signal.featureSnapshot });
+    return {
+      opportunity: null,
+      baselineInitialized: false,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'NO_SIGNAL',
+        reasonCodes: signal.reasonCodes,
+        candidateId: String(candidate._id),
+        candidateStatus: 'NO_TRADE',
+        confidence: signal.score,
+        at: now,
+      }),
+    };
   }
 
   // Deterministic direction → contract selection from the direction side chain.
   const sideChain = signal.direction === 'BULLISH' ? currentCall : currentPut;
   if (!sideChain) {
-    await recordCandidate('DATA_REJECTED', [REASON.SYMBOL_CHAIN_UNAVAILABLE], {
+    const candidate = await recordCandidate('DATA_REJECTED', [REASON.SYMBOL_CHAIN_UNAVAILABLE], {
       featureSnapshot: signal.featureSnapshot,
     });
-    return { opportunity: null, baselineInitialized: false };
+    return {
+      opportunity: null,
+      baselineInitialized: false,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'DATA_REJECTED',
+        reasonCodes: [REASON.SYMBOL_CHAIN_UNAVAILABLE],
+        candidateId: String(candidate._id),
+        candidateStatus: 'DATA_REJECTED',
+        direction: signal.direction,
+        confidence: signal.score,
+        at: now,
+      }),
+    };
   }
 
   const candidate = await recordCandidate('SIGNAL_FOUND', [], {
@@ -372,7 +511,21 @@ async function evaluateSymbolFlow(
     candidate.status = 'RISK_REJECTED';
     candidate.reasonCodes = [selectionResult.noSelectionReason ?? REASON.NO_CONTRACT_PASSED_FILTERS];
     await candidate.save();
-    return { opportunity: null, baselineInitialized: false };
+    return {
+      opportunity: null,
+      baselineInitialized: false,
+      record: buildSymbolRecord({
+        symbol,
+        outcome: 'RISK_REJECTED',
+        reasonCodes: candidate.reasonCodes,
+        candidateId: String(candidate._id),
+        candidateStatus: 'RISK_REJECTED',
+        direction: signal.direction,
+        confidence: signal.score,
+        riskDecision: 'REJECTED',
+        at: now,
+      }),
+    };
   }
 
   return {
@@ -389,6 +542,19 @@ async function evaluateSymbolFlow(
       priority,
     },
     baselineInitialized: false,
+    record: buildSymbolRecord({
+      symbol,
+      outcome: 'RISK_REJECTED',
+      reasonCodes: [],
+      candidateId: String(candidate._id),
+      candidateStatus: 'SIGNAL_FOUND',
+      direction: signal.direction,
+      confidence: signal.score,
+      selectedContract: selectionResult.selected.symbol,
+      riskDecision: 'NOT_EVALUATED',
+      eligible: true,
+      at: now,
+    }),
   };
 }
 
@@ -527,14 +693,18 @@ export async function processOptionsFlowTick(
     automationSessionId: sessionId,
     status: { $in: ['SUBMITTED'] },
   });
-  const unresolvedAutomationOrders = await OrderIntentModel.countDocuments({
+  const activeUnresolvedAutomationOrders = await OrderIntentModel.countDocuments({
     automationSessionId: sessionId,
-    status: { $in: ['SUBMITTING', 'MANUAL_REVIEW', 'APPROVED_AWAITING_EXECUTION'] },
+    status: { $in: ['SUBMITTING', 'APPROVED_AWAITING_EXECUTION'] },
   });
+  const unresolvedAutomationOrders =
+    activeUnresolvedAutomationOrders + await countBlockingManualReviewIntents(sessionId);
+  const overnightRecoveryPositions = await countOvernightRecoveryPositions(sessionId);
 
   // ---- per-symbol flow evaluation (independent, never-throwing) ------------
   const baseFlowConfig = getOptionsFlowConfig();
   const opportunities: FlowOpportunity[] = [];
+  const symbolRecords: WatchlistSymbolEvaluationRecord[] = [];
   let baselineInitializedCount = 0;
   for (const symbol of universeSymbols) {
     const item = universeItems[symbol];
@@ -565,7 +735,7 @@ export async function processOptionsFlowTick(
         ]);
       }
 
-      const { opportunity, baselineInitialized } = await evaluateSymbolFlow(
+      const { opportunity, baselineInitialized, record } = await evaluateSymbolFlow(
         session,
         symbol,
         config,
@@ -577,17 +747,11 @@ export async function processOptionsFlowTick(
         flowConfig,
         priority
       );
+      symbolRecords.push(record);
       if (opportunity) opportunities.push(opportunity);
       else if (baselineInitialized) baselineInitializedCount += 1;
 
       if (usingWatchlist) {
-        logAutomationEvent({
-          service: 'options-flow',
-          event: 'WATCHLIST_SYMBOL_EVALUATED',
-          automationSessionId: sessionId,
-          symbol,
-          payload: { hasOpportunity: opportunity != null, baselineInitialized },
-        });
         await recordWatchlistEvaluation(symbol, {
           at: new Date(now),
           signal: opportunity ? opportunity.direction : baselineInitialized ? 'BASELINE' : 'NO_TRADE',
@@ -603,6 +767,12 @@ export async function processOptionsFlowTick(
         symbol,
         payload: { error: String(error?.message ?? error) },
       });
+      symbolRecords.push(buildSymbolRecord({
+        symbol,
+        outcome: 'DATA_REJECTED',
+        reasonCodes: [REASON.SYMBOL_DATA_UNAVAILABLE],
+        at: now,
+      }));
     }
   }
 
@@ -628,8 +798,10 @@ export async function processOptionsFlowTick(
 
   if (!opportunities.length) {
     const outcomeLabel = baselineInitializedCount > 0 ? 'BASELINE_INITIALIZED' : 'NO_TRADE';
+    if (usingWatchlist) emitWatchlistSymbolEvaluations(sessionId, symbolRecords);
     return {
       evaluation: await persistEvaluation('NO_TRADE', {
+        symbolResults: symbolRecords as any,
         reasonCodes: baselineInitializedCount > 0 ? [REASON.OPTIONS_BASELINE_INITIALIZED] : [],
         marketClockDecision: clockPayload,
       }),
@@ -664,6 +836,7 @@ export async function processOptionsFlowTick(
       selectedContract: opportunity.contract,
       openAutomationPositions,
       unresolvedAutomationOrders,
+      overnightRecoveryPositions,
       // The options-flow window IS the authorized market read; its freshness
       // stands in for underlying-bar freshness (there is no underlying bar).
       marketDataOk: true,
@@ -689,6 +862,13 @@ export async function processOptionsFlowTick(
       { _id: opportunity.candidateId },
       { $set: { status: risk.approved ? 'RISK_APPROVED' : 'RISK_REJECTED', reasonCodes: risk.reasonCodes } }
     );
+    const record = symbolRecords.find(entry => entry.candidateId === opportunity.candidateId);
+    if (record) {
+      record.candidateStatus = risk.approved ? 'RISK_APPROVED' : 'RISK_REJECTED';
+      record.riskDecision = risk.approved ? 'APPROVED' : 'REJECTED';
+      record.reasonCodes = risk.reasonCodes;
+      record.outcome = risk.approved ? 'ORDER_SUBMITTED' : 'RISK_REJECTED';
+    }
     logAutomationEvent({
       service: 'options-flow',
       event: risk.approved ? 'RISK_APPROVED' : 'RISK_REJECTED',
@@ -761,9 +941,20 @@ export async function processOptionsFlowTick(
       ? 'RISK_REJECTED'
       : 'NO_TRADE';
 
+  if (selected) {
+    for (const record of symbolRecords) {
+      if (record.symbol !== selected.symbol && record.eligible && record.outcome === 'RISK_REJECTED') {
+        record.riskDecision = 'NOT_EVALUATED';
+        record.reasonCodes = record.reasonCodes.length ? record.reasonCodes : [REASON.OPPORTUNITY_NOT_SELECTED];
+      }
+    }
+  }
+  if (usingWatchlist) emitWatchlistSymbolEvaluations(sessionId, symbolRecords);
+
   return {
     evaluation: await persistEvaluation(evaluationOutcome, {
       eligibleSymbols: opportunities.map(o => o.symbol),
+      symbolResults: symbolRecords as any,
       selectedSymbol: selected?.symbol ?? null,
       selectedContractSymbol: selected?.contract.symbol ?? null,
       selectedCandidateId: selected?.candidateId ?? null,

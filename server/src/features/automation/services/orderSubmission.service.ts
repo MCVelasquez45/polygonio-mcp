@@ -1,8 +1,10 @@
 import mongoose from 'mongoose';
+import { getExecutionConfig, REASON } from '../automation.config';
 import { AutomationSessionModel, RUNNABLE_SESSION_STATUSES } from '../models/automationSession.model';
 import { BrokerOrderModel } from '../models/brokerOrder.model';
 import { OrderIntentModel } from '../models/orderIntent.model';
 import { logAutomationEvent } from './automationAudit.service';
+import { ingestBrokerOrderUpdate, TERMINAL_BROKER_STATES } from './brokerUpdateIngestion.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import type { MarketSessionState } from './marketSession.service';
 import { isBrokerTruthCurrent } from './orderReconciliation.service';
@@ -46,6 +48,98 @@ export type SubmissionResult = {
   brokerOrderId: string | null;
   brokerStatus: string | null;
 };
+
+export type EntryOrderTimeoutSummary = {
+  scanned: number;
+  reconciled: number;
+  cancelRequested: number;
+  alreadyCancelPending: number;
+  terminal: number;
+  errors: number;
+};
+
+function emptyEntryOrderTimeoutSummary(): EntryOrderTimeoutSummary {
+  return { scanned: 0, reconciled: 0, cancelRequested: 0, alreadyCancelPending: 0, terminal: 0, errors: 0 };
+}
+
+/**
+ * Resolve submitted ENTRY intents that have rested past the configured timeout.
+ * Broker truth is polled first; terminal/filled states are ingested as-is. Only
+ * still-working broker orders receive a cancel request, and the cancel response
+ * is folded through the same broker-update ingestion path as reconciliation.
+ */
+export async function cancelTimedOutEntryOrders(
+  adapter: PaperBrokerAdapter,
+  now: Date = new Date()
+): Promise<EntryOrderTimeoutSummary> {
+  const summary = emptyEntryOrderTimeoutSummary();
+  const timeoutMs = getExecutionConfig().entryOrderTimeoutSeconds * 1000;
+  const cutoff = new Date(now.getTime() - timeoutMs);
+  const intents = await OrderIntentModel.find({
+    intentType: 'ENTRY',
+    status: 'SUBMITTED',
+    brokerOrderId: { $ne: null },
+    submittedAt: { $ne: null, $lte: cutoff },
+  });
+
+  for (const intent of intents) {
+    summary.scanned += 1;
+    const brokerOrderId = intent.brokerOrderId;
+    if (!brokerOrderId) continue;
+    try {
+      const current = await adapter.getOrder(brokerOrderId);
+      await ingestBrokerOrderUpdate(current, 'order-poll');
+      summary.reconciled += 1;
+
+      if (TERMINAL_BROKER_STATES.has(current.status)) {
+        summary.terminal += 1;
+        continue;
+      }
+      if (current.status === 'CANCEL_PENDING') {
+        summary.alreadyCancelPending += 1;
+        continue;
+      }
+
+      const cancelled = await adapter.cancelOrder(brokerOrderId);
+      await ingestBrokerOrderUpdate(cancelled, 'order-poll');
+      summary.cancelRequested += 1;
+      logAutomationEvent({
+        service: 'order-submission',
+        event: 'ENTRY_ORDER_TIMEOUT_CANCEL_REQUESTED',
+        severity: 'warning',
+        automationSessionId: intent.automationSessionId,
+        intentId: String(intent._id),
+        brokerOrderId,
+        symbol: intent.optionSymbol ?? intent.underlying,
+        payload: {
+          reason: REASON.ENTRY_ORDER_TIMEOUT,
+          timeoutSeconds: getExecutionConfig().entryOrderTimeoutSeconds,
+          submittedAt: intent.submittedAt?.toISOString() ?? null,
+          brokerStatusBeforeCancel: current.status,
+          brokerStatusAfterCancel: cancelled.status,
+          filledQty: cancelled.filledQty,
+        },
+      });
+    } catch (error: any) {
+      summary.errors += 1;
+      logAutomationEvent({
+        service: 'order-submission',
+        event: 'ENTRY_ORDER_TIMEOUT_CANCEL_FAILED',
+        severity: 'warning',
+        automationSessionId: intent.automationSessionId,
+        intentId: String(intent._id),
+        brokerOrderId,
+        symbol: intent.optionSymbol ?? intent.underlying,
+        payload: {
+          reason: REASON.ENTRY_ORDER_TIMEOUT,
+          message: String(error?.message ?? error).slice(0, 300),
+        },
+      });
+    }
+  }
+
+  return summary;
+}
 
 /**
  * Submit ONE approved ENTRY intent, enforcing every pre-submission gate. On any

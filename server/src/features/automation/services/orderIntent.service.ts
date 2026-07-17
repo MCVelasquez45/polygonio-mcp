@@ -125,7 +125,7 @@ export async function createOrderIntent(input: CreateOrderIntentInput): Promise<
         completedAt: null,
       },
     },
-    { new: true, upsert: true, includeResultMetadata: true }
+    { returnDocument: 'after', upsert: true, includeResultMetadata: true }
   );
 
   const doc = intent.value as OrderIntentDocument;

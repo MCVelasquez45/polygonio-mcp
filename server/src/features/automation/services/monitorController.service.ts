@@ -4,15 +4,13 @@ import {
   getExitPolicyConfig,
   getMarketHoursConfig,
   getSchedulerConfig,
-  getStrategyConfig,
 } from '../automation.config';
-import type { SignalDirection } from '../models/tradeCandidate.model';
 import {
   AutomationPositionModel,
   LIVE_POSITION_STATUSES,
 } from '../models/automationPosition.model';
-import { runSchedulerTick, type MarkProvider } from '../automation.scheduler';
-import { fetchOptionChain } from './automationMarketData.service';
+import { runSchedulerTick, type MarkProvider, type MarkResult } from '../automation.scheduler';
+import { fetchHeldContractMark, isMarkStale } from './automationMarketData.service';
 import { logAutomationEvent } from './automationAudit.service';
 import type { PaperBrokerAdapter } from './brokerAdapter';
 import { acquireSchedulerLease, releaseSchedulerLease } from '../models/schedulerLease.model';
@@ -46,6 +44,7 @@ type ControllerRuntime = {
   startedAt: Date | null;
   lastTickAt: Date | null;
   lastError: string | null;
+  lastResult: MonitorTickResult | null;
 };
 
 const controller: ControllerRuntime = {
@@ -55,6 +54,7 @@ const controller: ControllerRuntime = {
   startedAt: null,
   lastTickAt: null,
   lastError: null,
+  lastResult: null,
 };
 
 export type MonitorTickDeps = {
@@ -96,49 +96,61 @@ export type MonitorTickResult = {
 // Live mark provider (fail closed)
 // ---------------------------------------------------------------------------
 
-/** Underlying root from an OCC option symbol (e.g. O:SPY260717C00450000 → SPY). */
-function underlyingFromOptionSymbol(optionSymbol: string): string {
-  const m = optionSymbol.toUpperCase().replace(/^O:/, '').match(/^([A-Z]+)\d{6}[CP]\d{8}$/);
-  return m ? m[1] : optionSymbol.toUpperCase().replace(/^O:/, '');
-}
-
-/** Long-call vs long-put direction from the OCC option symbol. */
-function directionFromOptionSymbol(optionSymbol: string): SignalDirection {
-  const m = optionSymbol.toUpperCase().replace(/^O:/, '').match(/\d{6}([CP])\d{8}$/);
-  return m && m[1] === 'P' ? 'BEARISH' : 'BULLISH';
-}
-
 /**
- * Live option-mark provider. Reuses the authorized option-chain fetch (no new
- * data pipeline, no guessed endpoint) and returns the held contract's mid.
+ * Live option-mark provider. Uses the TARGETED held-contract snapshot (one
+ * direct request by OCC symbol via the shared request manager) instead of
+ * downloading the whole chain every tick. Freshness is computed against the
+ * contract's OWN provider quote timestamp — so a slow request cannot fake
+ * staleness and a truly old (e.g. market-closed) quote cannot look fresh.
  * ALWAYS fails closed: any missing/unusable/older-than-threshold quote returns
- * `{ mark: null, stale: true }` so price triggers are suppressed rather than
- * fired on invented data. End-of-day flatten and broker-close detection do not
- * depend on the mark and keep working through an outage.
+ * `stale: true` so price triggers are suppressed rather than fired on invented
+ * data. End-of-day flatten, overnight recovery, and broker-close detection do
+ * NOT depend on the mark and keep working through an outage.
  */
 export function createLiveMarkProvider(now: () => number = () => Date.now()): MarkProvider {
-  return async (optionSymbol: string) => {
-    try {
-      const symbol = optionSymbol.toUpperCase();
-      const config = getStrategyConfig(underlyingFromOptionSymbol(symbol));
-      const direction = directionFromOptionSymbol(symbol);
-      const chain = await fetchOptionChain(config, direction, null, now());
-      const contract = chain.contracts.find(c => c.symbol === symbol);
-      if (!contract) return { mark: null, stale: true };
-      const mark =
-        contract.mid != null && contract.mid > 0
-          ? contract.mid
-          : contract.bid != null && contract.ask != null && contract.bid > 0 && contract.ask >= contract.bid
-            ? Number(((contract.bid + contract.ask) / 2).toFixed(4))
-            : null;
-      if (mark == null || !(mark > 0)) return { mark: null, stale: true };
-      const { monitorStaleQuoteMs } = getExitPolicyConfig();
-      const stale =
-        contract.quoteTimestamp == null || now() - contract.quoteTimestamp > monitorStaleQuoteMs;
-      return { mark, stale };
-    } catch {
-      return { mark: null, stale: true };
-    }
+  return async (optionSymbol: string): Promise<MarkResult> => {
+    const symbol = optionSymbol.toUpperCase();
+    const result = await fetchHeldContractMark(symbol, now());
+    const { monitorStaleQuoteMs } = getExitPolicyConfig();
+    const hasMark = result.mark != null && result.mark > 0;
+    const stale = isMarkStale(
+      { mark: result.mark, providerQuoteTimestamp: result.providerQuoteTimestamp, computedAgeMs: result.computedAgeMs },
+      monitorStaleQuoteMs
+    );
+
+    logAutomationEvent({
+      service: 'monitor-scheduler',
+      event: hasMark ? 'MONITOR_MARK_RECEIVED' : 'MONITOR_MARK_MISSING',
+      severity: hasMark ? 'info' : 'warning',
+      symbol,
+      payload: {
+        mark: result.mark,
+        providerQuoteTimestamp: result.providerQuoteTimestamp,
+        providerQuoteAt:
+          result.providerQuoteTimestamp != null
+            ? new Date(result.providerQuoteTimestamp).toISOString()
+            : null,
+        fetchStartedAt: new Date(result.fetchStartedAt).toISOString(),
+        fetchCompletedAt: new Date(result.fetchCompletedAt).toISOString(),
+        computedAgeMs: result.computedAgeMs,
+        freshnessThresholdMs: monitorStaleQuoteMs,
+        dataSource: result.source,
+        cacheStatus: result.cacheStatus,
+        stale,
+      },
+    });
+
+    return {
+      mark: hasMark ? result.mark : null,
+      stale,
+      providerQuoteTimestamp: result.providerQuoteTimestamp,
+      fetchStartedAt: result.fetchStartedAt,
+      fetchCompletedAt: result.fetchCompletedAt,
+      receivedAt: result.fetchCompletedAt,
+      computedAgeMs: result.computedAgeMs,
+      source: result.source,
+      cacheStatus: result.cacheStatus,
+    };
   };
 }
 
@@ -295,12 +307,19 @@ export async function runMonitorTick(deps: MonitorTickDeps): Promise<MonitorTick
 // ---------------------------------------------------------------------------
 
 export function getMonitorStatus() {
+  const config = getSchedulerConfig();
   return {
     state: controller.state,
     ownerId: controller.ownerId,
     startedAt: controller.startedAt ? controller.startedAt.toISOString() : null,
     lastTickAt: controller.lastTickAt ? controller.lastTickAt.toISOString() : null,
     lastError: controller.lastError,
+    intervalMs: config.intervalMs,
+    lastRun: controller.lastResult?.ranAt ?? null,
+    positionsMonitored: controller.lastResult?.positionsMonitored ?? 0,
+    exitsTriggered: controller.lastResult?.exitsTriggered ?? 0,
+    skippedReason: controller.lastResult?.skippedReason ?? null,
+    heartbeat: controller.lastResult?.heartbeat ?? null,
   };
 }
 
@@ -337,8 +356,9 @@ export function startMonitorScheduler(adapter?: PaperBrokerAdapter): boolean {
     if (controller.state !== 'ACTIVE' || !controller.ownerId) return;
     controller.lastTickAt = new Date();
     runMonitorTick({ adapter: brokerAdapter, ownerId: controller.ownerId, markProvider })
-      .then(() => {
+      .then(result => {
         controller.lastError = null;
+        controller.lastResult = result;
       })
       .catch(error => {
         controller.lastError = String(error?.message ?? error);
@@ -374,6 +394,7 @@ export async function stopMonitorScheduler(reason = 'shutdown'): Promise<void> {
   controller.ownerId = null;
   controller.state = 'STOPPED';
   controller.startedAt = null;
+  controller.lastResult = null;
   if (ownerId) {
     await releaseSchedulerLease(MONITOR_SCOPE, ownerId).catch(() => undefined);
   }
@@ -389,4 +410,5 @@ export function resetMonitorControllerForTests(): void {
   controller.startedAt = null;
   controller.lastTickAt = null;
   controller.lastError = null;
+  controller.lastResult = null;
 }

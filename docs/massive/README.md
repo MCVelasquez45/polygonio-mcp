@@ -38,12 +38,21 @@ entitlements. The server exposes three composable tools:
 > Equivalent one-liner if you prefer the CLI over the checked-in config:
 > `claude mcp add --transport http massive https://mcp.massive.com/`
 
+The hosted environment gives each session ~64 MB of working storage and up to 10
+concurrent workspaces — ample for typical analysis. Access mirrors your Massive
+plan entitlements (e.g. requesting Options data without an Options plan returns an
+access-denied error).
+
 **Why remote and not self-hosted:** the sprint calls for no self-hosting unless
 there's a clear advantage. The remote server needs zero install, auto-tracks the
-latest API, and uses OAuth (no shared secret in the repo). A local option exists
-(`uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.10.0"`
-then `claude mcp add massive -e MASSIVE_API_KEY=... -- mcp_massive`) — only use it
-if you need API-key auth instead of OAuth or must run offline.
+latest API, and uses OAuth (no shared secret in the repo). The **self-hosted**
+server ([`github.com/massive-com/mcp_massive`](https://github.com/massive-com/mcp_massive))
+adds a local data workspace on top of the core tools — store results as in-memory
+DataFrames, run SQL against them, and apply built-in financial functions (Greeks,
+returns, technical indicators). Only reach for it if you need API-key auth instead
+of OAuth, must run offline, or routinely pull very large local datasets:
+`uv tool install "mcp_massive @ git+https://github.com/massive-com/mcp_massive@v0.10.0"`
+then `claude mcp add massive -e MASSIVE_API_KEY=... -- mcp_massive`.
 
 ---
 
@@ -53,18 +62,31 @@ Use these when the MCP isn't enough or you want to read schemas directly. Prefer
 `llms.txt` when context is tight, `llms-full.txt` when you need full parameter
 and response detail:
 
+The `llms.txt` / `llms-full.txt` pair exists at **every level** of the nav tree —
+move higher for a broad view, lower to scope tightly to one category:
+
 | Scope | Index | Full |
 | --- | --- | --- |
 | Root | `https://massive.com/docs/llms.txt` | `https://massive.com/docs/llms-full.txt` |
 | REST | `https://massive.com/docs/rest/llms.txt` | `https://massive.com/docs/rest/llms-full.txt` |
 | Stocks | `https://massive.com/docs/rest/stocks/llms.txt` | `https://massive.com/docs/rest/stocks/llms-full.txt` |
+| Category | `https://massive.com/docs/rest/stocks/tickers/llms.txt` | `https://massive.com/docs/rest/stocks/tickers/llms-full.txt` |
 
 **Any doc page → Markdown:** append `.md` to the URL, e.g.
 `https://massive.com/docs/rest/stocks/aggregates.md`. Fetch these instead of
 scraping the rendered site.
 
-Official client libraries (use as production references, not for guessing):
-Python, JavaScript, Go, Kotlin/JVM — linked from `https://massive.com/docs`.
+Official client libraries (use as production references, not for guessing) —
+they handle auth, retries, pagination, and response parsing:
+
+- Python — `https://github.com/massive-com/client-python`
+- JavaScript — `https://github.com/massive-com/client-js`
+- Go — `https://github.com/massive-com/client-go`
+- Kotlin/JVM — `https://github.com/massive-com/client-jvm`
+
+Massive's own guide to these integration options is the **AI Tools Quickstart**
+(Docs → AI Tools → Quickstart at `https://massive.com/docs`) — it compares MCP vs.
+`llms.txt` vs. direct REST vs. Skills and when to use each.
 
 ---
 
@@ -96,3 +118,34 @@ Python, JavaScript, Go, Kotlin/JVM — linked from `https://massive.com/docs`.
 | Python direct REST (agent + screener) | `agent/core/polygon_agent.py`, `python-screener-service/screener.py` |
 
 See [GAP_REPORT.md](GAP_REPORT.md) for the endpoint-by-endpoint audit and fixes.
+
+## 5. Subscription profile: Options Advanced
+
+The account attached to this repo is **Options Advanced**: real-time options
+(REST + WebSocket, greeks/IV/OI, minute+second aggregates), **no real-time
+stock entitlement** (stock daily aggregates are DELAYED; current-day stock
+intraday returns `NOT_AUTHORIZED`; the stocks WebSocket is not included; the
+underlying block inside options snapshots is DELAYED).
+
+Server-side option-chain data is owned by the **Options Market Data
+Orchestrator** (`server/src/features/marketData/`): request coalescing,
+narrow provider filters, session-aware caching, explicit `ChainCompleteness`,
+priority-classed requests, and a single managed options-WS connection. New
+consumers must use it — do not call Massive chain/snapshot endpoints directly.
+
+Key environment variables (defaults in parentheses):
+
+- `MASSIVE_SUBSCRIPTION_PROFILE` (`options-advanced`) — gates every stock
+  stream/intraday dependency; automation fails closed without a stocks plan.
+- `MASSIVE_STOCKS_WS_ENABLED` (`false`) — stocks WS hard switch (requires a
+  stocks-entitled profile as well).
+- `MASSIVE_ENTITLEMENT_BLOCK_TTL_MS` (6 h) — how long a `NOT_AUTHORIZED`
+  endpoint class is blocked from further requests.
+- `OPTIONS_CHAIN_CACHE_OPEN_TTL_MS` / `OPTIONS_CHAIN_CACHE_CLOSED_TTL_MS`
+  (5 s / 5 min) and `OPTIONS_REFERENCE_CACHE_TTL_MS` (6 h) — orchestrator caches.
+
+Health: `GET /api/market-data/health` and
+`GET /api/market-data/options/:underlying/status`.
+
+Full analysis: [docs/market-data/options-advanced-alignment-audit.md](../market-data/options-advanced-alignment-audit.md)
+and [docs/market-data/options-advanced-alignment-delivery.md](../market-data/options-advanced-alignment-delivery.md).

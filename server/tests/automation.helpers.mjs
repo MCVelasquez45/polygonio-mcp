@@ -10,6 +10,13 @@ process.env.MASSIVE_TIMEOUT_MS = '150';
 process.env.MASSIVE_MAX_RETRIES = '0';
 process.env.AUTOMATION_BROKER_TIMEOUT_MS = '500';
 process.env.AUTOMATION_CLOCK_TTL_MS = '0'; // no clock-decision caching in tests
+// Hermetic tests: pin the submission gate to its safe default BEFORE any dist
+// import. The Alpaca SDK runs its own dotenv.config() at import time (pulling in
+// server/.env), and dotenv never overrides an already-set var — so setting this
+// here keeps a developer's local .env from leaking AUTOMATION_SUBMIT_APPROVED_INTENTS
+// into the suite. Tests that exercise submission opt in explicitly (submissionEnabled
+// dep on runEvaluationTick, or executeApprovedEntry/submitApprovedIntent directly).
+process.env.AUTOMATION_SUBMIT_APPROVED_INTENTS = 'false';
 
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
@@ -102,6 +109,9 @@ export async function loadDist() {
     watchlistModel2e,
     watchlistService2e,
     watchlistProvider2e,
+    // Ownership isolation guard
+    ownershipGuard,
+    overnightRecovery,
   ] = await Promise.all([
     import('../dist/features/automation/models/automationSession.model.js'),
     import('../dist/features/automation/models/orderIntent.model.js'),
@@ -151,6 +161,8 @@ export async function loadDist() {
     import('../dist/features/watchlist/watchlist.model.js'),
     import('../dist/features/watchlist/watchlist.service.js'),
     import('../dist/features/watchlist/automationUniverseProvider.service.js'),
+    import('../dist/features/automation/services/automationOwnership.service.js'),
+    import('../dist/features/automation/services/overnightRecovery.service.js'),
   ]);
   return {
     ...sessionModel,
@@ -201,6 +213,8 @@ export async function loadDist() {
     ...watchlistModel2e,
     ...watchlistService2e,
     ...watchlistProvider2e,
+    ...ownershipGuard,
+    ...overnightRecovery,
   };
 }
 
