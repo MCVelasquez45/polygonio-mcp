@@ -133,10 +133,10 @@ export const ChartPanel = memo(function ChartPanel({
   ]);
   const healthTone =
     healthLabel === 'Live'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+      ? 'border-intel-pos/40 bg-intel-pos/10 text-intel-pos'
       : healthLabel === 'Backfilling' || healthLabel === 'Stale'
-        ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-        : 'border-gray-800 bg-gray-900/60 text-gray-300';
+        ? 'border-intel-warn/40 bg-intel-warn/10 text-intel-warn'
+        : 'border-intel-line bg-intel-panel2 text-intel-ink2';
   const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
   const emptyStateMessage = ticker.startsWith('O:')
     ? 'Select a contract to load chart data.'
@@ -147,62 +147,67 @@ export const ChartPanel = memo(function ChartPanel({
   const hasRenderableData = data.length > 0 && (!isIntraday || data.length >= 2);
 
   const chartInstanceKey = chartKey ? `${chartKey}-${timeframe}` : timeframe;
+  const lastBar = data.at(-1) ?? null;
+  const changeUp = displayChange != null && displayChange >= 0;
 
   return (
-    <section className="bg-gray-950/70 border border-gray-900/80 backdrop-blur-sm rounded-2xl p-4 flex flex-col gap-3 min-h-[32rem] lg:min-h-[36rem] min-w-0">
-      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm uppercase tracking-[0.4em] text-gray-500">{ticker}</p>
-          <div className="flex items-center gap-3 text-3xl font-semibold">
-            <span>{displayPrice != null ? `$${displayPrice.toFixed(2)}` : '--'}</span>
+    <section className="flex min-h-[32rem] min-w-0 flex-col overflow-hidden rounded-panel border border-intel-line bg-intel-panel lg:min-h-[36rem]">
+      {/* ── Instrument header: readout left, controls right ─────────────── */}
+      <header className="flex flex-col gap-2 border-b border-intel-line px-3 py-2.5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-2.5">
+            <span className="font-mono text-[9px] font-semibold uppercase tracking-eyebrow text-intel-ink3">Chart</span>
+            <span className="font-mono text-[15px] font-semibold tracking-wide text-intel-ink">{ticker}</span>
+            <span className="font-mono text-[26px] font-semibold leading-none tabular-nums text-intel-ink">
+              {displayPrice != null ? displayPrice.toFixed(2) : '--'}
+            </span>
             {displayChange != null && displayChangePercent != null && (
-              <span
-                className={`flex items-center gap-2 text-lg ${displayChange >= 0 ? 'text-emerald-400' : 'text-red-400'
-                  }`}
-              >
-                {displayChange >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-                {displayChange >= 0 ? '+' : ''}
-                {displayChange.toFixed(2)} ({displayChangePercent.toFixed(2)}%)
+              <span className={`flex items-center gap-1 font-mono text-[13px] font-semibold tabular-nums ${changeUp ? 'text-intel-pos' : 'text-intel-neg'}`}>
+                {changeUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                {changeUp ? '+' : ''}{displayChange.toFixed(2)} ({displayChangePercent.toFixed(2)}%)
               </span>
             )}
-            {isFrozen && (
-              <span className="inline-flex items-center gap-1 text-xs text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-full px-3 py-1">
-                <Lock className="h-3 w-3" /> Frozen
+            {isFrozen ? (
+              <span className="inline-flex items-center gap-1 rounded-sm border border-intel-warn/40 bg-intel-warn/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-label text-intel-warn">
+                <Lock className="h-2.5 w-2.5" /> Frozen
               </span>
-            )}
-            {health && !isFrozen && (
-              <span className={`inline-flex items-center gap-2 text-xs rounded-full border px-3 py-1 ${healthTone}`}>
+            ) : health ? (
+              <span className={`inline-flex items-center rounded-sm border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-label ${healthTone}`}>
                 {healthLabel}
               </span>
-            )}
+            ) : null}
           </div>
-          <p className="text-xs text-gray-500">Option aggregates pulled directly from Massive</p>
-          {healthDetail && <p className="text-[11px] text-gray-500">{healthDetail}</p>}
+          {/* OHLC micro-readout — the institutional bar summary */}
+          {lastBar && (
+            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] tabular-nums text-intel-ink3">
+              <span>O <span className="text-intel-ink2">{lastBar.open?.toFixed(2) ?? '—'}</span></span>
+              <span>H <span className="text-intel-pos">{lastBar.high?.toFixed(2) ?? '—'}</span></span>
+              <span>L <span className="text-intel-neg">{lastBar.low?.toFixed(2) ?? '—'}</span></span>
+              <span>C <span className="text-intel-ink">{lastBar.close?.toFixed(2) ?? '—'}</span></span>
+              {lastBar.volume != null && <span>V <span className="text-intel-ink2">{Math.round(lastBar.volume).toLocaleString()}</span></span>}
+              <span className="text-intel-ink3">· Massive</span>
+            </div>
+          )}
+          {healthDetail && <p className="mt-0.5 font-mono text-[10px] text-intel-ink3">{healthDetail}</p>}
           {usingLastSession && (
-            <p className="text-[11px] text-amber-200/80 flex items-center gap-1">
+            <p className="mt-0.5 font-mono text-[10px] text-intel-warn/80">
               Last session {resultGranularity === 'daily' ? 'daily' : 'intraday'} candles
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2 max-w-full w-full md:w-auto justify-start md:justify-end">
+        <div className="flex flex-wrap items-center gap-1.5">
           {sessionMode && onSessionModeChange && (
-            <div className="flex items-center gap-1 rounded-full border border-gray-900 bg-gray-950/60 p-1 text-xs">
-              <button
-                type="button"
-                onClick={() => onSessionModeChange('regular')}
-                className={`px-3 py-1 rounded-full ${sessionMode === 'regular' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
-                  }`}
-              >
-                RTH
-              </button>
-              <button
-                type="button"
-                onClick={() => onSessionModeChange('extended')}
-                className={`px-3 py-1 rounded-full ${sessionMode === 'extended' ? 'bg-emerald-500/20 text-white' : 'text-gray-400'
-                  }`}
-              >
-                EXT
-              </button>
+            <div className="flex overflow-hidden rounded-panel border border-intel-line font-mono text-[10px] font-semibold uppercase tracking-label">
+              {(['regular', 'extended'] as const).map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onSessionModeChange(mode)}
+                  className={`px-2.5 py-1 transition-colors ${sessionMode === mode ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3 hover:bg-intel-panel2'}`}
+                >
+                  {mode === 'regular' ? 'RTH' : 'EXT'}
+                </button>
+              ))}
             </div>
           )}
           {onRunAnalysis && (
@@ -210,60 +215,61 @@ export const ChartPanel = memo(function ChartPanel({
               type="button"
               onClick={onRunAnalysis}
               disabled={analysisLoading || analysisDisabled}
-              className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-60"
+              className="rounded-panel border border-intel-aiLine px-2.5 py-1 font-mono text-[10px] uppercase tracking-label text-intel-ai transition-colors hover:bg-intel-aiSoft disabled:opacity-60"
             >
-              {analysisLoading ? 'Analyzing…' : 'Run 5-min analysis'}
+              {analysisLoading ? 'Analyzing…' : 'Analyze · AI'}
             </button>
           )}
-          {TIMEFRAMES.map(option => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onTimeframeChange(option.value)}
-              className={`px-3 py-1.5 text-xs rounded-full border ${timeframe === option.value ? 'bg-emerald-500/20 border-emerald-400 text-white' : 'border-gray-800 text-gray-400'
+          <div className="flex overflow-hidden rounded-panel border border-intel-line font-mono text-[10px] font-semibold">
+            {TIMEFRAMES.map(option => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onTimeframeChange(option.value)}
+                className={`border-l border-intel-line px-2 py-1 first:border-l-0 transition-colors ${
+                  timeframe === option.value ? 'bg-intel-accent text-intel-bg' : 'text-intel-ink3 hover:bg-intel-panel2'
                 }`}
-            >
-              {option.label}
-            </button>
-          ))}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
-      <div className="relative flex-1 min-h-[300px]">
+      <div className="relative min-h-[300px] flex-1 p-2">
         {!hasRenderableData ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm text-center px-4">
+          <div className="flex h-full items-center justify-center px-4 text-center font-mono text-[11px] text-intel-ink3">
             {isLoading ? 'Loading bars…' : displayEmptyMessage}
           </div>
         ) : (
           <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} markers={markers} />
         )}
         {isLoading && data.length > 0 && (
-          <div className="absolute inset-0 pointer-events-none flex items-start justify-end p-3">
-            <span className="rounded-full border border-gray-800 bg-gray-950/80 px-3 py-1 text-[11px] text-gray-300">
+          <div className="pointer-events-none absolute inset-0 flex items-start justify-end p-3">
+            <span className="rounded-sm border border-intel-line bg-intel-panel px-2 py-1 font-mono text-[10px] text-intel-cyan">
               Updating…
             </span>
           </div>
         )}
       </div>
       {(analysis || analysisError || analysisLoading) && (
-        <div className="rounded-2xl border border-gray-900 bg-gray-950/60 p-4 space-y-2">
+        <div className="border-t border-intel-line bg-intel-aiSoft/40 px-3 py-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-gray-500">5-Minute Candle Analysis</p>
-              {analysisUpdatedLabel && (
-                <p className="text-[11px] text-gray-500">Last run {analysisUpdatedLabel}</p>
-              )}
-            </div>
+            <p className="font-mono text-[9px] uppercase tracking-label text-intel-ai">Candle Analysis · AI</p>
+            {analysisUpdatedLabel && (
+              <p className="font-mono text-[10px] text-intel-ink3">{analysisUpdatedLabel}</p>
+            )}
           </div>
-          {analysisLoading && <p className="text-xs text-gray-400">Building the opening-range read…</p>}
-          {!analysisLoading && analysisError && <p className="text-xs text-amber-200">{analysisError}</p>}
+          {analysisLoading && <p className="mt-1.5 font-mono text-[11px] text-intel-ink3">Building the opening-range read…</p>}
+          {!analysisLoading && analysisError && <p className="mt-1.5 font-mono text-[11px] text-intel-warn">{analysisError}</p>}
           {!analysisLoading && analysis && (
-            <div className="space-y-2 text-sm text-gray-200">
-              <p className="font-semibold text-white">{analysis.headline}</p>
-              <ul className="space-y-1 text-xs text-gray-300">
+            <div className="mt-1.5 space-y-1.5">
+              <p className="text-[13px] font-semibold text-intel-ink">{analysis.headline}</p>
+              <ul className="space-y-1 text-[11px] text-intel-ink2">
                 {analysis.bullets.map(item => (
                   <li key={item} className="flex items-start gap-2">
-                    <span className="text-emerald-300">•</span>
+                    <span className="text-intel-ai">•</span>
                     <span>{item}</span>
                   </li>
                 ))}
@@ -272,7 +278,7 @@ export const ChartPanel = memo(function ChartPanel({
           )}
         </div>
       )}
-      {sessionMeta?.note && <p className="text-[11px] text-gray-500">{sessionMeta.note}</p>}
+      {sessionMeta?.note && <p className="border-t border-intel-line px-3 py-1.5 font-mono text-[10px] text-intel-ink3">{sessionMeta.note}</p>}
     </section>
   );
 });
