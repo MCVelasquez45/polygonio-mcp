@@ -39,7 +39,8 @@ type RiskSlice = {
   description: string;
 };
 
-const riskColors = ['#10b981', '#f97316', '#facc15', '#38bdf8', '#a855f7'];
+// Intel semantic palette for the risk pie: pos · accent · warn · info · ai.
+const riskColors = ['#35d29a', '#f5a623', '#fbbf24', '#6aa5f5', '#a98bf5'];
 
 const EMPTY_GREEKS: Record<GreekKey, number | null> = {
   delta: null,
@@ -304,11 +305,11 @@ export const GreeksPanel = memo(function GreeksPanel({
   const showExplanationPlaceholder = explanationLoading && !explanation && !explanationError;
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-4">
+    <section className="bg-intel-panel border border-intel-line rounded-panel p-4 space-y-4">
       <header className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Greeks + Risk</p>
-          <p className="text-lg font-semibold text-gray-100">{displayName}</p>
+          <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">Greeks + Risk</p>
+          <p className="text-lg font-semibold text-intel-ink">{displayName}</p>
         </div>
         <div className="flex items-center gap-2">
           {onRequestSelection && (
@@ -316,7 +317,7 @@ export const GreeksPanel = memo(function GreeksPanel({
               type="button"
               onClick={onRequestSelection}
               disabled={selectionLoading || selectionDisabled}
-              className="px-3 py-1 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+              className="px-3 py-1 text-xs rounded-full border border-intel-line text-intel-ink2 hover:border-intel-pos/40 hover:text-white disabled:opacity-60"
             >
               AI Select
             </button>
@@ -325,8 +326,8 @@ export const GreeksPanel = memo(function GreeksPanel({
             <span
               className={`px-3 py-1 text-xs rounded-full border ${
                 (contract?.type ?? leg?.type) === 'call'
-                  ? 'border-emerald-500/40 text-emerald-300'
-                  : 'border-red-500/40 text-red-300'
+                  ? 'border-intel-pos/40 text-intel-pos'
+                  : 'border-intel-neg/40 text-intel-neg'
               }`}
             >
               {(contract?.type ?? leg?.type)?.toUpperCase()}
@@ -335,100 +336,100 @@ export const GreeksPanel = memo(function GreeksPanel({
         </div>
       </header>
 
-      <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+      <div className="border border-intel-line rounded-panel p-4 bg-intel-panel space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Beginner View</p>
+          <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">Beginner View</p>
           <button
             type="button"
             onClick={() => setShowTechnical(open => !open)}
-            className="text-xs text-gray-400 border border-gray-800 rounded-full px-3 py-1 hover:border-emerald-500/40 hover:text-white transition-colors"
+            className="text-xs text-intel-ink2 border border-intel-line rounded-full px-3 py-1 hover:border-intel-pos/40 hover:text-white transition-colors"
           >
             {showTechnical ? 'Hide technical details' : 'Show technical details'}
           </button>
         </div>
-        {selectionLoading && <p className="text-xs text-gray-500">Picking the best contract…</p>}
+        {selectionLoading && <p className="text-xs text-intel-ink3">Picking the best contract…</p>}
         {(explanationLoading || showExplanationPlaceholder) && (
-          <p className="text-xs text-gray-500">Building an explanation…</p>
+          <p className="text-xs text-intel-ink3">Building an explanation…</p>
         )}
-        {!explanationLoading && explanationError && <p className="text-xs text-amber-200">{explanationError}</p>}
+        {!explanationLoading && explanationError && <p className="text-xs text-intel-warn">{explanationError}</p>}
         {!explanationLoading && explanation ? (
-          <div className="space-y-3 text-sm text-gray-200">
+          <div className="space-y-3 text-sm text-intel-ink">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">What this trade does</p>
-              <p className="text-gray-200 mt-1">{explanation.whatThisTradeDoes}</p>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-intel-ink3">What this trade does</p>
+              <p className="text-intel-ink mt-1">{explanation.whatThisTradeDoes}</p>
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">What needs to happen</p>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-intel-ink3">What needs to happen</p>
               {explanation.whatNeedsToHappen.length ? (
-                <ul className="mt-1 space-y-1 text-xs text-gray-400">
+                <ul className="mt-1 space-y-1 text-xs text-intel-ink2">
                   {explanation.whatNeedsToHappen.map(item => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="text-emerald-300">•</span>
+                      <span className="text-intel-pos">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-gray-500">Waiting on more market data.</p>
+                <p className="text-xs text-intel-ink3">Waiting on more market data.</p>
               )}
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Main risks</p>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-intel-ink3">Main risks</p>
               {explanation.mainRisks.length ? (
-                <ul className="mt-1 space-y-1 text-xs text-amber-200">
+                <ul className="mt-1 space-y-1 text-xs text-intel-warn">
                   {explanation.mainRisks.map(item => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="text-amber-200">!</span>
+                      <span className="text-intel-warn">!</span>
                       <span>{item}</span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-gray-500">No major risks flagged yet.</p>
+                <p className="text-xs text-intel-ink3">No major risks flagged yet.</p>
               )}
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500">Why the AI picked this</p>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-intel-ink3">Why the AI picked this</p>
               {explanation.whyAIChoseThis.length ? (
-                <ul className="mt-1 space-y-1 text-xs text-gray-400">
+                <ul className="mt-1 space-y-1 text-xs text-intel-ink2">
                   {explanation.whyAIChoseThis.map(item => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="text-emerald-300">•</span>
+                      <span className="text-intel-pos">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-gray-500">No selection rationale available yet.</p>
+                <p className="text-xs text-intel-ink3">No selection rationale available yet.</p>
               )}
             </div>
             {riskLevelLine && (
-              <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-3 py-2 text-xs text-gray-300">
-                Risk level: <span className="text-gray-100">{riskLevelLine}</span>
+              <div className="rounded-xl border border-intel-line bg-intel-panel2/60 px-3 py-2 text-xs text-intel-ink2">
+                Risk level: <span className="text-intel-ink">{riskLevelLine}</span>
               </div>
             )}
           </div>
         ) : (
           !explanationLoading && !explanationError && (
-            <p className="text-xs text-gray-500">Select a contract and run “Analyze with AI” to generate an explanation.</p>
+            <p className="text-xs text-intel-ink3">Select a contract and run “Analyze with AI” to generate an explanation.</p>
           )
         )}
       </div>
 
       {showTechnical && (
         <div className="space-y-4">
-          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
+          <div className="border border-intel-line rounded-panel p-4 bg-intel-panel space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Contract Overview</p>
-                <p className="text-sm text-gray-300 mt-1">{spotLine}</p>
+                <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">Contract Overview</p>
+                <p className="text-sm text-intel-ink2 mt-1">{spotLine}</p>
               </div>
               {overviewBadges.length > 0 && (
-                <div className="flex flex-wrap gap-2 text-[11px] text-gray-300">
+                <div className="flex flex-wrap gap-2 text-[11px] text-intel-ink2">
                   {overviewBadges.map(badge => (
                     <span
                       key={badge}
-                      className="px-2 py-1 rounded-full border border-gray-800 bg-gray-900/60"
+                      className="px-2 py-1 rounded-full border border-intel-line bg-intel-panel2"
                     >
                       {badge}
                     </span>
@@ -438,20 +439,20 @@ export const GreeksPanel = memo(function GreeksPanel({
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               {contractMeta.map(item => (
-                <div key={item.label} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
-                  <p className="text-xs uppercase tracking-widest text-gray-500">{item.label}</p>
+                <div key={item.label} className="rounded-panel border border-intel-line bg-intel-panel p-3">
+                  <p className="text-xs uppercase tracking-widest text-intel-ink3">{item.label}</p>
                   <p className="text-base font-semibold text-white mt-1">{item.value}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-3">
-            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Greek Snapshot</p>
+          <div className="border border-intel-line rounded-panel p-4 bg-intel-panel space-y-3">
+            <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">Greek Snapshot</p>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {metrics.map(metric => (
-                <div key={metric.key} className="rounded-2xl border border-gray-900 bg-gray-950 p-3">
-                  <p className="text-xs uppercase tracking-widest text-gray-500">{metric.label}</p>
+                <div key={metric.key} className="rounded-panel border border-intel-line bg-intel-panel p-3">
+                  <p className="text-xs uppercase tracking-widest text-intel-ink3">{metric.label}</p>
                   <p className="text-xl font-semibold text-white mt-1">
                     {resolvedGreeks[metric.key] != null ? Number(resolvedGreeks[metric.key]).toFixed(4) : '—'}
                   </p>
@@ -460,20 +461,20 @@ export const GreeksPanel = memo(function GreeksPanel({
             </div>
           </div>
 
-          <div className="border border-gray-900 rounded-2xl p-4 bg-gray-950 space-y-4">
+          <div className="border border-intel-line rounded-panel p-4 bg-intel-panel space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div>
-                <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Risk Profile</p>
+                <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">Risk Profile</p>
                 <p className="text-base font-semibold text-white">
                   {riskProfile.label} {riskProfile.score != null ? `· ${(riskProfile.score * 100).toFixed(0)}%` : ''}
                 </p>
-                <p className="text-xs text-gray-400 max-w-xl">{riskProfile.description}</p>
+                <p className="text-xs text-intel-ink2 max-w-xl">{riskProfile.description}</p>
               </div>
               {itmProbability != null && (
-                <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-emerald-200">ITM odds</p>
-                  <p className="text-lg font-semibold text-emerald-200">{itmProbability.toFixed(0)}%</p>
-                  <p className="text-[11px] text-emerald-100/80">Delta-based chance this contract expires in the money.</p>
+                <div className="rounded-xl border border-intel-pos/40 bg-intel-pos/10 px-3 py-2 text-center">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-intel-pos">ITM odds</p>
+                  <p className="text-lg font-semibold text-intel-pos">{itmProbability.toFixed(0)}%</p>
+                  <p className="text-[11px] text-intel-pos/80">Delta-based chance this contract expires in the money.</p>
                 </div>
               )}
             </div>
@@ -510,21 +511,21 @@ export const GreeksPanel = memo(function GreeksPanel({
                 </MeasuredContainer>
                 <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                   {riskProfile.slices.map(slice => (
-                    <div key={slice.id} className="rounded-xl border border-gray-900 bg-gray-950 p-3">
+                    <div key={slice.id} className="rounded-xl border border-intel-line bg-intel-panel p-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} />
-                          <p className="text-gray-200 font-medium">{slice.label}</p>
+                          <p className="text-intel-ink font-medium">{slice.label}</p>
                         </div>
                         <p className="text-white font-semibold">{Math.round((slice.value / totalRiskValue) * 100)}%</p>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1">{slice.description}</p>
+                      <p className="text-xs text-intel-ink2 mt-1">{slice.description}</p>
                     </div>
                   ))}
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">Select a contract with Greeks and liquidity data to preview its risk mix.</p>
+              <p className="text-sm text-intel-ink3">Select a contract with Greeks and liquidity data to preview its risk mix.</p>
             )}
           </div>
         </div>
