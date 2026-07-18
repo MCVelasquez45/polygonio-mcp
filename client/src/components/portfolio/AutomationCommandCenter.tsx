@@ -85,15 +85,15 @@ function eventMatchesFilter(event: AutomationVisibilityEvent, filter: LogFilter)
 function pillTone(value?: string | null): string {
   const normalized = String(value ?? '').toUpperCase();
   if (['CONNECTED', 'CLEAN', 'RUNNING', 'READY', 'ACTIVE', 'OPEN', 'OK', 'APPROVED', 'ORDER_SUBMITTED', 'SUBMITTED'].includes(normalized)) {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+    return 'border-intel-pos/30 bg-intel-pos/10 text-intel-pos';
   }
   if (['PAUSED', 'PRE_CUTOFF', 'COOLDOWN', 'PENDING_NEW', 'ACCEPTED', 'PARTIALLY_FILLED'].includes(normalized)) {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+    return 'border-intel-warn/30 bg-intel-warn/10 text-intel-warn';
   }
   if (['ERROR', 'STOPPED', 'DISCONNECTED', 'REJECTED', 'RISK_REJECTED', 'DATA_REJECTED', 'MANUAL_REVIEW'].includes(normalized)) {
-    return 'border-red-500/30 bg-red-500/10 text-red-200';
+    return 'border-intel-neg/30 bg-intel-neg/10 text-intel-neg';
   }
-  return 'border-gray-800 bg-gray-900/70 text-gray-300';
+  return 'border-intel-line bg-intel-panel2 text-intel-ink2';
 }
 
 function StatusPill({ label, value }: { label?: string; value: string | null | undefined }) {
@@ -107,9 +107,9 @@ function StatusPill({ label, value }: { label?: string; value: string | null | u
 
 function Section({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-lg border border-gray-900 bg-gray-950 p-4 ${className}`}>
+    <section className={`rounded-lg border border-intel-line bg-intel-panel p-4 ${className}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.28em] text-gray-500">{title}</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.28em] text-intel-ink3">{title}</h3>
       </div>
       {children}
     </section>
@@ -117,10 +117,10 @@ function Section({ title, children, className = '' }: { title: string; children:
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' | 'muted' }) {
-  const color = tone === 'good' ? 'text-emerald-300' : tone === 'bad' ? 'text-red-300' : tone === 'muted' ? 'text-gray-400' : 'text-white';
+  const color = tone === 'good' ? 'text-intel-pos' : tone === 'bad' ? 'text-intel-neg' : tone === 'muted' ? 'text-intel-ink2' : 'text-white';
   return (
     <div className="min-w-0">
-      <p className="truncate text-[10px] uppercase tracking-widest text-gray-500">{label}</p>
+      <p className="truncate text-[10px] uppercase tracking-widest text-intel-ink3">{label}</p>
       <p className={`truncate text-sm font-semibold ${color}`}>{value}</p>
     </div>
   );
@@ -128,9 +128,9 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'go
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-gray-900 py-1.5 text-xs last:border-b-0">
-      <span className="text-gray-500">{label}</span>
-      <span className="max-w-[70%] truncate text-right text-gray-200" title={value}>
+    <div className="flex items-center justify-between gap-3 border-b border-intel-line py-1.5 text-xs last:border-b-0">
+      <span className="text-intel-ink3">{label}</span>
+      <span className="max-w-[70%] truncate text-right text-intel-ink" title={value}>
         {value}
       </span>
     </div>
@@ -282,12 +282,12 @@ export function AutomationCommandCenter() {
   const massive = metrics.massiveRequests ?? {};
 
   return (
-    <section className="space-y-4 rounded-lg border border-gray-900 bg-black p-4 text-gray-200">
+    <section className="space-y-4 rounded-lg border border-intel-line bg-black p-4 text-intel-ink">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.34em] text-gray-500">Automation</p>
+          <p className="text-xs uppercase tracking-[0.34em] text-intel-ink3">Automation</p>
           <h2 className="text-xl font-semibold text-white">Command Center</h2>
-          <p className="mt-1 text-xs text-gray-500">Updated {time(visibility?.generatedAt)}</p>
+          <p className="mt-1 text-xs text-intel-ink3">Updated {time(visibility?.generatedAt)}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <StatusPill value={broker.paper ? 'PAPER' : 'LIVE'} />
@@ -298,7 +298,7 @@ export function AutomationCommandCenter() {
           <button
             type="button"
             onClick={() => void loadSnapshot()}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-gray-800 px-2 text-xs text-gray-300 hover:bg-gray-900 disabled:opacity-40"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-intel-line px-2 text-xs text-intel-ink2 hover:bg-intel-panel2 disabled:opacity-40"
             title="Refresh visibility snapshot"
             disabled={busy !== null}
           >
@@ -308,15 +308,15 @@ export function AutomationCommandCenter() {
         </div>
       </div>
 
-      {error && <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</div>}
+      {error && <div className="rounded-md border border-intel-neg/40 bg-intel-neg/10 px-3 py-2 text-sm text-intel-neg">{error}</div>}
 
       {session?.id && (
-        <div className="flex flex-wrap gap-2 rounded-lg border border-gray-900 bg-gray-950 p-3">
+        <div className="flex flex-wrap gap-2 rounded-lg border border-intel-line bg-intel-panel p-3">
           <button
             type="button"
             disabled={!!busy}
             onClick={() => act('pause', () => portfolioApi.pauseEntries(session.id))}
-            className="rounded-md border border-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-900 disabled:opacity-40"
+            className="rounded-md border border-intel-line px-3 py-1.5 text-xs text-intel-ink2 hover:bg-intel-panel2 disabled:opacity-40"
           >
             Pause
           </button>
@@ -324,7 +324,7 @@ export function AutomationCommandCenter() {
             type="button"
             disabled={!!busy}
             onClick={() => act('resume', () => portfolioApi.resumeSession(session.id))}
-            className="rounded-md border border-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-900 disabled:opacity-40"
+            className="rounded-md border border-intel-line px-3 py-1.5 text-xs text-intel-ink2 hover:bg-intel-panel2 disabled:opacity-40"
           >
             Resume
           </button>
@@ -338,11 +338,11 @@ export function AutomationCommandCenter() {
                 'Emergency stop and flatten all automation positions?'
               )
             }
-            className="rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-40"
+            className="rounded-md border border-intel-neg/40 px-3 py-1.5 text-xs text-intel-neg hover:bg-intel-neg/10 disabled:opacity-40"
           >
             Emergency Stop
           </button>
-          <span className="self-center text-xs text-gray-500">Session {session.id}</span>
+          <span className="self-center text-xs text-intel-ink3">Session {session.id}</span>
         </div>
       )}
 
@@ -366,9 +366,9 @@ export function AutomationCommandCenter() {
           </div>
           <div className="mt-3 space-y-1">
             {(engine.leases ?? []).map((lease: any) => (
-              <div key={lease.scope} className="rounded-md border border-gray-900 bg-black/40 p-2 text-xs">
+              <div key={lease.scope} className="rounded-md border border-intel-line bg-black/40 p-2 text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-gray-400">{lease.scope}</span>
+                  <span className="text-intel-ink2">{lease.scope}</span>
                   <StatusPill value={lease.active ? 'ACTIVE' : 'EXPIRED'} />
                 </div>
                 <KeyValue label="Owner" value={display(lease.ownerId)} />
@@ -424,11 +424,11 @@ export function AutomationCommandCenter() {
           <StatusPill label="Outcome" value={visibility?.watchlistEvaluation?.outcome} />
           <StatusPill label="Selected" value={visibility?.watchlistEvaluation?.selectedSymbol ?? 'NONE'} />
           <StatusPill label="Risk" value={visibility?.watchlistEvaluation?.riskApproved === true ? 'APPROVED' : visibility?.watchlistEvaluation?.riskApproved === false ? 'REJECTED' : 'NONE'} />
-          <span className="text-gray-500">Evaluated {time(visibility?.watchlistEvaluation?.evaluatedAt)}</span>
+          <span className="text-intel-ink3">Evaluated {time(visibility?.watchlistEvaluation?.evaluatedAt)}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-xs uppercase tracking-widest text-gray-500">
+            <thead className="text-xs uppercase tracking-widest text-intel-ink3">
               <tr>
                 <th className="py-2 text-left">Symbol</th>
                 <th className="py-2 text-left">Direction</th>
@@ -445,7 +445,7 @@ export function AutomationCommandCenter() {
             </thead>
             <tbody>
               {(visibility?.watchlistEvaluation?.results ?? []).map((row: any) => (
-                <tr key={row.symbol} className="border-t border-gray-900/70">
+                <tr key={row.symbol} className="border-t border-intel-line">
                   <td className="py-2 pr-3 font-semibold text-white">{row.symbol}</td>
                   <td className="py-2 pr-3"><StatusPill value={row.direction} /></td>
                   <td className="py-2 pr-3 text-right">{percent(row.confidence == null ? null : Number(row.confidence) * 100)}</td>
@@ -454,9 +454,9 @@ export function AutomationCommandCenter() {
                   <td className="py-2 pr-3 text-right">{number(row.flow?.netDelta, 2)}</td>
                   <td className="py-2 pr-3 text-right">{number(row.flow?.contracts)}</td>
                   <td className="py-2 pr-3"><StatusPill value={row.outcome} /></td>
-                  <td className="py-2 pr-3 text-gray-300">{display(row.selectedContract)}</td>
-                  <td className="max-w-[280px] truncate py-2 pr-3 text-gray-400" title={row.reason}>{display(row.reason)}</td>
-                  <td className="py-2 pr-3 text-gray-400">{shortTime(row.evaluatedAt)}</td>
+                  <td className="py-2 pr-3 text-intel-ink2">{display(row.selectedContract)}</td>
+                  <td className="max-w-[280px] truncate py-2 pr-3 text-intel-ink2" title={row.reason}>{display(row.reason)}</td>
+                  <td className="py-2 pr-3 text-intel-ink2">{shortTime(row.evaluatedAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -469,11 +469,11 @@ export function AutomationCommandCenter() {
           {(visibility?.activeTrades ?? []).length ? (
             <div className="space-y-3">
               {visibility!.activeTrades.map((trade: any) => (
-                <div key={trade.positionId} className="rounded-lg border border-gray-900 bg-black/40 p-3">
+                <div key={trade.positionId} className="rounded-lg border border-intel-line bg-black/40 p-3">
                   <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-base font-semibold text-white">{trade.underlying}</p>
-                      <p className="text-xs text-gray-400">{trade.optionSymbol}</p>
+                      <p className="text-xs text-intel-ink2">{trade.optionSymbol}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <StatusPill value={trade.lifecycleStatus} />
@@ -512,7 +512,7 @@ export function AutomationCommandCenter() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-gray-500">No active automation trade.</p>
+            <p className="text-sm text-intel-ink3">No active automation trade.</p>
           )}
         </Section>
 
@@ -520,7 +520,7 @@ export function AutomationCommandCenter() {
           {(visibility?.pendingOrders ?? []).length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-widest text-gray-500">
+                <thead className="text-xs uppercase tracking-widest text-intel-ink3">
                   <tr>
                     <th className="py-2 text-left">Status</th>
                     <th className="py-2 text-left">Symbol</th>
@@ -535,15 +535,15 @@ export function AutomationCommandCenter() {
                 </thead>
                 <tbody>
                   {visibility!.pendingOrders.map((order: any) => (
-                    <tr key={order.clientOrderId ?? order.intentId ?? order.brokerOrderId} className="border-t border-gray-900/70">
+                    <tr key={order.clientOrderId ?? order.intentId ?? order.brokerOrderId} className="border-t border-intel-line">
                       <td className="py-2 pr-3"><StatusPill value={order.brokerStatus ?? order.status} /></td>
                       <td className="py-2 pr-3 font-semibold text-white">{order.symbol}</td>
                       <td className="py-2 pr-3">{display(order.orderType)}</td>
                       <td className="py-2 pr-3 text-right">{number(order.remainingQty, 2)}</td>
                       <td className="py-2 pr-3 text-right">{currency(order.limitPrice)}</td>
                       <td className="py-2 pr-3">{display(order.timeInForce)}</td>
-                      <td className="max-w-[160px] truncate py-2 pr-3 text-gray-400" title={order.brokerOrderId}>{display(order.brokerOrderId)}</td>
-                      <td className="max-w-[200px] truncate py-2 pr-3 text-gray-400" title={order.clientOrderId}>{display(order.clientOrderId)}</td>
+                      <td className="max-w-[160px] truncate py-2 pr-3 text-intel-ink2" title={order.brokerOrderId}>{display(order.brokerOrderId)}</td>
+                      <td className="max-w-[200px] truncate py-2 pr-3 text-intel-ink2" title={order.clientOrderId}>{display(order.clientOrderId)}</td>
                       <td className="py-2 pr-3 text-right">{number(order.retryCount)}</td>
                     </tr>
                   ))}
@@ -551,7 +551,7 @@ export function AutomationCommandCenter() {
               </table>
             </div>
           ) : (
-            <p className="text-sm text-gray-500">No live automation orders.</p>
+            <p className="text-sm text-intel-ink3">No live automation orders.</p>
           )}
         </Section>
       </div>
@@ -563,11 +563,11 @@ export function AutomationCommandCenter() {
               .slice(0, 200)
               .sort((a, b) => Date.parse(a.timestamp ?? '') - Date.parse(b.timestamp ?? ''))
               .map((event) => (
-                <div key={eventKey(event)} className="grid grid-cols-[70px_1fr] gap-3 border-l border-gray-800 pb-3 pl-3 text-sm">
-                  <span className="text-xs text-gray-500">{shortTime(event.timestamp)}</span>
+                <div key={eventKey(event)} className="grid grid-cols-[70px_1fr] gap-3 border-l border-intel-line pb-3 pl-3 text-sm">
+                  <span className="text-xs text-intel-ink3">{shortTime(event.timestamp)}</span>
                   <div>
-                    <p className="font-medium text-gray-200">{display(event.event)}</p>
-                    <p className="text-xs text-gray-500">{display(event.symbol)} {display(event.intentId)}</p>
+                    <p className="font-medium text-intel-ink">{display(event.event)}</p>
+                    <p className="text-xs text-intel-ink3">{display(event.symbol)} {display(event.intentId)}</p>
                   </div>
                 </div>
               ))}
@@ -582,30 +582,30 @@ export function AutomationCommandCenter() {
                 type="button"
                 onClick={() => setLogFilter(filter)}
                 className={`rounded-md border px-2 py-1 text-xs ${
-                  logFilter === filter ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-gray-800 text-gray-400 hover:bg-gray-900'
+                  logFilter === filter ? 'border-intel-pos/40 bg-intel-pos/10 text-intel-pos' : 'border-intel-line text-intel-ink2 hover:bg-intel-panel2'
                 }`}
               >
                 {filter}
               </button>
             ))}
-            <label className="ml-auto flex min-w-[220px] items-center gap-2 rounded-md border border-gray-800 bg-black px-2 py-1 text-xs text-gray-400">
+            <label className="ml-auto flex min-w-[220px] items-center gap-2 rounded-md border border-intel-line bg-black px-2 py-1 text-xs text-intel-ink2">
               <Search className="h-3.5 w-3.5" />
               <input
                 value={logSearch}
                 onChange={(event) => setLogSearch(event.target.value)}
                 placeholder="Search logs"
-                className="w-full bg-transparent text-gray-200 outline-none placeholder:text-gray-600"
+                className="w-full bg-transparent text-intel-ink outline-none placeholder:text-intel-ink3"
               />
             </label>
           </div>
-          <div className="max-h-[420px] overflow-y-auto rounded-md border border-gray-900">
+          <div className="max-h-[420px] overflow-y-auto rounded-md border border-intel-line">
             {filteredEvents.map((event) => (
-              <div key={eventKey(event)} className="border-b border-gray-900 p-2 text-xs last:border-b-0">
+              <div key={eventKey(event)} className="border-b border-intel-line p-2 text-xs last:border-b-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-gray-200">{display(event.event)}</span>
-                  <span className="text-gray-500">{time(event.timestamp)}</span>
+                  <span className="font-medium text-intel-ink">{display(event.event)}</span>
+                  <span className="text-intel-ink3">{time(event.timestamp)}</span>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-2 text-gray-500">
+                <div className="mt-1 flex flex-wrap gap-2 text-intel-ink3">
                   <span>{display(event.service)}</span>
                   <span>{display(event.symbol)}</span>
                   <span>{display(event.brokerOrderId)}</span>
@@ -619,11 +619,11 @@ export function AutomationCommandCenter() {
 
       <Section title="Trade History">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <span className="text-xs text-gray-500">{number(visibility?.tradeHistory?.length)} closed automation trades</span>
+          <span className="text-xs text-intel-ink3">{number(visibility?.tradeHistory?.length)} closed automation trades</span>
           <button
             type="button"
             onClick={exportCsv}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-gray-800 px-2 text-xs text-gray-300 hover:bg-gray-900"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-intel-line px-2 text-xs text-intel-ink2 hover:bg-intel-panel2"
             title="Export automation trade history CSV"
           >
             <Download className="h-3.5 w-3.5" />
@@ -632,7 +632,7 @@ export function AutomationCommandCenter() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-xs uppercase tracking-widest text-gray-500">
+            <thead className="text-xs uppercase tracking-widest text-intel-ink3">
               <tr>
                 <th className="py-2 text-left">Underlying</th>
                 <th className="py-2 text-left">Contract</th>
@@ -649,7 +649,7 @@ export function AutomationCommandCenter() {
             </thead>
             <tbody>
               {(visibility?.tradeHistory ?? []).map((trade: any) => (
-                <tr key={trade.positionId} className="border-t border-gray-900/70">
+                <tr key={trade.positionId} className="border-t border-intel-line">
                   <td className="py-2 pr-3 font-semibold text-white">{trade.underlying}</td>
                   <td className="py-2 pr-3">{trade.contract}</td>
                   <td className="py-2 pr-3">{trade.direction}</td>
@@ -658,11 +658,11 @@ export function AutomationCommandCenter() {
                   <td className="py-2 pr-3">{duration(trade.holdTimeMs)}</td>
                   <td className="py-2 pr-3">{display(trade.exit?.reason)}</td>
                   <td className="py-2 pr-3"><StatusPill value={trade.result} /></td>
-                  <td className={`py-2 pr-3 text-right font-semibold ${Number(trade.pnl ?? 0) >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                  <td className={`py-2 pr-3 text-right font-semibold ${Number(trade.pnl ?? 0) >= 0 ? 'text-intel-pos' : 'text-intel-neg'}`}>
                     {currency(trade.pnl)}
                   </td>
-                  <td className="max-w-[180px] truncate py-2 pr-3 text-gray-400" title={trade.automationSessionId}>{display(trade.automationSessionId)}</td>
-                  <td className="max-w-[220px] truncate py-2 pr-3 text-gray-400" title={`${trade.brokerIds?.entry ?? ''} ${trade.brokerIds?.exit ?? ''}`}>
+                  <td className="max-w-[180px] truncate py-2 pr-3 text-intel-ink2" title={trade.automationSessionId}>{display(trade.automationSessionId)}</td>
+                  <td className="max-w-[220px] truncate py-2 pr-3 text-intel-ink2" title={`${trade.brokerIds?.entry ?? ''} ${trade.brokerIds?.exit ?? ''}`}>
                     {display(trade.brokerIds?.entry)} / {display(trade.brokerIds?.exit)}
                   </td>
                 </tr>
