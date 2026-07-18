@@ -1,6 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { OptionChainExpirationGroup, OptionContractDetail, OptionLeg } from '../../types/market';
-import { Calendar, ChevronDown, TrendingUp } from 'lucide-react';
 import { computeExpirationDte, formatExpirationDate } from '../../utils/expirations';
 import { useLiveQuotes, useLiveTrades } from '../../lib/liveMarketStore';
 
@@ -35,21 +34,19 @@ type ChainRow = {
 type ChainColumn = {
   key: keyof ChainRow;
   label: string;
-  minWidth: string;
   align?: 'left' | 'right';
-  className?: string;
   formatter?: (value: number | null) => string;
 };
 
+// Ladder columns — strike anchors the left, price sits right before size/flow.
 const CHAIN_COLUMNS: ChainColumn[] = [
-  { key: 'strike', label: 'Strike', minWidth: '90px', align: 'left', formatter: value => formatCurrency(value) },
-  { key: 'breakeven', label: 'Breakeven', minWidth: '120px', align: 'left', formatter: value => formatCurrency(value) },
-  { key: 'toBreakeven', label: 'To Breakeven', minWidth: '120px', align: 'left', formatter: value => formatPercent(value) },
-  { key: 'changePercent', label: '% Change', minWidth: '90px', align: 'right', className: 'font-semibold', formatter: value => formatPercent(value) },
-  { key: 'changeValue', label: 'Change', minWidth: '100px', align: 'right', formatter: value => formatSignedCurrency(value) },
-  { key: 'price', label: 'Price', minWidth: '90px', align: 'right', className: 'font-semibold', formatter: value => formatCurrency(value) },
-  { key: 'volume', label: 'Volume', minWidth: '110px', align: 'right', formatter: value => formatCount(value) },
-  { key: 'openInterest', label: 'Open Interest', minWidth: '120px', align: 'right', formatter: value => formatCount(value) }
+  { key: 'strike', label: 'Strike', align: 'left', formatter: value => formatCurrency(value) },
+  { key: 'price', label: 'Mark', align: 'right', formatter: value => formatCurrency(value) },
+  { key: 'changePercent', label: 'Chg%', align: 'right', formatter: value => formatPercent(value) },
+  { key: 'breakeven', label: 'B/E', align: 'right', formatter: value => formatCurrency(value) },
+  { key: 'toBreakeven', label: 'To B/E', align: 'right', formatter: value => formatPercent(value) },
+  { key: 'volume', label: 'Vol', align: 'right', formatter: value => formatCount(value) },
+  { key: 'openInterest', label: 'OI', align: 'right', formatter: value => formatCount(value) },
 ];
 
 // memo: live ticks re-render this panel via the store subscription below —
@@ -114,7 +111,7 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
       : selectedExpiration
       ? computeExpirationDte(selectedExpiration)
       : null;
-  const dteLabel = dteValue != null ? `${dteValue} DTE` : null;
+  const dteLabel = dteValue != null ? `${dteValue}DTE` : null;
 
   useEffect(() => {
     if (!scrollContainerRef.current || !tableBodyRef.current) return;
@@ -152,53 +149,36 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
   };
 
   const renderHeader = () => (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div>
-        <p className="text-xs uppercase tracking-[0.4em] text-gray-500 flex items-center gap-2">
-          Options Chain
-          <span className="tracking-normal text-gray-300">{ticker}</span>
-        </p>
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <span>
-            {selectedExpiration
-              ? formatExpirationDate(selectedExpiration)
-              : activeGroup
-              ? formatExpirationDate(activeGroup.expiration)
-              : '—'}
-          </span>
-          {dteLabel && <span className="text-xs text-gray-500">{dteLabel}</span>}
-        </div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-intel-line px-3 py-2.5">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[9px] font-semibold uppercase tracking-eyebrow text-intel-ink3">Chain</span>
+        <span className="font-mono text-[15px] font-semibold tracking-wide text-intel-ink">{ticker}</span>
         {underlyingPrice != null && (
-          <p className="text-xs text-emerald-400 flex items-center gap-1 mt-1">
-            <TrendingUp className="h-3 w-3" />
-            Underlying: ${underlyingPrice.toFixed(2)}
-          </p>
+          <span className="font-mono text-[11px] tabular-nums text-intel-info">@ {underlyingPrice.toFixed(2)}</span>
         )}
       </div>
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full lg:w-auto">
-        <div className="grid grid-cols-2 gap-2 text-[0.65rem] font-semibold w-full sm:w-auto">
-          {(['calls', 'puts'] as const).map(type => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setOptionType(type)}
-              className={`rounded-xl px-3 py-2 border transition-colors ${
-                optionType === type
-                  ? type === 'calls'
-                    ? 'border-emerald-500/60 bg-emerald-500/15 text-white'
-                    : 'border-orange-500/60 bg-orange-500/15 text-white'
-                  : 'border-gray-800 text-gray-400 hover:text-white'
-              }`}
-            >
-              {type === 'calls' ? 'CALLS' : 'PUTS'}
-            </button>
-          ))}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Calls / Puts — hard segmented toggle */}
+        <div className="flex overflow-hidden rounded-panel border border-intel-line font-mono text-[11px] font-semibold uppercase tracking-label">
+          {(['calls', 'puts'] as const).map(type => {
+            const activeT = optionType === type;
+            const tint = type === 'calls' ? 'bg-intel-pos text-intel-bg' : 'bg-intel-neg text-intel-bg';
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setOptionType(type)}
+                className={`px-3 py-1.5 transition-colors ${activeT ? tint : 'text-intel-ink3 hover:bg-intel-panel2'}`}
+              >
+                {type === 'calls' ? 'Calls' : 'Puts'}
+              </button>
+            );
+          })}
         </div>
-        <div className="relative w-full sm:w-auto">
+        {/* Expiration */}
+        <div className="flex items-center gap-1.5">
           <select
-            className={`appearance-none bg-gray-950 border rounded-full pl-10 pr-9 py-2 text-sm w-full disabled:opacity-50 ${
-              selectedExpiration ? 'border-emerald-500/60 text-emerald-100' : 'border-gray-900'
-            }`}
+            className="appearance-none rounded-panel border border-intel-line bg-intel-panel2 px-2.5 py-1.5 font-mono text-[11px] text-intel-ink focus:border-intel-accentLine focus-visible:outline-none disabled:opacity-50"
             value={selectedExpiration ?? ''}
             onChange={event => onExpirationChange(event.target.value || null)}
             disabled={!expirationOptions.length}
@@ -206,29 +186,24 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
             <option value="">{expirationOptions.length ? 'All expirations' : 'No expirations'}</option>
             {expirationOptions.map(exp => (
               <option key={exp.value} value={exp.value}>
-                {exp.label} {exp.dte != null ? `(${exp.dte} DTE)` : ''}
+                {exp.label} {exp.dte != null ? `(${exp.dte}D)` : ''}
               </option>
             ))}
           </select>
-          <Calendar
-            className={`h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${
-              selectedExpiration ? 'text-emerald-400' : 'text-gray-500'
-            }`}
-          />
-          <ChevronDown
-            className={`h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
-              selectedExpiration ? 'text-emerald-400' : 'text-gray-500'
-            }`}
-          />
+          {dteLabel && (
+            <span className="rounded-sm bg-intel-raised px-1.5 py-1 font-mono text-[10px] font-semibold tabular-nums text-intel-ink2">
+              {dteLabel}
+            </span>
+          )}
         </div>
         {onRequestAnalysis && (
           <button
             type="button"
             onClick={onRequestAnalysis}
             disabled={analysisDisabled}
-            className="inline-flex items-center justify-center rounded-full border border-gray-800 px-3 py-2 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60 w-full sm:w-auto"
+            className="rounded-panel border border-intel-aiLine px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-label text-intel-ai transition-colors hover:bg-intel-aiSoft disabled:opacity-60"
           >
-            Analyze with AI
+            Analyze · AI
           </button>
         )}
       </div>
@@ -275,6 +250,13 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
       strike != null &&
       ((prevStrike == null && underlyingPrice <= strike) ||
         (prevStrike != null && prevStrike < underlyingPrice && strike >= underlyingPrice));
+    // Moneyness: ITM calls have strike below spot; ITM puts strike above spot.
+    const itm =
+      underlyingPrice != null && strike != null
+        ? optionType === 'calls'
+          ? strike < underlyingPrice
+          : strike > underlyingPrice
+        : false;
 
     const alignedRow: ChainRow = {
       strike: strike ?? null,
@@ -287,14 +269,20 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
       openInterest: resolvedOpenInterest ?? null
     };
 
+    const changeUp = changePercent != null && changePercent >= 0;
+
     return (
       <Fragment key={`${leg.ticker}-${optionType}`}>
         {showUnderlyingLine && (
           <tr>
-            <td colSpan={CHAIN_COLUMNS.length} className="py-2 text-center">
-              <span className="px-4 py-1 rounded-full bg-emerald-600/20 text-emerald-300 text-xs">
-                Share: {formatCurrency(underlyingPrice)}
-              </span>
+            <td colSpan={CHAIN_COLUMNS.length} className="p-0">
+              <div className="flex items-center gap-2 bg-intel-info/10 px-3 py-0.5">
+                <span className="h-px flex-1 bg-intel-info/40" />
+                <span className="font-mono text-[9px] font-semibold uppercase tracking-label text-intel-info">
+                  Spot {formatCurrency(underlyingPrice)}
+                </span>
+                <span className="h-px flex-1 bg-intel-info/40" />
+              </div>
             </td>
           </tr>
         )}
@@ -308,44 +296,44 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
               handleSelect(leg);
             }
           }}
-          className={`cursor-pointer transition-colors ${
+          className={`cursor-pointer border-l-2 transition-colors ${
             isSelected
-              ? 'bg-emerald-500/10 border-l-4 border-emerald-500'
-              : 'hover:bg-gray-900/30'
+              ? 'border-l-intel-info bg-intel-info/10'
+              : itm
+              ? 'border-l-transparent bg-intel-panel2/40 hover:bg-intel-panel2'
+              : 'border-l-transparent hover:bg-intel-panel2/70'
           }`}
           data-strike={strike ?? undefined}
         >
           {CHAIN_COLUMNS.map(column => {
             const rawValue = alignedRow[column.key];
             const formattedValue = column.formatter ? column.formatter(rawValue) : formatValue(rawValue);
-            const changeColor =
-              column.key === 'changePercent' || column.key === 'changeValue'
-                ? changePercent != null
-                  ? changePercent >= 0
-                    ? 'text-emerald-400'
-                    : 'text-red-400'
-                  : 'text-gray-400'
-                : '';
+            const isChange = column.key === 'changePercent';
+            const isStrike = column.key === 'strike';
+            const isPrice = column.key === 'price';
+            const changeColor = isChange
+              ? changePercent != null
+                ? changeUp
+                  ? 'text-intel-pos'
+                  : 'text-intel-neg'
+                : 'text-intel-ink3'
+              : '';
             return (
               <td
                 key={column.key}
-                className={`px-4 py-3 text-xs md:text-sm ${
+                className={`px-2.5 py-1 font-mono text-[11px] tabular-nums ${
                   column.align === 'right' ? 'text-right' : 'text-left'
-                } ${column.className ?? ''} ${changeColor}`}
-                style={{ minWidth: column.minWidth }}
+                } ${isStrike ? 'font-semibold text-intel-ink' : isPrice ? 'font-semibold text-intel-ink' : 'text-intel-ink2'} ${changeColor}`}
               >
-                {column.key === 'price' ? (
-                  <span
-                    className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border ${
-                      changePercent != null && changePercent >= 0
-                        ? 'border-emerald-500 text-emerald-300'
-                        : changePercent != null
-                        ? 'border-orange-500 text-orange-300'
-                        : 'border-gray-700 text-gray-300'
-                    }`}
-                  >
-                    {isLive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
+                {isStrike ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {isLive && <span className="h-1 w-1 shrink-0 rounded-full bg-intel-cyan" />}
                     {formattedValue}
+                    {itm && (
+                      <span className="rounded-sm bg-intel-raised px-1 text-[8px] font-semibold uppercase tracking-label text-intel-ink3">
+                        ITM
+                      </span>
+                    )}
                   </span>
                 ) : (
                   formattedValue
@@ -356,36 +344,28 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
         </tr>
         {isSelected && (
           <tr>
-            <td
-              colSpan={CHAIN_COLUMNS.length}
-              className="px-4 py-4 bg-emerald-500/5 border-t border-emerald-500/30"
-            >
-              <div className="text-xs text-gray-400 mb-3">
+            <td colSpan={CHAIN_COLUMNS.length} className="border-l-2 border-l-intel-info bg-intel-info/5 px-3 py-3">
+              <div className="mb-2.5 font-mono text-[10px] uppercase tracking-label text-intel-ink3">
                 {ticker} {strike != null ? `$${strike.toFixed(2)}` : ''} {leg.type.toUpperCase()} ·{' '}
                 {formatExpirationDate(leg.expiration)}
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
-              <InfoTile label="Bid" value={liveBid != null ? `$${liveBid.toFixed(2)}` : '—'} />
-              <InfoTile label="Ask" value={liveAsk != null ? `$${liveAsk.toFixed(2)}` : '—'} />
-              <InfoTile label="Mark" value={liveMark != null ? `$${liveMark.toFixed(2)}` : '—'} />
-              <InfoTile label="Last" value={liveLast != null ? `$${liveLast.toFixed(2)}` : '—'} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
-              <InfoTile label="Volume" value={leg.volume != null ? leg.volume.toLocaleString() : '—'} />
-              <InfoTile
-                label="Open Interest"
-                value={resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—'}
-              />
-              <InfoTile label="Implied Vol" value={resolvedIv != null ? `${(resolvedIv * 100).toFixed(1)}%` : '—'} />
-              <InfoTile label="Breakeven" value={breakeven != null ? `$${breakeven.toFixed(2)}` : '—'} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-              <InfoTile label="Delta" value={resolvedDelta != null ? resolvedDelta.toFixed(3) : '—'} />
-              <InfoTile label="Gamma" value={resolvedGamma != null ? resolvedGamma.toFixed(3) : '—'} />
-              <InfoTile label="Theta" value={resolvedTheta != null ? resolvedTheta.toFixed(3) : '—'} />
-              <InfoTile label="Vega" value={resolvedVega != null ? resolvedVega.toFixed(3) : '—'} />
-              <InfoTile label="Rho" value={resolvedRho != null ? resolvedRho.toFixed(3) : '—'} />
-            </div>
+              </div>
+              <div className="grid grid-cols-4 gap-x-4 gap-y-2 md:grid-cols-8">
+                <InfoTile label="Bid" value={liveBid != null ? `$${liveBid.toFixed(2)}` : '—'} tone="pos" />
+                <InfoTile label="Ask" value={liveAsk != null ? `$${liveAsk.toFixed(2)}` : '—'} tone="neg" />
+                <InfoTile label="Mark" value={liveMark != null ? `$${liveMark.toFixed(2)}` : '—'} />
+                <InfoTile label="Last" value={liveLast != null ? `$${liveLast.toFixed(2)}` : '—'} />
+                <InfoTile label="Vol" value={leg.volume != null ? leg.volume.toLocaleString() : '—'} />
+                <InfoTile label="OI" value={resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—'} />
+                <InfoTile label="IV" value={resolvedIv != null ? `${(resolvedIv * 100).toFixed(1)}%` : '—'} />
+                <InfoTile label="B/E" value={breakeven != null ? `$${breakeven.toFixed(2)}` : '—'} />
+              </div>
+              <div className="mt-2 grid grid-cols-5 gap-x-4 gap-y-2 border-t border-intel-line pt-2.5">
+                <InfoTile label="Δ Delta" value={resolvedDelta != null ? resolvedDelta.toFixed(3) : '—'} />
+                <InfoTile label="Γ Gamma" value={resolvedGamma != null ? resolvedGamma.toFixed(3) : '—'} />
+                <InfoTile label="Θ Theta" value={resolvedTheta != null ? resolvedTheta.toFixed(3) : '—'} />
+                <InfoTile label="V Vega" value={resolvedVega != null ? resolvedVega.toFixed(3) : '—'} />
+                <InfoTile label="ρ Rho" value={resolvedRho != null ? resolvedRho.toFixed(3) : '—'} />
+              </div>
             </td>
           </tr>
         )}
@@ -394,49 +374,50 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
   };
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-4 flex flex-col h-[32rem] overflow-hidden">
+    <section className="flex h-[32rem] flex-col overflow-hidden rounded-panel border border-intel-line bg-intel-panel">
       {renderHeader()}
-      <div className="relative mt-4 flex-1 rounded-2xl border border-gray-900 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden">
         {error && rows.length > 0 && (
-          <div className="border-b border-gray-900 bg-amber-500/10 px-4 py-2 text-xs text-amber-100">
+          <div className="border-b border-intel-line bg-intel-warn/10 px-3 py-1.5 font-mono text-[10px] text-intel-warn">
             {error}
           </div>
         )}
         {loading && !rows.length ? (
-          <div className="h-full flex items-center justify-center text-sm text-gray-500">
+          <div className="flex h-full items-center justify-center font-mono text-[11px] text-intel-ink3">
             Loading options chain…
           </div>
         ) : error && !rows.length ? (
-          <div className="h-full flex items-center justify-center text-sm text-red-400">{error}</div>
+          <div className="flex h-full items-center justify-center font-mono text-[11px] text-intel-neg">{error}</div>
         ) : !rows.length ? (
-          <div className="h-full flex items-center justify-center text-sm text-gray-500">
-            {groups.length ? 'No contracts available for this expiration' : 'No option contracts available.'}
+          <div className="flex h-full items-center justify-center font-mono text-[11px] text-intel-ink3">
+            {groups.length ? 'No contracts for this expiration' : 'No option contracts available.'}
           </div>
         ) : (
-          <div className="flex flex-col h-full overflow-hidden">
+          <div className="flex h-full flex-col overflow-hidden">
             <div ref={scrollContainerRef} className="flex-1 overflow-auto">
-              <table className="w-full table-fixed border-collapse min-w-full">
-                <thead className="bg-gray-950/70">
-                  <tr className="text-[0.65rem] uppercase tracking-[0.2em] text-gray-500">
+              <table className="w-full border-collapse">
+                <thead className="sticky top-0 z-10 bg-intel-panel">
+                  <tr className="border-b border-intel-line font-mono text-[9px] uppercase tracking-label text-intel-ink3">
                     {CHAIN_COLUMNS.map(column => (
                       <th
                         key={column.key}
-                        className={`px-4 py-2 ${column.align === 'right' ? 'text-right' : 'text-left'}`}
-                        style={{ minWidth: column.minWidth }}
+                        className={`px-2.5 py-1.5 font-semibold ${column.align === 'right' ? 'text-right' : 'text-left'}`}
                       >
                         {column.label}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody ref={tableBodyRef}>{rows.map((row, index) => renderRow(row, index))}</tbody>
+                <tbody ref={tableBodyRef} className="divide-y divide-intel-lineSoft/50">
+                  {rows.map((row, index) => renderRow(row, index))}
+                </tbody>
               </table>
             </div>
           </div>
         )}
         {loading && rows.length > 0 && (
-          <div className="absolute inset-0 pointer-events-none flex items-start justify-end p-3">
-            <span className="rounded-full border border-gray-800 bg-gray-950/80 px-3 py-1 text-[11px] text-gray-300">
+          <div className="pointer-events-none absolute inset-0 flex items-start justify-end p-2">
+            <span className="rounded-sm border border-intel-line bg-intel-panel px-2 py-1 font-mono text-[10px] text-intel-cyan">
               Updating…
             </span>
           </div>
@@ -446,11 +427,12 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
   );
 });
 
-function InfoTile({ label, value }: { label: string; value: string }) {
+function InfoTile({ label, value, tone }: { label: string; value: string; tone?: 'pos' | 'neg' }) {
+  const valueColor = tone === 'pos' ? 'text-intel-pos' : tone === 'neg' ? 'text-intel-neg' : 'text-intel-ink';
   return (
-    <div className="rounded-xl border border-gray-900 bg-gray-950 p-3">
-      <p className="text-[0.65rem] uppercase tracking-widest text-gray-500">{label}</p>
-      <p className="text-sm font-semibold text-gray-100 mt-1">{value}</p>
+    <div>
+      <p className="font-mono text-[8.5px] uppercase tracking-label text-intel-ink3">{label}</p>
+      <p className={`mt-0.5 font-mono text-[12px] font-semibold tabular-nums ${valueColor}`}>{value}</p>
     </div>
   );
 }
@@ -479,10 +461,4 @@ function formatPercent(value: number | null | undefined) {
 function formatCount(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return '—';
   return value.toLocaleString();
-}
-
-function formatSignedCurrency(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) return '—';
-  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
-  return `${sign}$${Math.abs(value).toFixed(2)}`;
 }
