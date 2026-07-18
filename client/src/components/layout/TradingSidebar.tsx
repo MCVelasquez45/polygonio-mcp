@@ -6,14 +6,14 @@ import {
   MessageSquare,
   Plus,
   RefreshCw,
-  TrendingDown,
-  TrendingUp,
   X,
 } from 'lucide-react';
 import { marketApi } from '../../api';
 import { listWatchlist, removeWatchlistItem, upsertWatchlistItem } from '../../api/watchlist';
 import type { WatchlistSnapshot } from '../../types/market';
 import { formatExpirationDate } from '../../utils/expirations';
+import { deriveMarketDataStatus } from '../../lib/marketDataStatus';
+import { useNow } from '../../hooks/useNow';
 
 type WatchlistEntry = {
   symbol: string;
@@ -22,7 +22,13 @@ type WatchlistEntry = {
   change: number;
 };
 
-const WATCHLIST_SNAPSHOT_TTL_MS = 60_000;
+// Equities have no stream entitlement on this plan, so the watchlist is REST
+// snapshots. 30s matches the server-side snapshot cache TTL — polling faster
+// just re-serves the same cached value. Each card shows an honest SNAPSHOT/STALE
+// badge with quote age; it is NEVER labelled LIVE.
+const WATCHLIST_SNAPSHOT_TTL_MS = 30_000;
+// A snapshot older than this (poll failing / rate-limited) reads as STALE.
+const WATCHLIST_STALE_MS = 90_000;
 const WATCHLIST_SNAPSHOT_BATCH_SIZE = 25;
 const WATCHLIST_PROVIDER_COOLDOWN_MS = 60_000;
 
@@ -113,13 +119,58 @@ export const TradingSidebar = memo(function TradingSidebar({
   const snapshotCacheRef = useRef<Record<string, WatchlistSnapshot>>({});
   const lastSnapshotFetchAtRef = useRef(0);
   const snapshotInFlightRef = useRef<Promise<void> | null>(null);
+  // Drives the per-card quote-age label; reading the fetch-time ref each tick.
+  const now = useNow(1000);
   const providerCooldownUntilRef = useRef(0);
+
+  // Sort mode for the scanner. Default to biggest movers first — the way a
+  // desk actually scans a universe. Click a column header to cycle.
+  const [sortKey, setSortKey] = useState<'change' | 'symbol' | 'last'>('change');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const watchlistSymbols = useMemo(
     () => watchlist.map(entry => entry.symbol.toUpperCase()),
     [watchlist]
   );
   const watchlistSymbolsKey = watchlistSymbols.join(',');
+
+  // Derive a flat, sortable scanner row per watchlist entry, folding in the
+  // latest snapshot. Kept as a memo so sorting/heat scaling is cheap on every
+  // 1s clock tick without re-touching the fetch machinery.
+  const scannerRows = useMemo(() => {
+    const rows = watchlist.map(stock => {
+      const snapshot = snapshots[stock.symbol.toUpperCase()] ?? null;
+      const isContract = snapshot?.entryType === 'contract';
+      const priceSource = isContract
+        ? snapshot.mid ?? snapshot.price ?? snapshot.bid ?? snapshot.ask ?? null
+        : snapshot?.price ?? null;
+      const changeValue = snapshot?.changePercent ?? snapshot?.change ?? null;
+      const price = typeof priceSource === 'number' && Number.isFinite(priceSource) ? priceSource : null;
+      const change = typeof changeValue === 'number' && Number.isFinite(changeValue) ? changeValue : null;
+      const volume = typeof snapshot?.volume === 'number' && Number.isFinite(snapshot.volume) ? snapshot.volume : null;
+      return { stock, snapshot, isContract, price, change, volume };
+    });
+    const maxVol = rows.reduce((m, r) => (r.volume && r.volume > m ? r.volume : m), 0);
+    const maxAbsChg = rows.reduce((m, r) => (r.change != null && Math.abs(r.change) > m ? Math.abs(r.change) : m), 0);
+    const dir = sortDir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      if (sortKey === 'symbol') return a.stock.symbol.localeCompare(b.stock.symbol) * dir;
+      if (sortKey === 'last') return ((a.price ?? -Infinity) - (b.price ?? -Infinity)) * dir;
+      return ((a.change ?? -Infinity) - (b.change ?? -Infinity)) * dir;
+    });
+    return { rows, maxVol, maxAbsChg };
+  }, [watchlist, snapshots, sortKey, sortDir]);
+
+  const cycleSort = useCallback((key: 'change' | 'symbol' | 'last') => {
+    setSortKey(prev => {
+      if (prev === key) {
+        setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+        return prev;
+      }
+      setSortDir(key === 'symbol' ? 'asc' : 'desc');
+      return key;
+    });
+  }, []);
 
   // Load the authoritative watchlist from the server (single source of truth).
   const loadWatchlist = useCallback(async () => {
@@ -369,145 +420,189 @@ export const TradingSidebar = memo(function TradingSidebar({
   }, [snapshots, selectedTicker, onSnapshotUpdate]);
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden bg-gray-950">
-      <div className="px-3 py-3 border-b border-gray-900">
-        <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
+    <div className="flex flex-col h-full w-full overflow-hidden bg-intel-bg">
+      <div className="px-2 py-2 border-b border-intel-line">
+        <div className="grid grid-cols-2 gap-1 text-[11px] font-semibold">
           <button
             type="button"
-            className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 border ${
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent ${
               view === 'watchlist'
-                ? 'bg-gray-900 border-emerald-500/60 text-white'
-                : 'border-gray-800 text-gray-400'
+                ? 'bg-intel-accentSoft border-intel-accentLine text-intel-accent'
+                : 'border-transparent text-intel-ink2 hover:bg-intel-panel2'
             }`}
             onClick={() => setView('watchlist')}
           >
-            <ListCollapse className="h-4 w-4" /> Watchlist
+            <ListCollapse className="h-3.5 w-3.5" /> Watchlist
           </button>
           <button
             type="button"
-            className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 border ${
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent ${
               view === 'intel'
-                ? 'bg-gray-900 border-emerald-500/60 text-white'
-                : 'border-gray-800 text-gray-400'
+                ? 'bg-intel-accentSoft border-intel-accentLine text-intel-accent'
+                : 'border-transparent text-intel-ink2 hover:bg-intel-panel2'
             }`}
             onClick={() => setView('intel')}
           >
-            <Bell className="h-4 w-4" /> Intel
+            <Bell className="h-3.5 w-3.5" /> Intel
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
         {view === 'watchlist' ? (
           <>
-            <form onSubmit={handleAddTicker} className="rounded-2xl border border-gray-900 bg-gray-950/80 p-3 space-y-3">
-              <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Add Ticker</p>
-              <div className="flex flex-col gap-2 sm:flex-row">
+            <form onSubmit={handleAddTicker} className="rounded-panel bg-intel-panel p-2 space-y-2">
+              <div className="flex items-center gap-1.5">
                 <input
-                  className="w-full sm:flex-1 rounded-xl border border-gray-800 bg-gray-900 px-3 py-2 text-sm uppercase tracking-wide text-gray-100 focus:border-emerald-500 focus:outline-none"
-                  placeholder="e.g. AMZN"
+                  className="min-w-0 flex-1 rounded-md border border-intel-line bg-intel-panel2 px-2 py-1.5 text-xs font-mono uppercase tracking-wide text-intel-ink placeholder:text-intel-ink3 focus:border-intel-accentLine focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+                  placeholder="Add ticker (e.g. AMZN)"
                   value={tickerInput}
                   onChange={event => setTickerInput(event.target.value.toUpperCase())}
                 />
                 <button
                   type="submit"
-                  className="inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white w-full sm:w-auto"
+                  className="inline-flex items-center justify-center gap-1 rounded-md bg-intel-accent px-2.5 py-1.5 text-xs font-semibold text-intel-bg focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 >
-                  <Plus className="h-4 w-4" /> Add
+                  <Plus className="h-3.5 w-3.5" /> Add
                 </button>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-gray-500 gap-2">
-                <span>Add equities or option contracts (prefix with O:). Live data refreshes automatically.</span>
                 <button
                   type="button"
                   onClick={() => setRefreshNonce(prev => prev + 1)}
                   disabled={isRefreshing}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${
-                    isRefreshing ? 'border-gray-800 text-gray-500' : 'border-gray-800 text-gray-300 hover:text-white'
+                  title="Refresh snapshots"
+                  className={`inline-flex items-center justify-center rounded-md border border-intel-line p-1.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent ${
+                    isRefreshing ? 'text-intel-ink3' : 'text-intel-ink2 hover:bg-intel-panel2 hover:text-intel-ink'
                   }`}
                 >
-                  <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span className="text-[10px] uppercase tracking-wide">
-                    {isRefreshing ? 'Refreshing' : 'Refresh'}
-                  </span>
+                  <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 </button>
               </div>
-              {snapshotsStale && <p className="text-[11px] uppercase tracking-wide text-amber-400">Stale</p>}
               {onRequestAutoSelect && (
                 <button
                   type="button"
                   onClick={onRequestAutoSelect}
                   disabled={autoSelectDisabled}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-800 px-3 py-2 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-intel-line px-2 py-1.5 text-[11px] text-intel-ink2 transition-colors hover:bg-intel-panel2 hover:text-intel-ink disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 >
                   Auto-Select Contract
                 </button>
               )}
-              {feedback && <p className="text-xs text-amber-400">{feedback}</p>}
-              {watchlistError && <p className="text-xs text-red-400">{watchlistError}</p>}
+              {feedback && <p className="text-[11px] text-intel-warn">{feedback}</p>}
+              {watchlistError && <p className="text-[11px] text-intel-neg">{watchlistError}</p>}
             </form>
-            {watchlist.map(stock => {
-              const snapshot = snapshots[stock.symbol.toUpperCase()];
-              const normalizedSelected = selectedTicker ? selectedTicker.toUpperCase() : '';
-              const normalizedSymbol = stock.symbol.toUpperCase();
-              const normalizedSnapshotTicker =
-                snapshot && typeof snapshot.ticker === 'string' ? snapshot.ticker.toUpperCase() : null;
-              let referenceContract: string | null = null;
-              if (snapshot && snapshot.entryType === 'underlying' && typeof snapshot.referenceContract === 'string') {
-                referenceContract = snapshot.referenceContract.toUpperCase();
-              } else if (snapshot && snapshot.entryType === 'contract') {
-                const contractTicker = snapshot.contract ?? snapshot.ticker;
-                if (contractTicker) referenceContract = contractTicker.toUpperCase();
-              }
-              const priceSource =
-                snapshot && snapshot.entryType === 'contract'
-                  ? snapshot.mid ?? snapshot.price ?? snapshot.bid ?? snapshot.ask ?? null
-                  : snapshot?.price ?? null;
-              const changeValue =
-                snapshot?.changePercent ??
-                snapshot?.change ??
-                null;
-              const hasPrice = typeof priceSource === 'number' && Number.isFinite(priceSource);
-              const hasChange = typeof changeValue === 'number' && Number.isFinite(changeValue);
-              const positive = hasChange ? changeValue! >= 0 : null;
-              const active =
-                normalizedSymbol === normalizedSelected ||
-                (normalizedSnapshotTicker ? normalizedSnapshotTicker === normalizedSelected : false) ||
-                (referenceContract ? referenceContract === normalizedSelected : false);
-              const priceDisplay = hasPrice ? `$${Number(priceSource).toFixed(2)}` : '—';
-              const formattedExpiration =
-                snapshot && snapshot.entryType === 'contract' && snapshot.expiration
-                  ? formatExpirationDate(snapshot.expiration)
-                  : '';
-              const secondaryLine =
-                snapshot?.entryType === 'contract'
-                  ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''}$ ${formattedExpiration}`
-                  : `Last refresh ${new Date().toLocaleTimeString()}`;
-              return (
-                <div
-                  key={snapshot?.ticker ?? stock.symbol}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onSelectTicker(stock.symbol, snapshot ?? null)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      onSelectTicker(stock.symbol, snapshot ?? null);
-                    }
-                  }}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left transition-colors ${
-                    active ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-gray-900 bg-gray-950 hover:border-gray-800'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold tracking-wide truncate">
+
+            {/* Column header — sortable, sticky feel. This is a data grid, not a
+                list of cards. Click a heading to sort; the active heading shows
+                the direction caret. */}
+            <div className="grid grid-cols-[minmax(0,1fr)_58px_62px] items-center gap-2 border-b border-intel-line px-2 pb-1 text-[9px] font-semibold uppercase tracking-label text-intel-ink3">
+              {([
+                ['symbol', 'Symbol', 'justify-start'],
+                ['last', 'Last', 'justify-end'],
+                ['change', 'Chg%', 'justify-end'],
+              ] as const).map(([key, label, justify]) => {
+                const activeCol = sortKey === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => cycleSort(key)}
+                    className={`flex items-center gap-0.5 ${justify} transition-colors hover:text-intel-ink2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-intel-accent ${
+                      activeCol ? 'text-intel-accent' : ''
+                    }`}
+                  >
+                    {label}
+                    {activeCol && <span className="text-[8px] leading-none">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Scanner rows — single-line, tabular, borderless. Each row carries a
+                relative-volume activity bar tinted by direction, so the eye reads
+                movers and activity before any number. */}
+            <div className="divide-y divide-intel-lineSoft/60">
+              {scannerRows.rows.map(({ stock, snapshot, isContract, price, change, volume }) => {
+                const snapshotAgeMs = lastSnapshotFetchAtRef.current ? now - lastSnapshotFetchAtRef.current : null;
+                const { status: cardStatus } = deriveMarketDataStatus({
+                  source: snapshot ? 'rest' : null,
+                  ageMs: snapshotAgeMs,
+                  staleThresholdMs: WATCHLIST_STALE_MS,
+                });
+                // Bare freshness dot — the age text is redundant per-row (the
+                // whole list shares one fetch); a colored dot is enough.
+                const dotClass =
+                  cardStatus === 'LIVE' ? 'bg-intel-pos'
+                  : cardStatus === 'SNAPSHOT' ? 'bg-intel-accent'
+                  : cardStatus === 'DELAYED' || cardStatus === 'STALE' ? 'bg-intel-warn'
+                  : cardStatus === 'DISCONNECTED' ? 'bg-intel-neg'
+                  : 'bg-intel-ink3/60';
+                const normalizedSelected = selectedTicker ? selectedTicker.toUpperCase() : '';
+                const normalizedSymbol = stock.symbol.toUpperCase();
+                const normalizedSnapshotTicker =
+                  snapshot && typeof snapshot.ticker === 'string' ? snapshot.ticker.toUpperCase() : null;
+                let referenceContract: string | null = null;
+                if (snapshot && snapshot.entryType === 'underlying' && typeof snapshot.referenceContract === 'string') {
+                  referenceContract = snapshot.referenceContract.toUpperCase();
+                } else if (snapshot && snapshot.entryType === 'contract') {
+                  const contractTicker = snapshot.contract ?? snapshot.ticker;
+                  if (contractTicker) referenceContract = contractTicker.toUpperCase();
+                }
+                const positive = change == null ? null : change >= 0;
+                const active =
+                  normalizedSymbol === normalizedSelected ||
+                  (normalizedSnapshotTicker ? normalizedSnapshotTicker === normalizedSelected : false) ||
+                  (referenceContract ? referenceContract === normalizedSelected : false);
+                const priceDisplay = price != null ? price.toFixed(2) : '—';
+                const formattedExpiration =
+                  isContract && snapshot?.entryType === 'contract' && snapshot.expiration
+                    ? formatExpirationDate(snapshot.expiration)
+                    : '';
+                const secondaryLine =
+                  isContract && snapshot?.entryType === 'contract'
+                    ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''} ${formattedExpiration}`.trim()
+                    : '';
+                // Relative-volume fill (0–1) drives the activity bar width.
+                const relVol = volume && scannerRows.maxVol > 0 ? Math.max(0.06, volume / scannerRows.maxVol) : 0;
+                // Change magnitude fill (0–1) drives the heat intensity of the chip.
+                const heat = change != null && scannerRows.maxAbsChg > 0 ? Math.min(1, Math.abs(change) / scannerRows.maxAbsChg) : 0;
+                const chipColor = positive == null ? 'transparent' : positive ? '53,210,154' : '248,113,113';
+                return (
+                  <div
+                    key={snapshot?.ticker ?? stock.symbol}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectTicker(stock.symbol, snapshot ?? null)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onSelectTicker(stock.symbol, snapshot ?? null);
+                      }
+                    }}
+                    className={`group relative cursor-pointer px-2 py-1 text-left transition-colors focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-intel-accent ${
+                      active ? 'bg-intel-info/10' : 'hover:bg-intel-panel2/70'
+                    }`}
+                  >
+                    {/* Selection edge — a hard left rule when this row drives the workspace. */}
+                    {active && <span className="absolute inset-y-0 left-0 w-[2px] bg-intel-info" />}
+                    <div className="grid grid-cols-[minmax(0,1fr)_58px_62px] items-center gap-2">
+                      {/* Symbol cell: freshness dot + ticker, remove on hover */}
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass} ${cardStatus === 'LIVE' ? 'motion-safe:animate-livering' : ''}`}
+                          title={cardStatus ?? 'No data'}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate font-mono text-[13px] font-semibold leading-none tracking-wide text-intel-ink">
                           {snapshot?.ticker ?? stock.symbol}
-                        </p>
+                        </span>
+                        {isContract && (
+                          <span className="shrink-0 rounded-sm bg-intel-raised px-1 text-[8px] font-semibold uppercase tracking-label text-intel-ink3">
+                            OPT
+                          </span>
+                        )}
                         <button
                           type="button"
-                          className="rounded-full border border-transparent p-1 text-gray-500 hover:text-red-400 hover:border-red-500/30 transition-colors"
+                          className="ml-auto shrink-0 rounded p-0.5 text-intel-ink3 opacity-0 transition-opacity hover:text-intel-neg group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-intel-accent"
                           onClick={event => {
                             event.stopPropagation();
                             handleRemoveTicker(stock.symbol);
@@ -517,57 +612,74 @@ export const TradingSidebar = memo(function TradingSidebar({
                           <X className="h-3 w-3" />
                         </button>
                       </div>
-                      <p className="text-xs text-gray-500 truncate">{secondaryLine}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-base font-semibold">{priceDisplay}</p>
-                      <p
-                        className={`text-xs flex items-center justify-end gap-1 ${
-                          positive == null ? 'text-gray-400' : positive ? 'text-emerald-400' : 'text-red-400'
+                      {/* Last */}
+                      <span className="text-right font-mono tabular-nums text-[13px] leading-none text-intel-ink">
+                        {priceDisplay}
+                      </span>
+                      {/* Change chip — heat-tinted background scaled to relative magnitude */}
+                      <span
+                        className={`rounded-sm px-1 py-0.5 text-right font-mono tabular-nums text-[11px] font-semibold leading-none ${
+                          positive == null ? 'text-intel-ink3' : positive ? 'text-intel-pos' : 'text-intel-neg'
                         }`}
+                        style={
+                          positive == null
+                            ? undefined
+                            : { backgroundColor: `rgba(${chipColor},${(0.08 + heat * 0.22).toFixed(3)})` }
+                        }
                       >
-                        {positive == null ? (
-                          <TrendingUp className="h-3 w-3 opacity-0" />
-                        ) : positive ? (
-                          <TrendingUp className="h-3 w-3" />
-                        ) : (
-                          <TrendingDown className="h-3 w-3" />
-                        )}
-                        {hasChange ? `${positive ? '+' : ''}${Number(changeValue).toFixed(2)}%` : '—'}
-                      </p>
+                        {change != null ? `${positive ? '+' : ''}${change.toFixed(2)}%` : '—'}
+                      </span>
                     </div>
+                    {secondaryLine && (
+                      <p className="mt-0.5 truncate pl-[18px] font-mono text-[10px] leading-none text-intel-ink3">{secondaryLine}</p>
+                    )}
+                    {/* Relative-volume activity bar — direction-tinted, width = rel volume */}
+                    <span className="absolute inset-x-0 bottom-0 h-[2px] bg-transparent">
+                      <span
+                        className="block h-full transition-[width]"
+                        style={{
+                          width: `${(relVol * 100).toFixed(1)}%`,
+                          backgroundColor: positive == null ? 'rgba(92,107,129,0.5)' : `rgba(${chipColor},0.55)`,
+                        }}
+                      />
+                    </span>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+              {scannerRows.rows.length === 0 && !watchlistError && (
+                <p className="px-2 py-4 text-center font-mono text-[11px] text-intel-ink3">
+                  Empty universe — add a ticker to begin.
+                </p>
+              )}
+            </div>
           </>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {alerts.map((alert, idx) => (
               <Fragment key={alert.id}>
-                <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-semibold text-gray-100">{alert.title}</p>
-                    <span className="text-xs text-emerald-400 uppercase tracking-wide">{alert.impact}</span>
+                <div className="rounded-panel border-l-2 border-intel-accent/40 bg-intel-panel p-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-sm font-semibold text-intel-ink">{alert.title}</p>
+                    <span className="font-mono text-[10px] uppercase tracking-label text-intel-accent">{alert.impact}</span>
                   </div>
-                  <p className="text-xs text-gray-400 leading-relaxed">{alert.body}</p>
+                  <p className="text-xs text-intel-ink2 leading-relaxed">{alert.body}</p>
                 </div>
                 {idx === 0 && (
-                  <div className="rounded-2xl border border-blue-500/40 bg-blue-500/10 p-4 flex gap-3">
-                    <MessageSquare className="h-5 w-5 text-blue-300" />
+                  <div className="rounded-panel bg-intel-panel2 p-3 flex gap-2.5">
+                    <MessageSquare className="h-4 w-4 shrink-0 text-intel-info" />
                     <div>
-                      <p className="text-xs text-blue-200">Ask AI desk</p>
-                      <p className="text-sm text-blue-100">"What does this mean for {selectedTicker}?"</p>
+                      <p className="text-[11px] text-intel-ink2">Ask AI desk</p>
+                      <p className="text-sm text-intel-ink">"What does this mean for {selectedTicker}?"</p>
                     </div>
                   </div>
                 )}
               </Fragment>
             ))}
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 flex gap-3">
-              <AlertTriangle className="h-5 w-5 text-amber-400" />
+            <div className="rounded-panel border-l-2 border-intel-warn/50 bg-intel-panel p-3 flex gap-2.5">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-intel-warn" />
               <div>
-                <p className="text-xs uppercase tracking-wider text-amber-300">Desk Risk</p>
-                <p className="text-sm text-amber-100">Vol uptick expected around macro catalysts this week.</p>
+                <p className="font-mono text-[10px] uppercase tracking-label text-intel-warn">Desk Risk</p>
+                <p className="text-sm text-intel-ink2">Vol uptick expected around macro catalysts this week.</p>
               </div>
             </div>
           </div>
