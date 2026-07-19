@@ -255,10 +255,10 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
       <style>{`
         .agent-insight {
           margin: 1rem;
-          background: rgba(124, 58, 237, 0.1); /* Violet tint */
-          border: 1px solid rgba(124, 58, 237, 0.3);
+          background: #111a2b;
+          border: 1px solid #1e293b;
           border-radius: 0.5rem;
-          color: #e5e5e5;
+          color: #e9edf6;
           font-size: 0.9rem;
           overflow: hidden;
         }
@@ -267,18 +267,18 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
           align-items: center;
           gap: 0.5rem;
           padding: 0.75rem 1rem;
-          background: rgba(124, 58, 237, 0.15);
-          border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+          background: rgba(245, 166, 35, 0.12);
+          border-bottom: 1px solid rgba(245, 166, 35, 0.38);
         }
         .agent-title {
           font-weight: 600;
-          color: #a78bfa;
+          color: #f5a623;
           flex: 1;
         }
         .close-agent {
           background: none;
           border: none;
-          color: #a78bfa;
+          color: #f5a623;
           font-size: 1.2rem;
           cursor: pointer;
         }
@@ -295,9 +295,9 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
             align-items: center;
             gap: 0.5rem;
             padding: 0.4rem 0.85rem;
-            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
-            border: 1px solid #5b21b6;
-            color: white;
+            background: #f5a623;
+            border: 1px solid #f5a623;
+            color: #020617;
             border-radius: 0.375rem;
             font-size: 0.75rem;
             font-weight: 600;
@@ -313,11 +313,11 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
             opacity: 0.7;
             cursor: wait;
         }
-        
+
         .scanner-panel {
-          background: #111118;
-          border-radius: 1rem;
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: #0b1220;
+          border-radius: 12px;
+          border: 1px solid #1e293b;
           overflow: hidden;
         }
 
@@ -326,19 +326,20 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
           justify-content: space-between;
           align-items: flex-start;
           padding: 1.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          border-bottom: 1px solid #1e293b;
         }
 
         .header-title h2 {
           margin: 0 0 0.25rem;
           font-size: 1.25rem;
           font-weight: 600;
+          color: #e9edf6;
         }
 
         .header-subtitle {
           margin: 0;
           font-size: 0.85rem;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .header-controls {
@@ -361,21 +362,21 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         }
 
         .connection-status.connected .status-dot {
-          background: #10b981;
-          box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+          background: #35d29a;
+          box-shadow: 0 0 8px rgba(53, 210, 154, 0.5);
           animation: pulse 2s ease-in-out infinite;
         }
 
         .connection-status.connected .status-text {
-          color: #10b981;
+          color: #35d29a;
         }
 
         .connection-status.disconnected .status-dot {
-          background: #ef4444;
+          background: #f87171;
         }
 
         .connection-status.disconnected .status-text {
-          color: #ef4444;
+          color: #f87171;
         }
 
         @keyframes pulse {
@@ -386,23 +387,23 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         .clear-btn {
           padding: 0.4rem 0.75rem;
           background: transparent;
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          border: 1px solid #1e293b;
           border-radius: 0.375rem;
-          color: #9ca3af;
+          color: #94a3b8;
           font-size: 0.75rem;
           cursor: pointer;
           transition: all 0.15s ease;
         }
 
         .clear-btn:hover {
-          border-color: rgba(255, 255, 255, 0.2);
-          color: #e5e5e5;
+          border-color: rgba(245, 166, 35, 0.38);
+          color: #f5a623;
         }
 
         .empty-state {
           padding: 4rem 2rem;
           text-align: center;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .empty-icon {
@@ -413,7 +414,7 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
 
         .empty-hint {
           font-size: 0.8rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .signals-list {
@@ -426,16 +427,16 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         }
 
         .signal-card {
-          background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          border-radius: 0.75rem;
+          background: #111a2b;
+          border: 1px solid #1e293b;
+          border-radius: 12px;
           padding: 1rem;
           cursor: pointer;
           transition: all 0.15s ease;
         }
 
         .signal-card:hover {
-          border-color: rgba(16, 185, 129, 0.4);
+          border-color: rgba(245, 166, 35, 0.38);
           transform: translateY(-1px);
         }
 
@@ -470,20 +471,22 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         .signal-ticker {
           font-size: 1rem;
           font-weight: 600;
-          color: #10b981;
+          color: #f5a623;
+          font-variant-numeric: tabular-nums;
         }
 
         .signal-strategy {
           font-size: 0.75rem;
-          color: #9ca3af;
-          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
+          background: #020617;
           padding: 0.2rem 0.5rem;
           border-radius: 0.25rem;
         }
 
         .signal-time {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
+          font-variant-numeric: tabular-nums;
         }
 
         .signal-details {
@@ -506,7 +509,7 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         }
 
         .detail-item.highlight {
-          background: rgba(16, 185, 129, 0.1);
+          background: rgba(245, 166, 35, 0.12);
           padding: 0.35rem 0.5rem;
           border-radius: 0.375rem;
           margin: -0.35rem;
@@ -514,7 +517,7 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
 
         .detail-label {
           font-size: 0.65rem;
-          color: #6b7280;
+          color: #64748b;
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
@@ -522,35 +525,37 @@ export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) 
         .detail-value {
           font-size: 0.85rem;
           font-weight: 500;
+          color: #e9edf6;
+          font-variant-numeric: tabular-nums;
         }
 
         .detail-value.yield {
-          color: #10b981;
+          color: #35d29a;
           font-size: 1rem;
           font-weight: 700;
         }
 
         .detail-value.positive {
-          color: #10b981;
+          color: #35d29a;
         }
 
         .signal-cta {
           margin-top: 0.75rem;
           padding-top: 0.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          border-top: 1px solid #1e293b;
         }
 
         .cta-text {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .panel-footer {
           padding: 0.75rem 1rem;
           text-align: right;
           font-size: 0.75rem;
-          color: #6b7280;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          color: #64748b;
+          border-top: 1px solid #1e293b;
         }
       `}</style>
     </div>

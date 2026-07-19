@@ -23,6 +23,23 @@ const EMPTY_HISTORY: TradePrint[] = [];
 const symbolListeners = new Map<string, Set<Listener>>();
 const mapListeners = new Set<Listener>();
 
+// Wall-clock time the live feed last delivered ANY quote or trade. This is the
+// single source of truth for "last successful quote" (health card) and for
+// deciding whether the stream is actively flowing vs. merely connected. Read it
+// with getLastQuoteAt(); it is intentionally not a reactive hook so the hot tick
+// path never forces a render — freshness consumers poll it against a clock.
+let lastQuoteAt: number | null = null;
+
+/** Wall-clock ms of the most recent live quote/trade, or null if none yet. */
+export function getLastQuoteAt(): number | null {
+  return lastQuoteAt;
+}
+
+/** Test/reset seam — clears the last-live-data stamp. */
+export function resetLastQuoteAt() {
+  lastQuoteAt = null;
+}
+
 function notifySymbol(symbol: string) {
   const listeners = symbolListeners.get(symbol);
   if (listeners) {
@@ -61,12 +78,14 @@ export function publishQuote(quote: QuoteSnapshot) {
   const symbol = quote.ticker?.toUpperCase();
   if (!symbol) return;
   quotes = { ...quotes, [symbol]: quote };
+  lastQuoteAt = Date.now();
   notifySymbol(symbol);
 }
 
 export function publishTrade(trade: TradePrint & { ticker: string }) {
   const symbol = trade.ticker?.toUpperCase();
   if (!symbol) return;
+  lastQuoteAt = Date.now();
   lastTrades = { ...lastTrades, [symbol]: trade };
   const history = tradeHistories.get(symbol) ?? [];
   if (!(history.length > 0 && history[0]?.id === trade.id)) {

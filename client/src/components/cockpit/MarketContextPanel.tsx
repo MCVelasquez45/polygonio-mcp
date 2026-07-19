@@ -25,7 +25,7 @@ export function MarketContextPanel({ trade }: { trade: CockpitTrade }) {
       badge={ctx?.underlyingDelayed ? <Badge tone="warn">Delayed</Badge> : undefined}
     >
       {!hasContext ? (
-        <p className="text-xs text-gray-600">No market context snapshot was captured for this trade.</p>
+        <p className="text-xs text-intel-ink3">No market context snapshot was captured for this trade.</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -40,7 +40,7 @@ export function MarketContextPanel({ trade }: { trade: CockpitTrade }) {
             {ctx?.regime ? <Stat label="Regime" value={ctx.regime} /> : null}
             <Stat label="Underlying data" value={underlyingStatus} tone={ctx?.underlyingDelayed ? 'muted' : 'neutral'} />
           </div>
-          <p className="mt-3 text-[10px] text-gray-600">
+          <p className="mt-3 text-[10px] text-intel-ink3">
             Trend and regime are derived from the evaluation snapshot that opened this position. Delayed means the
             underlying tape is not being presented as realtime.
           </p>

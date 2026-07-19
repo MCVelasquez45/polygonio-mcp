@@ -188,7 +188,7 @@ export function BacktestConfigModal({ strategyName, strategyType, tradingMethod,
 
           {isOptions && (
             <div className="futures-config-section">
-              <h4 className="futures-section-title" style={{ color: '#8b5cf6' }}>Options Configuration</h4>
+              <h4 className="futures-section-title" style={{ color: '#f5a623' }}>Options Configuration</h4>
               <div className="config-grid">
                 <div className="form-group">
                   <label>Underlying Ticker</label>
@@ -304,13 +304,13 @@ const styles = `
   }
 
   .backtest-config-modal {
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 0.75rem;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
     width: 600px;
     max-width: 90%;
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .modal-header {
@@ -318,19 +318,19 @@ const styles = `
     justify-content: space-between;
     align-items: center;
     padding: 1.25rem;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid #1e293b;
   }
 
   .modal-header h3 {
     margin: 0;
     font-size: 1.1rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .close-btn {
     background: none;
     border: none;
-    color: #9ca3af;
+    color: #94a3b8;
     font-size: 1.5rem;
     cursor: pointer;
     line-height: 1;
@@ -351,34 +351,34 @@ const styles = `
     display: block;
     margin-bottom: 0.5rem;
     font-size: 0.85rem;
-    color: #9ca3af;
+    color: #94a3b8;
   }
 
   .form-group input,
   .form-group select {
     width: 100%;
     padding: 0.6rem;
-    background: #2d2d2d;
-    border: 1px solid #454545;
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 4px;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
   }
 
   .form-group input:focus,
   .form-group select:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
-  
+
   .checkbox-group label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     cursor: pointer;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
-  
+
   .checkbox-group input {
     width: auto;
   }
@@ -386,20 +386,20 @@ const styles = `
   .futures-config-section {
     margin-bottom: 1.5rem;
     padding-top: 1rem;
-    border-top: 1px solid #333;
+    border-top: 1px solid #1e293b;
   }
 
   .futures-section-title {
     margin: 0 0 1rem;
     font-size: 0.9rem;
-    color: #f59e0b;
+    color: #f5a623;
     font-weight: 600;
     letter-spacing: 0.03em;
   }
 
   .agent-insight {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
     border-radius: 0.5rem;
     padding: 1rem;
   }
@@ -408,7 +408,7 @@ const styles = `
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: #10b981;
+    color: #f5a623;
     font-weight: 600;
     font-size: 0.9rem;
     margin-bottom: 0.5rem;
@@ -417,13 +417,13 @@ const styles = `
   .agent-insight p {
     margin: 0;
     font-size: 0.85rem;
-    color: #cccc;
+    color: #94a3b8;
     line-height: 1.5;
   }
 
   .modal-footer {
     padding: 1.25rem;
-    border-top: 1px solid #333;
+    border-top: 1px solid #1e293b;
     display: flex;
     justify-content: flex-end;
     gap: 1rem;
@@ -440,23 +440,23 @@ const styles = `
 
   .btn-secondary {
     background: transparent;
-    border: 1px solid #454545;
-    color: #cccccc;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
   }
 
   .btn-secondary:hover {
-    background: #2d2d2d;
-    color: #ffffff;
+    background: #111a2b;
+    color: #e9edf6;
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #f5a623;
     border: none;
-    color: white;
+    color: #020617;
   }
 
   .btn-primary:hover {
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);
   }
 `;
 

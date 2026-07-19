@@ -457,14 +457,14 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
             justify-content: space-between;
             align-items: center;
             padding-bottom: 1.5rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid #1e293b;
           }
 
           .main-header h1 {
             margin: 0;
             font-size: 1.5rem;
             font-weight: 700;
-            color: #e5e5e5;
+            color: #e9edf6;
           }
 
           .header-actions {
@@ -475,15 +475,15 @@ export function Dashboard({ apiBase = getApiBaseUrl(), onTickerSelect, socket }:
           }
 
           .breadcrumb-home {
-            color: #6b7280;
+            color: #64748b;
           }
 
           .breadcrumb-sep {
-            color: #4b5563;
+            color: #64748b;
           }
 
           .breadcrumb-current {
-            color: #10b981;
+            color: #f5a623;
             font-weight: 600;
           }
         `}</style>

@@ -1,5 +1,21 @@
 import type { ChecklistResult, WatchlistReport } from '../../api/analysis';
 import { formatExpirationDate } from '../../utils/expirations';
+import { Badge, EmptyState } from '../intelligence/ui';
+import { ABSENT } from '../../lib/intelligenceFormat';
+
+type SentimentTone = 'pos' | 'neg' | 'neutral';
+
+function formatSentimentLabel(sentiment?: string | null): { label: string; tone: SentimentTone } {
+  if (!sentiment) return { label: 'Neutral', tone: 'neutral' };
+  const normalized = sentiment.toLowerCase();
+  if (normalized.includes('bull')) {
+    return { label: 'Bullish', tone: 'pos' };
+  }
+  if (normalized.includes('bear')) {
+    return { label: 'Bearish', tone: 'neg' };
+  }
+  return { label: sentiment, tone: 'neutral' };
+}
 
 type Props = {
   reports?: WatchlistReport[];
@@ -11,18 +27,6 @@ type Props = {
   runDisabled?: boolean;
   aiDisabled?: boolean;
 };
-
-function formatSentimentLabel(sentiment?: string | null) {
-  if (!sentiment) return { label: 'Neutral', color: 'text-gray-300', ring: 'border-gray-800' };
-  const normalized = sentiment.toLowerCase();
-  if (normalized.includes('bull')) {
-    return { label: 'Bullish', color: 'text-emerald-300', ring: 'border-emerald-500/40' };
-  }
-  if (normalized.includes('bear')) {
-    return { label: 'Bearish', color: 'text-red-300', ring: 'border-red-500/40' };
-  }
-  return { label: sentiment, color: 'text-gray-300', ring: 'border-gray-800' };
-}
 
 export function OptionsScanner({
   reports,
@@ -40,12 +44,12 @@ export function OptionsScanner({
   const showDisabledState = aiDisabled && !isLoading && !hasReports;
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
+    <section className="rounded-panel border border-intel-line bg-intel-panel p-6 space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
-          <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Options Scanner</p>
-          <h2 className="text-2xl font-semibold">Live flows + vol regimes</h2>
-          <p className="text-sm text-gray-400">
+          <p className="font-mono text-xs uppercase tracking-eyebrow text-intel-accent">Options Scanner</p>
+          <h2 className="text-2xl font-semibold text-intel-ink">Live flows + vol regimes</h2>
+          <p className="text-sm text-intel-ink2">
             Signals update as Massive publishes new contract trades. Click a ticker to load it on the desk.
           </p>
         </div>
@@ -54,7 +58,7 @@ export function OptionsScanner({
             type="button"
             onClick={onRunScan}
             disabled={runDisabled || isLoading || highlightLoading}
-            className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+            className="px-3 py-1.5 text-xs rounded-full border border-intel-line text-intel-ink2 hover:border-intel-accentLine hover:text-intel-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent disabled:opacity-60"
           >
             Run AI scan
           </button>
@@ -62,21 +66,15 @@ export function OptionsScanner({
       </div>
 
       {showDisabledState ? (
-        <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
-          AI scanner is disabled in Settings.
-        </div>
+        <EmptyState title="AI scanner is disabled in Settings." />
       ) : isLoading ? (
-        <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
-          Fetching AI reports…
-        </div>
+        <EmptyState title="Fetching AI reports…" />
       ) : showEmptyState ? (
-        <div className="rounded-2xl border border-gray-900 bg-gray-950 p-6 text-center text-sm text-gray-400">
-          Run a scan to generate watchlist highlights.
-        </div>
+        <EmptyState title="Run a scan to generate watchlist highlights." />
       ) : (
         <div className="space-y-3">
           {highlightLoading && (
-            <div className="rounded-2xl border border-gray-900 bg-gray-950 p-3 text-xs text-gray-500">
+            <div className="rounded-panel border border-intel-line bg-intel-panel p-3 text-xs text-intel-ink3">
               Running checklist scan across watchlist…
             </div>
           )}
@@ -91,49 +89,45 @@ export function OptionsScanner({
                 key={`${row.symbol}-${row.contract ?? row.headline ?? row.summary}`}
                 type="button"
                 onClick={() => onTickerSelect?.(row.symbol)}
-                className={`w-full text-left rounded-2xl border p-4 transition-colors ${
+                className={`w-full text-left rounded-panel border p-4 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent ${
                   highlight
                     ? highlight.qualifies
-                      ? 'border-emerald-500/60 bg-emerald-500/10'
-                      : 'border-amber-500/50 bg-amber-500/10'
-                    : 'border-gray-900 bg-gray-950 hover:border-emerald-500/50'
+                      ? 'border-intel-pos/60 bg-intel-pos/10'
+                      : 'border-intel-warn/50 bg-intel-warn/10'
+                    : 'border-intel-line bg-intel-panel hover:border-intel-accentLine'
                 }`}
               >
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div>
-                    <p className="text-sm uppercase tracking-[0.3em] text-gray-500">{row.symbol}</p>
-                    <p className="text-lg font-semibold text-white">{row.contract ?? row.headline ?? row.symbol}</p>
+                    <p className="font-mono text-sm uppercase tracking-label text-intel-ink3">{row.symbol}</p>
+                    <p className="text-lg font-semibold text-intel-ink">{row.contract ?? row.headline ?? row.symbol}</p>
                   </div>
                   <div className="text-right">
                     {row.expiry && (
-                      <p className="text-sm text-gray-400">Expires {formatExpirationDate(row.expiry)}</p>
+                      <p className="text-sm text-intel-ink2">Expires {formatExpirationDate(row.expiry)}</p>
                     )}
-                    {row.flow && <p className="text-base font-semibold text-emerald-400">{row.flow}</p>}
+                    {row.flow && <p className="font-mono tabular-nums text-base font-semibold text-intel-pos">{row.flow}</p>}
                     {row.ivRank != null && (
-                      <p className="text-xs text-gray-500">IV Rank {row.ivRank.toFixed(0)}</p>
+                      <p className="font-mono tabular-nums text-xs text-intel-ink3">IV Rank {row.ivRank.toFixed(0)}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-2 text-xs">
-                    <span
-                      className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 ${sentimentBadge.ring} ${sentimentBadge.color}`}
-                    >
-                      {sentimentBadge.label}
-                    </span>
+                    <Badge tone={sentimentBadge.tone}>{sentimentBadge.label}</Badge>
                   </div>
-                  <div className="text-sm text-gray-300 flex-1 min-w-full border-t border-gray-900 pt-3">
-                    {row.summary ?? row.headline ?? 'No summary available.'}
+                  <div className="text-sm text-intel-ink2 flex-1 min-w-full border-t border-intel-line pt-3">
+                    {row.summary ?? row.headline ?? ABSENT}
                   </div>
                   {highlight && (
                     <div className="flex items-center justify-between w-full text-xs mt-2">
                       <span
                         className={`font-semibold ${
-                          highlight.qualifies ? 'text-emerald-200' : 'text-amber-200'
+                          highlight.qualifies ? 'text-intel-pos' : 'text-intel-warn'
                         }`}
                       >
                         {highlight.qualifies ? 'Checklist ✅ High-ROI ready' : 'Checklist ⚠ Needs review'}
                       </span>
                       {failing.length > 0 && (
-                        <span className="text-gray-300">
+                        <span className="text-intel-ink2">
                           Missing: {failing.slice(0, 3).join(', ')}
                           {failing.length > 3 ? '…' : ''}
                         </span>

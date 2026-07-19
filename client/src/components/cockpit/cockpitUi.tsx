@@ -163,11 +163,14 @@ export function Panel({
   children: ReactNode;
   className?: string;
 }) {
+  // Borderless by default: separation comes from the surface's elevation over
+  // the ground, not an outline. The title is a quiet mono label sitting above a
+  // single hairline divider, so grouping reads without boxing.
   return (
-    <section className={`rounded-xl border border-gray-900 bg-gray-950 p-4 ${className}`}>
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <section className={`rounded-panel bg-intel-panel p-4 ${className}`}>
+      <div className="mb-3 flex items-center justify-between gap-3 border-b border-intel-divider pb-2">
         <div className="flex items-center gap-2">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.28em] text-gray-500">{title}</h3>
+          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">{title}</h3>
           {badge}
         </div>
         {actions}
@@ -191,23 +194,25 @@ export function Stat({
   sub?: ReactNode;
 }) {
   const toneClass =
-    tone === 'good' ? 'text-emerald-300' : tone === 'bad' ? 'text-red-300' : tone === 'muted' ? 'text-gray-500' : 'text-white';
+    tone === 'good' ? 'text-intel-pos' : tone === 'bad' ? 'text-intel-neg' : tone === 'muted' ? 'text-intel-ink3' : 'text-intel-ink';
   const sizeClass =
     size === 'xl' ? 'text-3xl' : size === 'lg' ? 'text-xl' : size === 'sm' ? 'text-xs' : 'text-sm';
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-widest text-gray-500">{label}</span>
+      <span className="text-[10px] uppercase tracking-widest text-intel-ink3">{label}</span>
       <span className={`font-semibold tabular-nums ${sizeClass} ${toneClass}`}>{value}</span>
-      {sub ? <span className="text-[11px] text-gray-500 tabular-nums">{sub}</span> : null}
+      {sub ? <span className="text-[11px] text-intel-ink3 tabular-nums">{sub}</span> : null}
     </div>
   );
 }
 
+// Status chips: a soft color wash instead of an outlined box — the tone reads
+// from the tint, not a border.
 const PILL_TONES: Record<string, string> = {
-  good: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-  warn: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
-  bad: 'border-red-500/40 bg-red-500/10 text-red-300',
-  neutral: 'border-gray-800 bg-gray-900/70 text-gray-300',
+  good: 'bg-intel-pos/12 text-intel-pos',
+  warn: 'bg-intel-warn/12 text-intel-warn',
+  bad: 'bg-intel-neg/12 text-intel-neg',
+  neutral: 'bg-intel-panel2 text-intel-ink2',
 };
 
 export function Pill({
@@ -218,7 +223,7 @@ export function Pill({
   tone?: 'good' | 'warn' | 'bad' | 'neutral';
 }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${PILL_TONES[tone]}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${PILL_TONES[tone]}`}>
       {children}
     </span>
   );
@@ -239,13 +244,13 @@ export function statusTone(value?: string | null): 'good' | 'warn' | 'bad' | 'ne
 export function FreshnessDot({ freshness }: { freshness: QuoteFreshness }) {
   const cls =
     freshness === 'FRESH'
-      ? 'bg-emerald-400'
+      ? 'bg-intel-pos'
       : freshness === 'STALE'
-        ? 'bg-amber-400'
-        : 'bg-gray-600';
+        ? 'bg-intel-warn'
+        : 'bg-intel-ink3';
   const label = freshness === 'FRESH' ? 'Live' : freshness === 'STALE' ? 'Stale' : 'Provider unavailable';
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
+    <span className="inline-flex items-center gap-1 text-[11px] text-intel-ink2">
       <span className={`h-1.5 w-1.5 rounded-full ${freshness === 'FRESH' ? 'animate-pulse' : ''} ${cls}`} />
       {label}
     </span>
@@ -254,7 +259,7 @@ export function FreshnessDot({ freshness }: { freshness: QuoteFreshness }) {
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'good' | 'warn' | 'bad' | 'neutral' }) {
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-widest ${PILL_TONES[tone]}`}>
+    <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest ${PILL_TONES[tone]}`}>
       {children}
     </span>
   );

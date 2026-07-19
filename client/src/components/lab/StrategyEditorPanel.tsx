@@ -18,9 +18,9 @@ const RESERVED_PARAM_KEYS = new Set([
 ]);
 
 const STATUS_DISPLAY: Record<string, { label: string; color: string }> = {
-  development: { label: 'Draft', color: '#6b7280' },
-  validated: { label: 'Validated', color: '#10b981' },
-  failed: { label: 'Failed', color: '#ef4444' },
+  development: { label: 'Draft', color: '#64748b' },
+  validated: { label: 'Validated', color: '#f5a623' },
+  failed: { label: 'Failed', color: '#f87171' },
 };
 
 function displayValue(value: unknown): string {
@@ -452,9 +452,9 @@ export function StrategyEditorPanel({ strategyId, onRunBacktest, onSave, onBack,
         const ticker = (params.underlying_ticker || params.underlying_symbol || '') as string;
         if (!tm && !ticker) return null;
         return (
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 1rem', borderBottom: '1px solid #333', fontSize: '0.8rem' }}>
-            {tm && <span style={{ textTransform: 'capitalize', padding: '2px 10px', borderRadius: '4px', background: tm === 'options' ? 'rgba(139,92,246,0.15)' : tm === 'futures' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: tm === 'options' ? '#a78bfa' : tm === 'futures' ? '#fbbf24' : '#6ee7b7' }}>{tm}</span>}
-            {ticker && <span style={{ color: '#9ca3af' }}>Underlying: <strong style={{ color: '#e5e5e5' }}>{ticker}</strong></span>}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 1rem', borderBottom: '1px solid #1e293b', fontSize: '0.8rem' }}>
+            {tm && <span style={{ textTransform: 'capitalize', padding: '2px 10px', borderRadius: '4px', background: tm === 'options' ? 'rgba(245,166,35,0.12)' : tm === 'futures' ? 'rgba(251,191,36,0.15)' : 'rgba(245,166,35,0.12)', color: tm === 'options' ? '#f5a623' : tm === 'futures' ? '#fbbf24' : '#f5a623' }}>{tm}</span>}
+            {ticker && <span style={{ color: '#94a3b8' }}>Underlying: <strong style={{ color: '#e9edf6' }}>{ticker}</strong></span>}
           </div>
         );
       })()}
@@ -680,8 +680,8 @@ const editorStyles = `
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #0a0a0f;
-    color: #e5e5e5;
+    background: #020617;
+    color: #e9edf6;
   }
 
   .sed-toolbar {
@@ -689,8 +689,8 @@ const editorStyles = `
     justify-content: space-between;
     align-items: center;
     padding: 1rem 1.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid #1e293b;
+    background: #0b1220;
     flex-shrink: 0;
   }
 
@@ -711,8 +711,8 @@ const editorStyles = `
 
   .sed-back-btn {
     background: none;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #9ca3af;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
     width: 32px;
     height: 32px;
     border-radius: 0.375rem;
@@ -726,15 +726,15 @@ const editorStyles = `
   }
 
   .sed-back-btn:hover {
-    color: #e5e5e5;
-    border-color: rgba(255, 255, 255, 0.25);
-    background: rgba(255, 255, 255, 0.05);
+    color: #e9edf6;
+    border-color: #1e293b;
+    background: #111a2b;
   }
 
   .sed-name-input {
     background: transparent;
     border: 1px solid transparent;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 1.1rem;
     font-weight: 600;
     padding: 0.375rem 0.5rem;
@@ -745,12 +745,12 @@ const editorStyles = `
   }
 
   .sed-name-input:hover {
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color: #1e293b;
   }
 
   .sed-name-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   .sed-status-badge {
@@ -768,15 +768,15 @@ const editorStyles = `
     border-radius: 0.25rem;
     font-size: 0.7rem;
     font-weight: 500;
-    color: #9ca3af;
-    background: rgba(255, 255, 255, 0.05);
+    color: #94a3b8;
+    background: #111a2b;
     white-space: nowrap;
   }
 
   .sed-unsaved-dot {
     width: 8px;
     height: 8px;
-    background: #f59e0b;
+    background: #fbbf24;
     border-radius: 50%;
     animation: sed-pulse-unsaved 2s infinite;
   }
@@ -803,37 +803,37 @@ const editorStyles = `
   }
 
   .sed-btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
+    background: #f5a623;
+    color: #020617;
   }
 
   .sed-btn-primary:hover:not(:disabled) {
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);
     transform: translateY(-1px);
   }
 
   .sed-btn-secondary {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    color: #e5e5e5;
+    background: #111a2b;
+    border: 1px solid #1e293b !important;
+    color: #e9edf6;
   }
 
   .sed-btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.25) !important;
+    background: #111a2b;
+    border-color: #1e293b !important;
   }
 
   .sed-btn-small {
     padding: 0.375rem 0.75rem;
     font-size: 0.8rem;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3) !important;
-    color: #10b981;
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38) !important;
+    color: #f5a623;
     border-radius: 0.375rem;
   }
 
   .sed-btn-small:hover:not(:disabled) {
-    background: rgba(16, 185, 129, 0.2);
+    background: rgba(245, 166, 35, 0.12);
   }
 
   .sed-content {
@@ -846,9 +846,9 @@ const editorStyles = `
   }
 
   .sed-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
     overflow: hidden;
   }
 
@@ -863,7 +863,7 @@ const editorStyles = `
   }
 
   .sed-section-header:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: #111a2b;
   }
 
   .sed-section-header h3 {
@@ -874,23 +874,23 @@ const editorStyles = `
   }
 
   .sed-section-arrow {
-    color: #6b7280;
+    color: #64748b;
     font-size: 0.85rem;
     width: 16px;
     text-align: center;
   }
 
   .sed-section-count {
-    background: rgba(255, 255, 255, 0.08);
+    background: #111a2b;
     padding: 0.125rem 0.5rem;
     border-radius: 1rem;
     font-size: 0.75rem;
-    color: #9ca3af;
+    color: #94a3b8;
   }
 
   .sed-section-body {
     padding: 0 1.25rem 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid #162032;
     padding-top: 1rem;
   }
 
@@ -906,7 +906,7 @@ const editorStyles = `
     display: block;
     margin-bottom: 0.5rem;
     font-weight: 500;
-    color: #9ca3af;
+    color: #94a3b8;
     font-size: 0.85rem;
   }
 
@@ -914,10 +914,10 @@ const editorStyles = `
   .sed-field input[type="text"] {
     width: 100%;
     padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
     line-height: 1.5;
     resize: vertical;
@@ -928,7 +928,7 @@ const editorStyles = `
   .sed-field textarea:focus,
   .sed-field input[type="text"]:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   /* Parameters grid */
@@ -940,15 +940,15 @@ const editorStyles = `
   }
 
   .sed-param-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
     padding: 0.75rem;
     transition: border-color 0.15s;
   }
 
   .sed-param-card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: #1e293b;
   }
 
   .sed-param-header {
@@ -960,14 +960,14 @@ const editorStyles = `
 
   .sed-param-key {
     font-size: 0.8rem;
-    color: #9ca3af;
+    color: #94a3b8;
     font-weight: 500;
   }
 
   .sed-param-delete {
     background: none;
     border: none;
-    color: #4b5563;
+    color: #64748b;
     cursor: pointer;
     font-size: 1.1rem;
     padding: 0 0.25rem;
@@ -977,17 +977,17 @@ const editorStyles = `
   }
 
   .sed-param-delete:hover {
-    color: #ef4444;
+    color: #f87171;
   }
 
   .sed-param-input,
   select.sed-param-input {
     width: 100%;
     padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.375rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
     font-weight: 500;
     transition: border-color 0.15s;
@@ -996,20 +996,20 @@ const editorStyles = `
   .sed-param-input:focus,
   select.sed-param-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   .sed-param-def {
     margin-top: 0.5rem;
     font-size: 0.75rem;
-    color: #6b7280;
+    color: #64748b;
     line-height: 1.4;
     font-style: italic;
   }
 
   .sed-param-value-display {
     font-size: 0.9rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-weight: 500;
     margin-top: 0.5rem;
   }
@@ -1024,21 +1024,21 @@ const editorStyles = `
   .sed-add-input {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px dashed rgba(255, 255, 255, 0.1);
+    background: #111a2b;
+    border: 1px dashed #1e293b;
     border-radius: 0.375rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.85rem;
     transition: border-color 0.15s;
   }
 
   .sed-add-input::placeholder {
-    color: #4b5563;
+    color: #64748b;
   }
 
   .sed-add-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
     border-style: solid;
   }
 
@@ -1051,7 +1051,7 @@ const editorStyles = `
   }
 
   .sed-rule-number {
-    color: #6b7280;
+    color: #64748b;
     font-size: 0.8rem;
     min-width: 24px;
     text-align: right;
@@ -1061,23 +1061,23 @@ const editorStyles = `
   .sed-rule-input {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.375rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.85rem;
     transition: border-color 0.15s;
   }
 
   .sed-rule-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   .sed-rule-delete {
     background: none;
     border: none;
-    color: #4b5563;
+    color: #64748b;
     cursor: pointer;
     font-size: 1.1rem;
     padding: 0.25rem;
@@ -1088,7 +1088,7 @@ const editorStyles = `
   }
 
   .sed-rule-delete:hover {
-    color: #ef4444;
+    color: #f87171;
   }
 
   .sed-add-rule-btn {
@@ -1096,7 +1096,7 @@ const editorStyles = `
   }
 
   .sed-empty-section {
-    color: #4b5563;
+    color: #64748b;
     font-size: 0.85rem;
     padding: 1rem 0;
     text-align: center;
@@ -1107,7 +1107,7 @@ const editorStyles = `
     display: flex;
     gap: 0.25rem;
     margin-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid #1e293b;
     padding-bottom: 0.75rem;
   }
 
@@ -1119,24 +1119,24 @@ const editorStyles = `
     cursor: pointer;
     border: 1px solid transparent;
     background: transparent;
-    color: #6b7280;
+    color: #64748b;
     transition: all 0.15s;
   }
 
   .sed-artifact-tab:hover {
-    color: #9ca3af;
-    background: rgba(255, 255, 255, 0.03);
+    color: #94a3b8;
+    background: #111a2b;
   }
 
   .sed-artifact-tab.active {
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.08);
-    border-color: rgba(16, 185, 129, 0.2);
+    color: #f5a623;
+    background: rgba(245, 166, 35, 0.12);
+    border-color: rgba(245, 166, 35, 0.38);
   }
 
   .sed-artifact-content {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: #020617;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
     overflow: hidden;
   }
@@ -1147,7 +1147,7 @@ const editorStyles = `
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 0.78rem;
     line-height: 1.6;
-    color: #d1d5db;
+    color: #94a3b8;
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 400px;
@@ -1166,31 +1166,31 @@ const editorStyles = `
   }
 
   .sed-version-row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: #111a2b;
   }
 
   .sed-version-row.active {
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
   }
 
   .sed-version-label {
     font-size: 0.85rem;
     font-weight: 600;
-    color: #e5e5e5;
+    color: #e9edf6;
     min-width: 50px;
   }
 
   .sed-version-stage {
     font-size: 0.75rem;
-    color: #6b7280;
+    color: #64748b;
     text-transform: capitalize;
   }
 
   .sed-version-backtest {
     font-size: 0.7rem;
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
+    color: #f5a623;
+    background: rgba(245, 166, 35, 0.12);
     padding: 0.125rem 0.5rem;
     border-radius: 1rem;
     margin-left: auto;
@@ -1203,15 +1203,15 @@ const editorStyles = `
     align-items: center;
     justify-content: center;
     height: 300px;
-    color: #6b7280;
+    color: #64748b;
     gap: 1rem;
   }
 
   .sed-spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid rgba(16, 185, 129, 0.2);
-    border-top-color: #10b981;
+    border: 3px solid rgba(245, 166, 35, 0.38);
+    border-top-color: #f5a623;
     border-radius: 50%;
     animation: sed-spin 1s linear infinite;
   }

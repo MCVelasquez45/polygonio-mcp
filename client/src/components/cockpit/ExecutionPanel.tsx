@@ -10,7 +10,7 @@ function TimeoutCountdown({ deadline }: { deadline: string | null }) {
   if (!Number.isFinite(ms)) return null;
   const expired = ms <= 0;
   return (
-    <span className={`text-[11px] tabular-nums ${expired ? 'text-red-300' : 'text-amber-200'}`}>
+    <span className={`text-[11px] tabular-nums ${expired ? 'text-intel-neg' : 'text-intel-warn'}`}>
       timeout {expired ? 'elapsed' : `in ${fmtDuration(ms)}`}
     </span>
   );
@@ -19,13 +19,13 @@ function TimeoutCountdown({ deadline }: { deadline: string | null }) {
 function StatusTimeline({ events }: { events: OrderCardData['statusHistory'] }) {
   if (!events?.length) return null;
   return (
-    <div className="mt-2 border-t border-gray-900/60 pt-2">
+    <div className="mt-2 border-t border-intel-lineSoft pt-2">
       <div className="flex flex-wrap gap-1">
         {events.slice(-6).map((e, i) => (
           <span
             key={`${e.status}-${e.at}-${i}`}
             title={`${statusOrReason(e.status, 'Status not captured')} / ${statusOrReason(e.source, 'Source not captured')} / ${timestampOrReason(e.at, 'Timestamp not captured')}`}
-            className="rounded border border-gray-800 bg-gray-900/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-gray-400"
+            className="rounded border border-intel-line bg-intel-panel2 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-intel-ink2"
           >
             {statusOrReason(e.status, 'Status not captured')}
           </span>
@@ -46,12 +46,12 @@ function OrderCard({
 }) {
   if (!order) {
     return (
-      <div className="rounded-lg border border-gray-900 bg-black/30 p-3">
+      <div className="rounded-panel border border-intel-line bg-intel-panel2 p-3">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-widest text-gray-500">{role}</span>
+          <span className="text-[10px] uppercase tracking-widest text-intel-ink3">{role}</span>
           <Pill tone="neutral">{role === 'EXIT' ? 'not submitted' : 'not found'}</Pill>
         </div>
-        <p className="mt-2 text-[11px] text-gray-600">
+        <p className="mt-2 text-[11px] text-intel-ink3">
           {role === 'EXIT'
             ? 'No active exit order has been submitted for this position.'
             : 'Entry order was not found in broker/order history.'}
@@ -60,24 +60,24 @@ function OrderCard({
     );
   }
   return (
-    <div className="rounded-lg border border-gray-900 bg-black/30 p-3">
+    <div className="rounded-panel border border-intel-line bg-intel-panel2 p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-gray-500">{role}</span>
+        <span className="text-[10px] uppercase tracking-widest text-intel-ink3">{role}</span>
         <div className="flex items-center gap-2">
           <TimeoutCountdown deadline={order.timeoutDeadline} />
           <Pill tone={statusTone(order.status)}>{statusOrReason(order.status, 'Status not captured')}</Pill>
         </div>
       </div>
       <div className="mt-1 flex items-baseline justify-between tabular-nums">
-        <span className="text-sm text-gray-200">
+        <span className="text-sm text-intel-ink2">
           {numberOrReason(order.filledQty, 'Filled qty not captured')}/{numberOrReason(order.qty, 'Qty not captured')} @{' '}
           {moneyOrReason(order.avgFillPrice ?? order.limitPrice, 'Fill/limit price not captured')}
         </span>
-        <span className="text-[11px] text-gray-500">
+        <span className="text-[11px] text-intel-ink3">
           {statusOrReason(order.orderType, 'Order type not captured')} {order.timeInForce ? `/ ${order.timeInForce.toUpperCase()}` : ''}
         </span>
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-intel-ink3">
         {order.remainingQty != null ? <span>remaining {numberOrReason(order.remainingQty, 'Remaining qty not captured')}</span> : null}
         {role === 'EXIT' && order.attemptCount != null ? (
           <span>retry {order.attemptCount}/{maxRetries ?? 'Max retries not captured'}</span>
@@ -93,16 +93,28 @@ function OrderCard({
 /**
  * Execution - the broker's view of this position's orders: entry and exit
  * lifecycle, fills/remaining, retry count, timeout countdown, and the durable
- * status timeline. No Alpaca tab required.
+ * status timeline. Rendered as a section inside the shared "Automation Thinking"
+ * panel, beneath the hold rationale. No Alpaca tab required.
  */
-export function ExecutionPanel({ trade }: { trade: CockpitTrade }) {
+export function ExecutionSection({ trade }: { trade: CockpitTrade }) {
   const execution = trade.execution;
   return (
+    <div className="flex flex-col gap-2">
+      <OrderCard role="ENTRY" order={execution?.entry ?? null} />
+      <OrderCard role="EXIT" order={execution?.exit ?? null} maxRetries={execution?.maxExitRetries ?? null} />
+    </div>
+  );
+}
+
+/**
+ * Standalone panel wrapper retained for backward compatibility (tests and any
+ * direct callers). The cockpit workspace renders {@link ExecutionSection} inside
+ * the merged "Automation Thinking" panel instead.
+ */
+export function ExecutionPanel({ trade }: { trade: CockpitTrade }) {
+  return (
     <Panel title="Execution">
-      <div className="flex flex-col gap-2">
-        <OrderCard role="ENTRY" order={execution?.entry ?? null} />
-        <OrderCard role="EXIT" order={execution?.exit ?? null} maxRetries={execution?.maxExitRetries ?? null} />
-      </div>
+      <ExecutionSection trade={trade} />
     </Panel>
   );
 }

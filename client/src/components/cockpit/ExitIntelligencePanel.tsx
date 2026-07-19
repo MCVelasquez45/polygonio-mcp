@@ -37,9 +37,9 @@ function stateTone(state: Evaluated['state']): 'good' | 'warn' | 'bad' | 'neutra
 }
 
 function ProximityBar({ proximity, state }: { proximity: number; state: Evaluated['state'] }) {
-  const color = state === 'TRIGGERED' ? 'bg-red-500' : state === 'APPROACHING' ? 'bg-amber-400' : 'bg-emerald-500';
+  const color = state === 'TRIGGERED' ? 'bg-intel-neg' : state === 'APPROACHING' ? 'bg-intel-warn' : 'bg-intel-pos';
   return (
-    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-gray-800">
+    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-intel-line">
       <div className={`h-full transition-all duration-500 ${color}`} style={{ width: `${Math.round(proximity * 100)}%` }} />
     </div>
   );
@@ -57,14 +57,14 @@ function TriggerRow({ trigger, mark }: { trigger: ExitTrigger; mark: number | nu
         : evald.state;
   const priced = trigger.kind === 'below' || trigger.kind === 'above';
   return (
-    <div className="border-b border-gray-900/60 py-2 last:border-b-0">
+    <div className="border-b border-intel-lineSoft py-2 last:border-b-0">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-gray-200">{trigger.label}</span>
+        <span className="text-sm text-intel-ink2">{trigger.label}</span>
         <Pill tone={trigger.kind === 'trailing' && !trigger.armed ? 'neutral' : stateTone(evald.state)}>{label}</Pill>
       </div>
       {priced && trigger.armed ? (
         <>
-          <div className="mt-0.5 flex items-center justify-between text-[11px] tabular-nums text-gray-500">
+          <div className="mt-0.5 flex items-center justify-between text-[11px] tabular-nums text-intel-ink3">
             <span>Trigger {moneyOrReason(trigger.triggerPrice, 'Trigger price not captured')}</span>
             <span>{evald.distancePct === null ? 'Distance unavailable' : fmtSignedPercent(trigger.kind === 'below' ? -evald.distancePct : evald.distancePct)}</span>
           </div>
@@ -85,7 +85,7 @@ export function ExitIntelligencePanel({ trade, mark }: { trade: CockpitTrade; ma
   return (
     <Panel title="Exit Intelligence">
       {triggers.length === 0 ? (
-        <p className="text-xs text-gray-600">Exit policy was not captured for this position.</p>
+        <p className="text-xs text-intel-ink3">Exit policy was not captured for this position.</p>
       ) : (
         <div>
           {triggers.map((t) => (

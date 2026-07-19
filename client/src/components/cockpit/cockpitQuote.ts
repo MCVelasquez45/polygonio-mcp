@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNow } from '../../hooks/useNow';
 import { useCockpitLiveSubscription } from '../../hooks/useCockpitLiveSubscription';
+import { useLiveConnection } from '../../hooks/useLiveConnection';
 import { useLiveQuote } from '../../lib/liveMarketStore';
-import { getSharedSocket } from '../../lib/socket';
 import { finiteOrNull, freshnessOf, type QuoteFreshness } from '../../lib/marketFormat';
+import { deriveMarketDataStatus, type MarketDataStatus } from '../../lib/marketDataStatus';
 import type { QuoteSnapshot } from '../../types/market';
 import type { CockpitTrade } from './cockpitUi';
 import { QUOTE_PROVIDER_UNAVAILABLE } from './cockpitDisplay';
@@ -25,6 +26,8 @@ export type CockpitQuoteState = {
   quoteAgeMs: number | null;
   lastUpdate: number | null;
   freshness: QuoteFreshness;
+  /** Unified market-data status: LIVE / SNAPSHOT / DELAYED / STALE / DISCONNECTED (null = no quote). */
+  status: MarketDataStatus | null;
   hasQuote: boolean;
   liveFeedConnected: boolean;
   unavailableReason: string | null;
@@ -68,6 +71,16 @@ export function buildCockpitQuoteState(
       ? `${QUOTE_PROVIDER_UNAVAILABLE} No NBBO tick has been received for this contract yet.`
       : `${QUOTE_PROVIDER_UNAVAILABLE} The live quote socket is disconnected and retrying.`;
 
+  // Unified status, derived from how the value actually arrived + its age +
+  // whether the live link is up. A live option quote on a connected socket is
+  // LIVE; the same contract on a dropped socket is DISCONNECTED (value retained).
+  const { status } = deriveMarketDataStatus({
+    source: source === 'live' ? 'stream' : source === 'snapshot' ? 'rest' : null,
+    ageMs: quoteAgeMs,
+    connected: liveFeedConnected,
+    staleThresholdMs: QUOTE_FRESH_THRESHOLD_MS,
+  });
+
   return {
     symbol,
     quote: liveQuote,
@@ -83,6 +96,7 @@ export function buildCockpitQuoteState(
     quoteAgeMs,
     lastUpdate,
     freshness: freshnessOf(quoteAgeMs, QUOTE_FRESH_THRESHOLD_MS),
+    status,
     hasQuote: source !== 'unavailable',
     liveFeedConnected,
     unavailableReason,
@@ -93,20 +107,9 @@ export function useCockpitQuote(trade: CockpitTrade): CockpitQuoteState {
   useCockpitLiveSubscription(trade.optionSymbol);
   const liveQuote = useLiveQuote(trade.optionSymbol);
   const now = useNow(1000);
-  const [liveFeedConnected, setLiveFeedConnected] = useState(() => getSharedSocket().connected);
-
-  useEffect(() => {
-    const socket = getSharedSocket();
-    const onConnect = () => setLiveFeedConnected(true);
-    const onDisconnect = () => setLiveFeedConnected(false);
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    setLiveFeedConnected(socket.connected);
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-    };
-  }, []);
+  // One shared connection source for the whole app — a reconnect surfaces as
+  // DISCONNECTED here honestly, instead of each panel tracking its own boolean.
+  const { connected: liveFeedConnected } = useLiveConnection();
 
   return useMemo(
     () => buildCockpitQuoteState(trade, liveQuote, now, liveFeedConnected),

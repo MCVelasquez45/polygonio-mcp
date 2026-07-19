@@ -26,19 +26,19 @@ function ConfirmModal({
 }) {
   const confirmClass =
     action.tone === 'bad'
-      ? 'border-red-500/50 bg-red-500/20 text-red-100 hover:bg-red-500/30'
-      : 'border-amber-500/50 bg-amber-500/20 text-amber-100 hover:bg-amber-500/30';
+      ? 'border-intel-neg/50 bg-intel-neg/20 text-intel-neg hover:bg-intel-neg/30'
+      : 'border-intel-warn/50 bg-intel-warn/20 text-intel-warn hover:bg-intel-warn/30';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-950 p-5">
-        <h4 className="text-sm font-semibold text-white">{action.title}</h4>
-        <p className="mt-2 text-xs text-gray-400">{action.body}</p>
+      <div className="w-full max-w-md rounded-panel border border-intel-line bg-intel-panel p-5">
+        <h4 className="text-sm font-semibold text-intel-ink">{action.title}</h4>
+        <p className="mt-2 text-xs text-intel-ink2">{action.body}</p>
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="rounded-md border border-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-900 disabled:opacity-40"
+            className="rounded-md border border-intel-line px-3 py-1.5 text-xs text-intel-ink2 hover:bg-intel-panel2 disabled:opacity-40"
           >
             Cancel
           </button>
@@ -69,16 +69,16 @@ function ActionButton({
 }) {
   const cls =
     tone === 'bad'
-      ? 'border-red-500/40 text-red-200 hover:bg-red-500/10'
+      ? 'border-intel-neg/40 text-intel-neg hover:bg-intel-neg/10'
       : tone === 'warn'
-        ? 'border-amber-500/40 text-amber-200 hover:bg-amber-500/10'
-        : 'border-gray-800 text-gray-300 hover:bg-gray-900';
+        ? 'border-intel-warn/40 text-intel-warn hover:bg-intel-warn/10'
+        : 'border-intel-line text-intel-ink2 hover:bg-intel-panel2';
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide disabled:opacity-40 ${cls}`}
+      className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-intel-accent disabled:opacity-40 ${cls}`}
     >
       {label}
     </button>

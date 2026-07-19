@@ -17,9 +17,9 @@ export function GreeksGrid({ greeks }: { greeks: PositionLiveSnapshot | null }) 
     finiteOrNull(g?.vega) !== null ||
     ivPct !== null;
   return (
-    <div className="mt-3 border-t border-gray-900 pt-3">
+    <div className="mt-3 border-t border-intel-line pt-3">
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-gray-500">Greeks &amp; contract</span>
+        <span className="text-[10px] uppercase tracking-widest text-intel-ink3">Greeks &amp; contract</span>
         <Badge tone="neutral">3s</Badge>
       </div>
       {hasGreeks ? (
@@ -31,7 +31,7 @@ export function GreeksGrid({ greeks }: { greeks: PositionLiveSnapshot | null }) 
           <Cell label="IV" value={ivPct === null ? 'Not reported' : percentOrReason(ivPct <= 3 ? ivPct * 100 : ivPct, 'Not reported')} />
         </div>
       ) : (
-        <p className="text-xs text-gray-600">Contract greeks are unavailable from the current provider snapshot.</p>
+        <p className="text-xs text-intel-ink3">Contract greeks are unavailable from the current provider snapshot.</p>
       )}
     </div>
   );
@@ -40,8 +40,8 @@ export function GreeksGrid({ greeks }: { greeks: PositionLiveSnapshot | null }) 
 function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-widest text-gray-500">{label}</span>
-      <span className="text-sm font-semibold text-gray-100">{value}</span>
+      <span className="text-[10px] uppercase tracking-widest text-intel-ink3">{label}</span>
+      <span className="text-sm font-semibold text-intel-ink">{value}</span>
     </div>
   );
 }

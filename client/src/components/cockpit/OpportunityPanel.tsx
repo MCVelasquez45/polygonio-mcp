@@ -13,18 +13,18 @@ function CandidateRow({ c }: { c: OpportunityCandidate }) {
   const reasons = (c.rejectionReasons ?? []).map((reason) => reason.replaceAll('_', ' ').toLowerCase());
   const verdict = c.selected ? 'winner' : c.passed ? 'passed' : reasons.length ? reasons.join(', ') : 'rejected';
   return (
-    <tr className="border-t border-gray-900/60">
+    <tr className="border-t border-intel-lineSoft">
       <td className="py-1">
         <span className="flex items-center gap-2">
           {c.selected ? <Pill tone="good">SELECTED</Pill> : <span className="w-1" />}
-          <span className={c.selected ? 'text-white' : 'text-gray-400'}>{contractLabel(c.symbol)}</span>
+          <span className={c.selected ? 'text-intel-ink' : 'text-intel-ink2'}>{contractLabel(c.symbol)}</span>
         </span>
       </td>
-      <td className="py-1 text-right tabular-nums text-gray-200">{c.score === null ? 'Not captured' : c.score.toFixed(2)}</td>
-      <td className="py-1 text-right tabular-nums text-gray-400">{greekOrReason(c.delta, 'Not captured')}</td>
-      <td className="py-1 text-right tabular-nums text-gray-400">{numberOrReason(c.openInterest, 'Not captured')}</td>
-      <td className="py-1 text-right tabular-nums text-gray-400">{percentOrReason(c.spreadPct, 'Not captured')}</td>
-      <td className="py-1 pl-2 text-[11px] text-gray-500">
+      <td className="py-1 text-right tabular-nums text-intel-ink2">{c.score === null ? 'Not captured' : c.score.toFixed(2)}</td>
+      <td className="py-1 text-right tabular-nums text-intel-ink2">{greekOrReason(c.delta, 'Not captured')}</td>
+      <td className="py-1 text-right tabular-nums text-intel-ink2">{numberOrReason(c.openInterest, 'Not captured')}</td>
+      <td className="py-1 text-right tabular-nums text-intel-ink2">{percentOrReason(c.spreadPct, 'Not captured')}</td>
+      <td className="py-1 pl-2 text-[11px] text-intel-ink3">
         {verdict}
       </td>
     </tr>
@@ -53,7 +53,7 @@ export function OpportunityPanel({ trade }: { trade: CockpitTrade }) {
   if (!opp || !hasAttribution) {
     return (
       <Panel title="Opportunity: why this trade exists">
-        <p className="text-xs text-gray-600">No contract attribution is available for this position.</p>
+        <p className="text-xs text-intel-ink3">No contract attribution is available for this position.</p>
       </Panel>
     );
   }
@@ -70,11 +70,11 @@ export function OpportunityPanel({ trade }: { trade: CockpitTrade }) {
     <Panel title="Opportunity: why this trade exists">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.6fr)]">
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-gray-500">Selected contract</div>
-          <div className="mt-1 text-base font-semibold text-white">
+          <div className="text-[10px] uppercase tracking-widest text-intel-ink3">Selected contract</div>
+          <div className="mt-1 text-base font-semibold text-intel-ink">
             {selectedContract ? contractLabel(selectedContract) : 'Selection not captured'}
           </div>
-          <div className="mt-1 truncate text-[11px] text-gray-500" title={selectedContract ?? undefined}>
+          <div className="mt-1 truncate text-[11px] text-intel-ink3" title={selectedContract ?? undefined}>
             {selectedContract ?? 'Selected contract symbol not captured'}
           </div>
         </div>
@@ -98,7 +98,7 @@ export function OpportunityPanel({ trade }: { trade: CockpitTrade }) {
       </div>
 
       {hasFlow ? (
-        <div className="mt-3 grid grid-cols-2 gap-3 border-t border-gray-900 pt-3 sm:grid-cols-5">
+        <div className="mt-3 grid grid-cols-2 gap-3 border-t border-intel-line pt-3 sm:grid-cols-5">
           {opp.flow.netPremiumTilt !== null ? <Stat label="Flow tilt" value={numberOrReason(opp.flow.netPremiumTilt, 'Not captured', 2)} /> : null}
           {opp.flow.volumeRatio !== null ? <Stat label="Volume ratio" value={`${fmtNumber(opp.flow.volumeRatio, 2)}x`} /> : null}
           {opp.flow.callPremium !== null ? <Stat label="Call premium" value={moneyOrReason(opp.flow.callPremium, 'Not captured', 0)} /> : null}
@@ -106,20 +106,20 @@ export function OpportunityPanel({ trade }: { trade: CockpitTrade }) {
           {opp.flow.ivSkew !== null ? <Stat label="IV skew" value={numberOrReason(opp.flow.ivSkew, 'Not captured', 2)} /> : null}
         </div>
       ) : (
-        <p className="mt-3 border-t border-gray-900 pt-3 text-xs text-gray-600">
+        <p className="mt-3 border-t border-intel-line pt-3 text-xs text-intel-ink3">
           Flow metrics were not captured with this contract selection.
         </p>
       )}
 
       {opp.candidates.length ? (
-        <div className="mt-3 border-t border-gray-900 pt-3">
-          <p className="mb-1 text-[11px] uppercase tracking-widest text-gray-500">
+        <div className="mt-3 border-t border-intel-line pt-3">
+          <p className="mb-1 text-[11px] uppercase tracking-widest text-intel-ink3">
             Contract beat {beaten} other{beaten === 1 ? '' : 's'}
           </p>
           <div className="overflow-x-auto">
             <table className="min-w-[680px] w-full text-sm">
               <thead>
-                <tr className="text-[10px] uppercase tracking-widest text-gray-500">
+                <tr className="text-[10px] uppercase tracking-widest text-intel-ink3">
                   <th className="py-1 text-left font-normal">Contract</th>
                   <th className="py-1 text-right font-normal">Score</th>
                   <th className="py-1 text-right font-normal">Delta</th>

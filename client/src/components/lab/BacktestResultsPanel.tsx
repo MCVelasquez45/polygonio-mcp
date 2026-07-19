@@ -96,7 +96,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#9ca3af',
+        textColor: '#94a3b8',
       },
       grid: {
         vertLines: { color: 'rgba(255, 255, 255, 0.05)' },
@@ -107,13 +107,13 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
     });
 
     const strategySeries = chart.addSeries(LineSeries, {
-      color: '#10b981',
+      color: '#35d29a',
       lineWidth: 2,
       title: 'Strategy',
     });
 
     const benchmarkSeries = chart.addSeries(LineSeries, {
-      color: '#3b82f6',
+      color: '#6aa5f5',
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       title: 'Benchmark (SPY)',
@@ -409,7 +409,7 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
           <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid #333', color: '#9ca3af', textAlign: 'left' }}>
+                <tr style={{ borderBottom: '1px solid #1e293b', color: '#94a3b8', textAlign: 'left' }}>
                   <th style={{ padding: '6px 8px' }}>Time</th>
                   <th style={{ padding: '6px 8px' }}>Side</th>
                   <th style={{ padding: '6px 8px' }}>Contracts</th>
@@ -420,25 +420,25 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
               </thead>
               <tbody>
                 {backtest.tradeLedger.slice(0, 30).map((trade, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: '#d1d5db' }}>
+                  <tr key={i} style={{ borderBottom: '1px solid #162032', color: '#94a3b8' }}>
                     <td style={{ padding: '5px 8px', whiteSpace: 'nowrap' }}>{new Date(trade.timestamp).toLocaleString()}</td>
                     <td style={{ padding: '5px 8px' }}>
-                      <span style={{ color: trade.side === 'buy' ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                      <span style={{ color: trade.side === 'buy' ? '#35d29a' : '#f87171', fontWeight: 500 }}>
                         {trade.side.toUpperCase()}
                       </span>
                     </td>
                     <td style={{ padding: '5px 8px' }}>{trade.contracts}</td>
                     <td style={{ padding: '5px 8px' }}>${trade.fillPrice?.toFixed(2)}</td>
-                    <td style={{ padding: '5px 8px', color: trade.pnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                    <td style={{ padding: '5px 8px', color: trade.pnl >= 0 ? '#35d29a' : '#f87171', fontWeight: 500 }}>
                       {trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(2)}
                     </td>
-                    <td style={{ padding: '5px 8px', color: '#6b7280', fontSize: '0.75rem' }}>{trade.reason}</td>
+                    <td style={{ padding: '5px 8px', color: '#64748b', fontSize: '0.75rem' }}>{trade.reason}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {backtest.tradeLedger.length > 30 && (
-              <p style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.5rem', textAlign: 'center' }}>
+              <p style={{ color: '#64748b', fontSize: '0.8rem', marginTop: '0.5rem', textAlign: 'center' }}>
                 Showing first 30 of {backtest.tradeLedger.length} trades
               </p>
             )}
@@ -727,9 +727,9 @@ export function BacktestResultsPanel({ backtestId, strategyId, onDeployToPaper, 
 
 const styles = `
   .btn-ai-action {
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    color: #10b981;
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
+    color: #f5a623;
     padding: 0.25rem 0.75rem;
     border-radius: 2rem;
     font-size: 0.75rem;
@@ -739,7 +739,7 @@ const styles = `
   }
 
   .btn-ai-action:hover:not(:disabled) {
-    background: rgba(16, 185, 129, 0.25);
+    background: rgba(245, 166, 35, 0.12);
     transform: translateY(-1px);
   }
 
@@ -747,8 +747,8 @@ const styles = `
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #0a0a0f;
-    color: #e5e5e5;
+    background: #020617;
+    color: #e9edf6;
     padding: 1.5rem;
     overflow-y: auto;
   }
@@ -763,14 +763,14 @@ const styles = `
   .header-title h2 {
     margin: 0 0 0.25rem;
     font-size: 1.5rem;
-    background: linear-gradient(90deg, #e5e5e5, #9ca3af);
+    background: linear-gradient(90deg, #e9edf6, #94a3b8);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 
   .subtitle {
     font-size: 0.85rem;
-    color: #6b7280;
+    color: #64748b;
     font-family: monospace;
   }
 
@@ -790,19 +790,19 @@ const styles = `
 
   .btn-secondary {
     background: transparent;
-    border: 1px solid #333;
-    color: #9ca3af;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
   }
-  
-  .btn-secondary:hover { border-color: #666; color: #e5e5e5; }
+
+  .btn-secondary:hover { border-color: #666; color: #e9edf6; }
 
   .btn-primary {
-    background: #10b981;
+    background: #f5a623;
     border: none;
-    color: white;
+    color: #020617;
   }
 
-  .btn-primary:hover { background: #059669; }
+  .btn-primary:hover { background: #f5a623; }
 
   .data-source-badge {
     display: inline-block;
@@ -814,9 +814,9 @@ const styles = `
     letter-spacing: 0.04em;
   }
 
-  .badge-polygon { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
-  .badge-databento { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
-  .badge-synthetic { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+  .badge-polygon { background: rgba(245, 166, 35, 0.12); color: #f5a623; border: 1px solid rgba(245, 166, 35, 0.38); }
+  .badge-databento { background: rgba(106, 165, 245, 0.15); color: #6aa5f5; border: 1px solid rgba(106, 165, 245, 0.3); }
+  .badge-synthetic { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); }
 
   .synthetic-warning {
     display: flex;
@@ -824,8 +824,8 @@ const styles = `
     align-items: flex-start;
     padding: 0.75rem 1rem;
     margin-bottom: 1.5rem;
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.2);
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.2);
     border-radius: 0.5rem;
     color: #fbbf24;
     font-size: 0.85rem;
@@ -843,8 +843,8 @@ const styles = `
   }
 
   .metric-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     padding: 1rem;
     border-radius: 0.75rem;
     display: flex;
@@ -855,7 +855,7 @@ const styles = `
 
   .metric-card label {
     font-size: 0.8rem;
-    color: #9ca3af;
+    color: #94a3b8;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -868,13 +868,13 @@ const styles = `
     white-space: nowrap;
   }
 
-  .value.positive { color: #10b981; }
-  .value.negative { color: #ef4444; }
+  .value.positive { color: #35d29a; }
+  .value.negative { color: #f87171; }
 
   .chart-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 0.75rem;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
     padding: 1.5rem;
     margin-bottom: 2rem;
   }
@@ -882,13 +882,13 @@ const styles = `
   .chart-section h3 {
     margin: 0 0 1rem;
     font-size: 1.1rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .analysis-section {
-    background: rgba(16, 185, 129, 0.05);
-    border: 1px solid rgba(16, 185, 129, 0.1);
-    border-radius: 0.75rem;
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
+    border-radius: 12px;
     padding: 1.5rem;
   }
 
@@ -897,7 +897,7 @@ const styles = `
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 1rem;
-    color: #10b981;
+    color: #f5a623;
   }
 
   .section-header h3 {
@@ -915,7 +915,7 @@ const styles = `
     gap: 1rem;
     align-items: flex-start;
     padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.2);
+    background: #111a2b;
     border-radius: 0.5rem;
   }
 
@@ -928,17 +928,17 @@ const styles = `
     margin: 0;
     font-size: 0.95rem;
     line-height: 1.5;
-    color: #d1d5db;
+    color: #94a3b8;
   }
 
-  .analysis-item.positive .bullet { color: #10b981; }
-  .analysis-item.warning .bullet { color: #f59e0b; }
-  .analysis-item.suggestion .bullet { color: #3b82f6; }
+  .analysis-item.positive .bullet { color: #35d29a; }
+  .analysis-item.warning .bullet { color: #fbbf24; }
+  .analysis-item.suggestion .bullet { color: #6aa5f5; }
 
   .suggestions-section {
-    background: rgba(59, 130, 246, 0.05);
-    border: 1px solid rgba(59, 130, 246, 0.15);
-    border-radius: 0.75rem;
+    background: rgba(106, 165, 245, 0.05);
+    border: 1px solid rgba(106, 165, 245, 0.15);
+    border-radius: 12px;
     padding: 1.5rem;
     margin-top: 1.5rem;
   }
@@ -950,8 +950,8 @@ const styles = `
   }
 
   .suggestion-card {
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
     padding: 0.75rem 1rem;
   }
@@ -971,11 +971,11 @@ const styles = `
     border-radius: 0.25rem;
   }
 
-  .suggestion-action.add { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-  .suggestion-action.modify { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-  .suggestion-action.remove { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+  .suggestion-action.add { background: rgba(245, 166, 35, 0.12); color: #f5a623; }
+  .suggestion-action.modify { background: rgba(106, 165, 245, 0.2); color: #6aa5f5; }
+  .suggestion-action.remove { background: rgba(248, 113, 113, 0.2); color: #f87171; }
 
-  .suggestion-field { font-weight: 600; color: #e5e5e5; font-size: 0.9rem; }
+  .suggestion-field { font-weight: 600; color: #e9edf6; font-size: 0.9rem; }
 
   .suggestion-values {
     display: flex;
@@ -984,13 +984,13 @@ const styles = `
     margin-bottom: 0.25rem;
   }
 
-  .current-val { color: #6b7280; }
-  .suggested-val { color: #10b981; font-weight: 500; }
+  .current-val { color: #64748b; }
+  .suggested-val { color: #f5a623; font-weight: 500; }
 
   .suggestion-reasoning {
     margin: 0;
     font-size: 0.8rem;
-    color: #9ca3af;
+    color: #94a3b8;
     line-height: 1.4;
   }
 
@@ -1001,9 +1001,9 @@ const styles = `
   }
 
   .version-comparison-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
     padding: 1.5rem;
     margin-top: 1.5rem;
   }
@@ -1021,28 +1021,28 @@ const styles = `
   .version-table th {
     text-align: left;
     padding: 0.5rem 0.75rem;
-    color: #6b7280;
+    color: #64748b;
     font-weight: 600;
     text-transform: uppercase;
     font-size: 0.7rem;
     letter-spacing: 0.05em;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid #1e293b;
   }
 
   .version-table td {
     padding: 0.5rem 0.75rem;
-    color: #d1d5db;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    color: #94a3b8;
+    border-bottom: 1px solid #162032;
   }
 
   .version-table .current-version td {
-    background: rgba(16, 185, 129, 0.06);
-    color: #e5e5e5;
+    background: rgba(245, 166, 35, 0.12);
+    color: #e9edf6;
     font-weight: 500;
   }
 
   .version-label {
-    color: #9ca3af;
+    color: #94a3b8;
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -1053,7 +1053,7 @@ const styles = `
     display: inline-block;
     font-size: 0.7rem;
     transition: transform 0.2s;
-    color: #6b7280;
+    color: #64748b;
   }
 
   .version-chevron.open { transform: rotate(90deg); }
@@ -1063,20 +1063,20 @@ const styles = `
     transition: background 0.15s;
   }
 
-  .version-row:hover td { background: rgba(255, 255, 255, 0.04); }
-  .version-row.expanded td { background: rgba(16, 185, 129, 0.04); border-bottom-color: transparent; }
+  .version-row:hover td { background: #111a2b; }
+  .version-row.expanded td { background: rgba(245, 166, 35, 0.12); border-bottom-color: transparent; }
 
-  .version-table .positive { color: #10b981; }
-  .version-table .negative { color: #ef4444; }
+  .version-table .positive { color: #35d29a; }
+  .version-table .negative { color: #f87171; }
 
   .version-detail-row td {
     padding: 0 !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid #1e293b;
   }
 
   .version-detail {
     padding: 1rem 1.25rem;
-    background: rgba(0, 0, 0, 0.2);
+    background: #111a2b;
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
@@ -1087,7 +1087,7 @@ const styles = `
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #6b7280;
+    color: #64748b;
     font-weight: 600;
   }
 
@@ -1096,7 +1096,7 @@ const styles = `
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #6b7280;
+    color: #64748b;
     font-weight: 600;
   }
 
@@ -1107,8 +1107,8 @@ const styles = `
   }
 
   .delta-item {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
     padding: 0.5rem 0.6rem;
     display: flex;
@@ -1118,7 +1118,7 @@ const styles = `
 
   .delta-label {
     font-size: 0.65rem;
-    color: #6b7280;
+    color: #64748b;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: 600;
@@ -1126,12 +1126,12 @@ const styles = `
 
   .delta-values {
     font-size: 0.8rem;
-    color: #9ca3af;
+    color: #94a3b8;
   }
 
   .delta-arrow {
     margin: 0 0.3rem;
-    color: #4b5563;
+    color: #64748b;
   }
 
   .delta-diff {
@@ -1139,13 +1139,13 @@ const styles = `
     font-weight: 600;
   }
 
-  .delta-diff.improved { color: #10b981; }
-  .delta-diff.regressed { color: #ef4444; }
+  .delta-diff.improved { color: #35d29a; }
+  .delta-diff.regressed { color: #f87171; }
 
   .params-grid {
     display: grid;
     gap: 0;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
     overflow: hidden;
   }
@@ -1155,19 +1155,19 @@ const styles = `
     justify-content: space-between;
     padding: 0.35rem 0.75rem;
     font-size: 0.8rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid #162032;
   }
 
   .param-row:last-child { border-bottom: none; }
 
   .param-key {
-    color: #9ca3af;
+    color: #94a3b8;
     font-family: monospace;
     font-size: 0.75rem;
   }
 
   .param-val {
-    color: #e5e5e5;
+    color: #e9edf6;
     font-weight: 500;
     font-family: monospace;
     font-size: 0.75rem;

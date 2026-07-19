@@ -1,4 +1,3 @@
-import { useNow } from '../../hooks/useNow';
 import type { PositionLiveSnapshot } from '../../api/portfolio';
 import {
   fmtPercent,
@@ -6,11 +5,13 @@ import {
 } from '../../lib/marketFormat';
 import { Panel, Stat, type CockpitTrade } from './cockpitUi';
 import type { CockpitQuoteState } from './cockpitQuote';
-import { durationOrReason, moneyOrReason, signedMoneyOrReason } from './cockpitDisplay';
+import { moneyOrReason, signedMoneyOrReason } from './cockpitDisplay';
+import { GreeksGrid } from './GreeksGrid';
 
 /**
- * Position & Health shows risk and exposure only. Entry, mark, P/L and return
- * are canonical in the trade header and are intentionally not repeated here.
+ * Position & Health shows risk, exposure, and the contract greeks (risk lives
+ * with the position, not with market data). Entry, mark, P/L, return and
+ * time-in-trade are canonical in the trade header and are not repeated here.
  */
 export function PositionHealthPanel({
   trade,
@@ -23,8 +24,6 @@ export function PositionHealthPanel({
   buyingPower: number | null;
   quote: CockpitQuoteState;
 }) {
-  const now = useNow(1000);
-
   const contracts = finiteOrNull(trade.contracts);
   const entry = finiteOrNull(trade.entryPrice);
 
@@ -43,8 +42,6 @@ export function PositionHealthPanel({
   const thetaDecay = theta !== null && contracts !== null ? theta * 100 * Math.abs(contracts) : null;
 
   const dte = greeks?.daysToExpiration ?? trade.daysToExpiration ?? null;
-  const openedAt = trade.filledTime ? Date.parse(trade.filledTime) : NaN;
-  const timeInTrade = Number.isFinite(openedAt) ? now - openedAt : null;
 
   return (
     <Panel title="Position &amp; Health">
@@ -59,8 +56,8 @@ export function PositionHealthPanel({
         <Stat label="DTE" value={dte != null ? `${dte}d` : 'Expiration not captured'} />
         <Stat label="MFE" value={signedMoneyOrReason(trade.mfe, 'Not captured for this position')} tone="muted" />
         <Stat label="MAE" value={signedMoneyOrReason(trade.mae, 'Not captured for this position')} tone="muted" />
-        <Stat label="Time in trade" value={durationOrReason(timeInTrade, 'Fill time not captured')} />
       </div>
+      <GreeksGrid greeks={greeks ?? null} />
     </Panel>
   );
 }

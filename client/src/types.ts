@@ -32,7 +32,7 @@ export type ConversationResponse = ConversationPayload & {
 };
 
 export type ChatContext = {
-  view?: 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit' | 'intelligence';
+  view?: 'trading' | 'portfolio' | 'cockpit' | 'intelligence' | 'operations';
   selectedTicker?: string;
   chart?: {
     symbol?: string;

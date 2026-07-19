@@ -2,8 +2,7 @@ import { CockpitCommandBar } from './CockpitCommandBar';
 import { LiveMarketPanel } from './LiveMarketPanel';
 import { PositionHealthPanel } from './PositionHealthPanel';
 import { ExitIntelligencePanel } from './ExitIntelligencePanel';
-import { BotThinkingPanel } from './BotThinkingPanel';
-import { ExecutionPanel } from './ExecutionPanel';
+import { AutomationThinkingPanel } from './AutomationThinkingPanel';
 import { OperatorActions } from './OperatorActions';
 import { MarketContextPanel } from './MarketContextPanel';
 import { OpportunityPanel } from './OpportunityPanel';
@@ -46,8 +45,7 @@ export function CockpitWorkspace({
         </div>
         <div className="flex min-w-0 flex-col gap-3">
           <ExitIntelligencePanel trade={trade} mark={quote.mark} />
-          <BotThinkingPanel trade={trade} nextEvaluationAt={nextEvaluationAt} mark={quote.mark} />
-          <ExecutionPanel trade={trade} />
+          <AutomationThinkingPanel trade={trade} nextEvaluationAt={nextEvaluationAt} mark={quote.mark} />
         </div>
       </div>
       <div className="grid min-w-0 grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">

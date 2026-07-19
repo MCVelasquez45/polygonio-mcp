@@ -1,63 +1,69 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock, Database, RefreshCcw } from 'lucide-react';
+import {
+  Activity,
+  BriefcaseBusiness,
+  CalendarDays,
+  Cpu,
+  Gauge,
+  ShieldAlert,
+  ShieldCheck,
+  Siren,
+} from 'lucide-react';
 import { listTradingSessions, type TradingSession } from '../../api/intelligence';
+import {
+  AlertBanner,
+  EmptyState,
+  EnvBadge,
+  EventList,
+  HealthPill,
+  HeroBand,
+  Metric,
+  MetricStrip,
+  PageHeader,
+  Panel,
+  RecordList,
+  RefreshButton,
+  SectionHeader,
+  StatusBadge,
+  type EventItem,
+} from './ui';
+import {
+  fmtDateTime,
+  fmtNum,
+  fmtSignedUsd,
+  fmtUsd,
+  fmtWholePct,
+  pnlTone,
+} from '../../lib/intelligenceFormat';
 
 type Props = {
   initialSessions?: TradingSession[];
   loadOnMount?: boolean;
 };
 
-function formatDateTime(value?: string | null): string {
-  if (!value) return 'Not captured';
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return 'Not captured';
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+/** Net result for a session: prefer total P/L, fall back to realized. */
+function netPnl(session: TradingSession): number | null {
+  return session.tradeSummary.totalPnl ?? session.tradeSummary.realizedPnl;
 }
 
-function formatMoney(value: number | null | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Unavailable from captured evidence';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
-}
-
-function formatPercent(value: number | null | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Not captured';
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatHealth(value: boolean | null | undefined, unavailable = 'Not captured'): string {
-  if (value === true) return 'Healthy';
-  if (value === false) return 'Needs review';
-  return unavailable;
-}
-
+/** Honest market-status copy: UNAVAILABLE spells itself out. */
 function marketStatusLabel(value: string): string {
-  if (value === 'UNAVAILABLE') return 'Market status unavailable from captured evidence';
+  if (!value || value === 'UNAVAILABLE') return 'Market status unavailable from captured evidence';
   return value;
 }
 
-function statusTone(status: TradingSession['status']): string {
-  if (status === 'FINALIZED') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
-  if (status === 'FINALIZATION_FAILED') return 'border-red-500/40 bg-red-500/10 text-red-200';
-  return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2">
-      <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-gray-100">{value}</p>
-    </div>
-  );
-}
+const HEALTH_CHECKS: Array<{ key: keyof TradingSession['automationHealth']; label: string }> = [
+  { key: 'schedulerHealthy', label: 'Scheduler' },
+  { key: 'monitorHealthy', label: 'Monitor' },
+  { key: 'brokerConnected', label: 'Broker' },
+  { key: 'marketDataConnected', label: 'Market Data' },
+  { key: 'mongoConnected', label: 'Mongo' },
+  { key: 'reconciliationClean', label: 'Reconciliation' },
+];
 
 export function TradingSessionsPage({ initialSessions = [], loadOnMount = true }: Props) {
   const [sessions, setSessions] = useState<TradingSession[]>(initialSessions);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSessions[0]?.sessionId ?? null);
   const [loading, setLoading] = useState(loadOnMount && initialSessions.length === 0);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,9 +71,16 @@ export function TradingSessionsPage({ initialSessions = [], loadOnMount = true }
     setLoading(true);
     setError(null);
     try {
-      setSessions(await listTradingSessions(25));
+      const next = await listTradingSessions(25);
+      setSessions(next);
+      setSelectedId(current => current ?? next[0]?.sessionId ?? null);
     } catch (err: any) {
-      setError(err?.response?.data?.message ?? err?.response?.data?.error ?? err?.message ?? 'Trading sessions unavailable.');
+      setError(
+        err?.response?.data?.message ??
+          err?.response?.data?.error ??
+          err?.message ??
+          'Trading sessions unavailable.'
+      );
     } finally {
       setLoading(false);
     }
@@ -76,149 +89,249 @@ export function TradingSessionsPage({ initialSessions = [], loadOnMount = true }
   useEffect(() => {
     if (!loadOnMount || initialSessions.length > 0) return;
     void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const latest = sessions[0] ?? null;
-  const finalizedCount = useMemo(() => sessions.filter(session => session.status === 'FINALIZED').length, [sessions]);
+  const selected = useMemo(
+    () => sessions.find(s => s.sessionId === selectedId) ?? sessions[0] ?? null,
+    [sessions, selectedId]
+  );
 
   return (
-    <section className="pb-24 space-y-4" data-testid="trading-sessions-page">
-      <div className="rounded-xl border border-gray-800 bg-gray-950 p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Trading Intelligence</p>
-            <h1 className="mt-2 text-2xl font-semibold text-white">Trading Sessions</h1>
-            <p className="mt-2 max-w-3xl text-sm text-gray-400">
-              Immutable daily evidence captured from Version 1 automation records.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={refresh}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-sm font-semibold text-gray-200 hover:border-emerald-500/60 hover:text-white"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Refresh
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col gap-4 pb-24" data-testid="trading-sessions-page">
+      <PageHeader
+        title="Trading Sessions"
+        description="Immutable daily trading-day briefings captured from automation evidence."
+        actions={<RefreshButton onClick={refresh} busy={loading} />}
+      />
 
-      {error && (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-          {error}
-        </div>
-      )}
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
 
-      {loading && sessions.length === 0 && (
-        <div className="rounded-lg border border-gray-800 bg-gray-950 px-4 py-6 text-sm text-gray-300">
-          Loading captured trading sessions.
-        </div>
-      )}
+      {loading && sessions.length === 0 ? (
+        <EmptyState icon={<Activity className="h-6 w-6" />} title="Loading captured trading sessions" hint="Fetching finalized session evidence." />
+      ) : sessions.length === 0 ? (
+        <EmptyState icon={<CalendarDays className="h-6 w-6" />} title="No finalized trading sessions yet." hint="A briefing appears here once a trading session finalizes." />
+      ) : selected ? (
+        <SessionDetail
+          sessions={sessions}
+          selected={selected}
+          onSelect={setSelectedId}
+        />
+      ) : null}
+    </div>
+  );
+}
 
-      {!loading && sessions.length === 0 && (
-        <div className="rounded-lg border border-gray-800 bg-gray-950 px-4 py-8 text-sm text-gray-300">
-          No finalized trading sessions yet.
-        </div>
-      )}
+function SessionDetail({
+  sessions,
+  selected,
+  onSelect,
+}: {
+  sessions: TradingSession[];
+  selected: TradingSession;
+  onSelect: (id: string) => void;
+}) {
+  const net = netPnl(selected);
+  const { winningTrades, losingTrades, tradesOpened, tradesClosed, realizedPnl } = selected.tradeSummary;
+  const evalSummary = selected.evaluationSummary;
+  const orders = selected.orderSummary;
+  const health = selected.automationHealth;
+  const provider = selected.providerSummary;
+  const isCollecting = selected.status !== 'FINALIZED' && selected.status !== 'FINALIZATION_FAILED';
 
-      {latest && latest.status !== 'FINALIZED' && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          This session is still collecting evidence.
-        </div>
-      )}
+  const warningItems = selected.warnings.map<EventItem>(w => ({
+    code: w.code,
+    message: w.message,
+    meta: typeof w.count === 'number' ? `×${w.count}` : null,
+    severity: 'warning',
+  }));
+  const errorItems = selected.errors.map<EventItem>(e => ({
+    code: e.code,
+    message: e.message,
+    meta: e.component ?? null,
+    severity: 'critical',
+  }));
 
-      {latest && (
-        <article className="rounded-xl border border-gray-800 bg-gray-950 p-4 sm:p-5 space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-semibold text-white">{latest.tradingDate}</h2>
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(latest.status)}`}>
-                  {latest.status.replaceAll('_', ' ')}
-                </span>
-                <span className="rounded-full border border-gray-700 px-2.5 py-1 text-xs font-semibold text-gray-300">
-                  {latest.environment}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-gray-400">{marketStatusLabel(latest.marketStatus)}</p>
-            </div>
-            <div className="grid grid-cols-1 gap-2 text-sm text-gray-300 sm:grid-cols-2">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-gray-500" />
-                Started {formatDateTime(latest.startedAt)}
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-gray-500" />
-                Finalized {formatDateTime(latest.finalizedAt)}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat label="Watchlist size" value={latest.watchlist.size} />
-            <Stat label="Symbols evaluated" value={latest.evaluationSummary.symbolsEvaluated} />
-            <Stat label="Signals" value={latest.evaluationSummary.signalsGenerated} />
-            <Stat label="Data rejects" value={latest.evaluationSummary.dataRejectCount} />
-            <Stat label="Risk rejects" value={latest.evaluationSummary.riskRejectCount} />
-            <Stat label="Trades opened" value={latest.tradeSummary.tradesOpened} />
-            <Stat label="Trades closed" value={latest.tradeSummary.tradesClosed} />
-            <Stat label="Wins / Losses" value={`${latest.tradeSummary.winningTrades} / ${latest.tradeSummary.losingTrades}`} />
-            <Stat label="Realized P/L" value={formatMoney(latest.tradeSummary.realizedPnl)} />
-            <Stat label="Orders" value={latest.orderSummary.ordersSubmitted} />
-            <Stat label="Fills" value={latest.orderSummary.fills} />
-            <Stat label="Cancels" value={latest.orderSummary.cancellations} />
-            <Stat label="Rate limits" value={latest.providerSummary.rateLimitCount} />
-            <Stat label="Cache hit rate" value={formatPercent(latest.providerSummary.cacheHitRate)} />
-            <Stat label="Reconciliation" value={formatHealth(latest.automationHealth.reconciliationClean)} />
-            <Stat label="Broker evidence" value={formatHealth(latest.automationHealth.brokerConnected)} />
-          </div>
-
-          {!latest.portfolioSnapshot && (
-            <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-4 py-3 text-sm text-gray-300">
-              Portfolio snapshot was not captured for this session.
-            </div>
-          )}
-
-          {(latest.warnings.length > 0 || latest.errors.length > 0) && (
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                  <AlertTriangle className="h-4 w-4" />
-                  Warnings
+  return (
+    <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+      <aside>
+        <SectionHeader icon={<CalendarDays className="h-4 w-4" />} title="Session History" />
+        <RecordList
+          items={sessions}
+          getKey={s => s.sessionId}
+          selectedKey={selected.sessionId}
+          onSelect={onSelect}
+          label="Trading sessions"
+          renderItem={s => {
+            const n = netPnl(s);
+            const tone = pnlTone(n);
+            return (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold text-intel-ink">{s.tradingDate}</span>
+                  <StatusBadge status={s.status} />
                 </div>
-                {latest.warnings.length === 0 ? (
-                  <p className="mt-2 text-sm text-gray-400">No warnings captured.</p>
-                ) : (
-                  <ul className="mt-2 space-y-2 text-sm text-amber-50/90">
-                    {latest.warnings.slice(0, 6).map(item => (
-                      <li key={item.code}>
-                        <span className="font-semibold">{item.code}</span>: {item.message}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <p
+                  className={`mt-1 font-mono text-xs tabular-nums ${
+                    tone === 'pos' ? 'text-intel-pos' : tone === 'neg' ? 'text-intel-neg' : 'text-intel-ink2'
+                  }`}
+                >
+                  {fmtSignedUsd(n)}
+                </p>
               </div>
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-red-100">
-                  <Database className="h-4 w-4" />
-                  Errors
-                </div>
-                {latest.errors.length === 0 ? (
-                  <p className="mt-2 text-sm text-gray-400">No critical automation events captured.</p>
-                ) : (
-                  <ul className="mt-2 space-y-2 text-sm text-red-50/90">
-                    {latest.errors.slice(0, 6).map(item => (
-                      <li key={`${item.code}-${item.component ?? 'component'}`}>
-                        <span className="font-semibold">{item.code}</span>: {item.message}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
+            );
+          }}
+        />
+      </aside>
+
+      <article className="flex flex-col gap-4">
+        {isCollecting && (
+          <AlertBanner tone="warn">This session is still collecting evidence.</AlertBanner>
+        )}
+
+        {/* HERO */}
+        <HeroBand
+          badge={{ value: fmtSignedUsd(net), label: `Net · ${selected.status.replace(/_/g, ' ')}`, tone: pnlTone(net) }}
+          headline={`${selected.environment} session · ${fmtNum(winningTrades)}W / ${fmtNum(losingTrades)}L`}
+          sub={marketStatusLabel(selected.marketStatus)}
+          facts={[
+            { k: 'DATE', v: selected.tradingDate },
+            { k: 'CLOSED', v: fmtNum(tradesClosed) },
+            { k: 'W/L', v: `${fmtNum(winningTrades)} / ${fmtNum(losingTrades)}` },
+          ]}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <HealthPill
+              label={net == null ? 'Net result not captured' : net > 0 ? 'Net positive day' : net < 0 ? 'Net negative day' : 'Flat day'}
+              healthy={net == null ? null : net >= 0}
+            />
+            <span className="font-mono text-[11px] uppercase tracking-label text-intel-ink3">
+              Status {selected.status}
+            </span>
+            <EnvBadge environment={selected.environment} />
+          </div>
+        </HeroBand>
+
+        {/* HEALTH ROW */}
+        <Panel title="Automation Health" icon={<Gauge className="h-4 w-4" />}>
+          <div className="flex flex-wrap gap-2">
+            {HEALTH_CHECKS.map(({ key, label }) => (
+              <HealthPill key={key} label={label} healthy={health[key] as boolean | null | undefined ?? null} />
+            ))}
+            {health.emergencyStopActivated && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-intel-neg/40 bg-intel-neg/10 px-2.5 py-1 font-mono text-[11px] tracking-wide text-intel-neg">
+                <Siren className="h-3.5 w-3.5" aria-hidden="true" />
+                Emergency stop activated
+              </span>
+            )}
+          </div>
+        </Panel>
+
+        {/* KEY METRICS */}
+        <MetricStrip cols={6}>
+          <Metric label="Net P/L" value={fmtSignedUsd(net)} tone={pnlTone(net)} emphasis />
+          <Metric label="Realized" value={fmtSignedUsd(realizedPnl)} tone={pnlTone(realizedPnl)} />
+          <Metric label="Opened / Closed" value={`${fmtNum(tradesOpened)} / ${fmtNum(tradesClosed)}`} />
+          <Metric label="Wins" value={fmtNum(winningTrades)} tone="pos" />
+          <Metric label="Losses" value={fmtNum(losingTrades)} tone="neg" />
+          <Metric label="Fills" value={fmtNum(orders.fills)} />
+        </MetricStrip>
+
+        {/* EVALUATION & ORDER FLOW */}
+        <Panel
+          title="Evaluation & Order Flow"
+          icon={<Activity className="h-4 w-4" />}
+          collapsible
+          defaultOpen={false}
+          summary={`${fmtNum(evalSummary.signalsGenerated)} signals · ${fmtNum(orders.ordersSubmitted)} orders`}
+        >
+          <MetricStrip cols={4}>
+            <Metric label="Watchlist" value={fmtNum(selected.watchlist.size)} />
+            <Metric label="Windows" value={fmtNum(evalSummary.windowsEvaluated)} />
+            <Metric label="Evaluated" value={fmtNum(evalSummary.symbolsEvaluated)} />
+            <Metric label="Signals" value={fmtNum(evalSummary.signalsGenerated)} />
+            <Metric label="No Signal" value={fmtNum(evalSummary.noSignalCount)} />
+            <Metric label="Approved" value={fmtNum(evalSummary.approvedCount)} />
+            <Metric label="Data Rejects" value={fmtNum(evalSummary.dataRejectCount)} />
+            <Metric label="Risk Rejects" value={fmtNum(evalSummary.riskRejectCount)} />
+            <Metric label="Intents" value={fmtNum(orders.intentsCreated)} />
+            <Metric label="Submitted" value={fmtNum(orders.ordersSubmitted)} />
+            <Metric label="Fills" value={fmtNum(orders.fills)} />
+            <Metric label="Partial Fills" value={fmtNum(orders.partialFills)} />
+            <Metric label="Cancellations" value={fmtNum(orders.cancellations)} />
+            <Metric label="Rejections" value={fmtNum(orders.rejections)} />
+            <Metric label="Manual Review" value={fmtNum(orders.manualReviewCount)} />
+          </MetricStrip>
+        </Panel>
+
+        {/* PROVIDER & AUTOMATION */}
+        <Panel
+          title="Provider & Automation"
+          icon={<Cpu className="h-4 w-4" />}
+          collapsible
+          defaultOpen={false}
+          summary={`${fmtNum(provider.totalRequests)} requests`}
+        >
+          <MetricStrip cols={4}>
+            <Metric label="Requests" value={fmtNum(provider.totalRequests)} />
+            <Metric label="Cache Hits" value={fmtNum(provider.cacheHits)} />
+            <Metric label="Cache Hit Rate" value={fmtWholePct(provider.cacheHitRate == null ? null : provider.cacheHitRate * 100)} />
+            <Metric label="Rate Limits" value={fmtNum(provider.rateLimitCount)} />
+            <Metric label="Provider Errors" value={fmtNum(provider.providerErrors)} />
+            <Metric label="Entitlement Rejects" value={fmtNum(provider.entitlementRejects)} />
+            <Metric label="Started" value={fmtDateTime(selected.startedAt)} />
+            <Metric label="Finalized" value={fmtDateTime(selected.finalizedAt)} />
+          </MetricStrip>
+        </Panel>
+
+        {/* PORTFOLIO SNAPSHOT */}
+        <Panel
+          title="Portfolio Snapshot"
+          icon={<BriefcaseBusiness className="h-4 w-4" />}
+          collapsible
+          defaultOpen={false}
+          summary={selected.portfolioSnapshot ? fmtUsd(selected.portfolioSnapshot.equity) : 'Not captured'}
+        >
+          {selected.portfolioSnapshot ? (
+            <MetricStrip cols={4}>
+              <Metric label="Equity" value={fmtUsd(selected.portfolioSnapshot.equity)} />
+              <Metric label="Cash" value={fmtUsd(selected.portfolioSnapshot.cash)} />
+              <Metric label="Buying Power" value={fmtUsd(selected.portfolioSnapshot.buyingPower)} />
+              <Metric
+                label="Net Unrealized"
+                value={fmtSignedUsd(selected.portfolioSnapshot.netUnrealizedPnl)}
+                tone={pnlTone(selected.portfolioSnapshot.netUnrealizedPnl)}
+              />
+              <Metric label="Source" value={selected.portfolioSnapshot.source} />
+              <Metric label="Captured" value={fmtDateTime(selected.portfolioSnapshot.capturedAt)} />
+            </MetricStrip>
+          ) : (
+            <p className="text-sm text-intel-ink2">Portfolio snapshot was not captured for this session.</p>
           )}
-        </article>
-      )}
-    </section>
+        </Panel>
+
+        {/* WARNINGS */}
+        <Panel
+          title="Warnings"
+          icon={<ShieldAlert className="h-4 w-4" />}
+          collapsible
+          defaultOpen={false}
+          summary={fmtNum(warningItems.length)}
+        >
+          <EventList items={warningItems} emptyNoun="warnings" />
+        </Panel>
+
+        {/* ERRORS */}
+        <Panel
+          title="Errors"
+          icon={health.emergencyStopActivated || errorItems.length > 0 ? <ShieldAlert className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+          collapsible
+          defaultOpen={false}
+          summary={fmtNum(errorItems.length)}
+        >
+          <EventList items={errorItems} emptyNoun="critical automation events" />
+        </Panel>
+      </article>
+    </div>
   );
 }

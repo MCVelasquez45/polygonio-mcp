@@ -118,24 +118,24 @@ export function PromotionGatePanel({ sessionId, strategyId, symbol = 'ES', onPro
 const styles = `
   .promotion-gate {
     padding: 1.5rem;
-    color: #e5e5e5;
-    background: #0a0a0f;
+    color: #e9edf6;
+    background: #020617;
     height: 100%;
     overflow-y: auto;
   }
   .gate-header {
     margin-bottom: 1.2rem;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid #1e293b;
     padding-bottom: 1rem;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: 1rem;
   }
-  .header-content h2 { margin: 0 0 0.7rem; font-size: 1.2rem; }
-  .promotion-path { display: flex; align-items: center; gap: 0.5rem; color: #9ca3af; }
-  .path-node { background: #1f2937; padding: 0.25rem 0.7rem; border-radius: 6px; }
-  .path-node.live { background: rgba(16,185,129,0.12); color: #10b981; }
+  .header-content h2 { margin: 0 0 0.7rem; font-size: 1.2rem; color: #e9edf6; }
+  .promotion-path { display: flex; align-items: center; gap: 0.5rem; color: #94a3b8; }
+  .path-node { background: #111a2b; padding: 0.25rem 0.7rem; border-radius: 6px; border: 1px solid #1e293b; }
+  .path-node.live { background: rgba(53,210,154,0.12); color: #35d29a; border-color: rgba(53,210,154,0.35); }
   .header-actions { display: flex; gap: 0.5rem; }
   .btn-recheck, .btn-promote {
     border: none;
@@ -144,31 +144,31 @@ const styles = `
     cursor: pointer;
     font-size: 0.8rem;
   }
-  .btn-recheck { background: #334155; color: #fff; }
-  .btn-promote { background: #10b981; color: #fff; }
+  .btn-recheck { background: #111a2b; color: #e9edf6; border: 1px solid #1e293b; }
+  .btn-promote { background: #f5a623; color: #020617; }
   .btn-recheck:disabled, .btn-promote:disabled { opacity: 0.45; cursor: not-allowed; }
-  .notice { margin-bottom: 1rem; color: #9ca3af; font-size: 0.85rem; }
-  .notice.error { color: #fca5a5; }
-  .section { background: #15151a; border: 1px solid #333; border-radius: 10px; padding: 1rem; }
+  .notice { margin-bottom: 1rem; color: #94a3b8; font-size: 0.85rem; }
+  .notice.error { color: #f87171; }
+  .section { background: #0b1220; border: 1px solid #1e293b; border-radius: 12px; padding: 1rem; }
   .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; }
-  .section h3 { margin: 0; color: #9ca3af; font-size: 0.85rem; }
-  .status-label { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 999px; }
-  .status-label.passed { color: #10b981; background: rgba(16,185,129,0.15); }
-  .status-label.failed { color: #ef4444; background: rgba(239,68,68,0.15); }
+  .section h3 { margin: 0; color: #64748b; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .status-label { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 999px; font-variant-numeric: tabular-nums; }
+  .status-label.passed { color: #35d29a; background: rgba(53,210,154,0.15); }
+  .status-label.failed { color: #f87171; background: rgba(248,113,113,0.15); }
   .checks-list { display: grid; gap: 0.6rem; }
   .check-item {
     display: grid;
     grid-template-columns: 24px 1fr auto auto;
     gap: 0.6rem;
     align-items: center;
-    background: rgba(255,255,255,0.02);
+    background: #111a2b;
     border-radius: 6px;
     padding: 0.55rem;
   }
-  .check-icon { font-weight: 700; color: #10b981; }
-  .check-label { color: #d1d5db; font-size: 0.85rem; }
-  .check-value { font-family: monospace; font-size: 0.8rem; }
-  .check-value.passed { color: #10b981; }
-  .check-value.failed { color: #ef4444; }
-  .threshold { color: #6b7280; font-size: 0.75rem; }
+  .check-icon { font-weight: 700; color: #35d29a; }
+  .check-label { color: #94a3b8; font-size: 0.85rem; }
+  .check-value { font-family: monospace; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+  .check-value.passed { color: #35d29a; }
+  .check-value.failed { color: #f87171; }
+  .threshold { color: #64748b; font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 `;
