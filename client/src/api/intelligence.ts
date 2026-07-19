@@ -381,6 +381,7 @@ export type DecisionJournalEntry = {
     marketRegime?: string | null;
   };
   evaluation: {
+    signal?: string | null;
     signalStrength?: number | null;
     confidence?: number | null;
     flowScore?: number | null;
@@ -404,6 +405,31 @@ export type DecisionJournalEntry = {
     existingPositions?: number | null;
     watchlistRank?: number | null;
   };
+  marketSnapshot?: {
+    underlying?: string | null;
+    underlyingPrice?: number | null;
+    bid?: number | null;
+    ask?: number | null;
+    mark?: number | null;
+    spread?: number | null;
+    iv?: number | null;
+    delta?: number | null;
+    volume?: number | null;
+    openInterest?: number | null;
+    dte?: number | null;
+    quoteTimestamp?: string | null;
+    marketSession?: string | null;
+  };
+  contractSnapshot?: {
+    contractSymbol?: string | null;
+    strike?: number | null;
+    expiration?: string | null;
+    type?: string | null;
+    contractScore?: number | null;
+    liquidityScore?: number | null;
+    spreadPct?: number | null;
+    scoreComponents?: Record<string, unknown> | null;
+  };
   decision: {
     decision: 'BUY' | 'SELL' | 'SKIP' | 'REJECT' | 'EXIT' | 'CANCEL' | 'EMERGENCY_STOP' | 'NO_ACTION';
     approved: boolean;
@@ -414,10 +440,42 @@ export type DecisionJournalEntry = {
   };
   riskSnapshot: {
     positionSize?: number | null;
+    buyingPowerUsed?: number | null;
     riskPercent?: number | null;
     maxLoss?: number | null;
     estimatedReward?: number | null;
     estimatedRR?: number | null;
+    quantity?: number | null;
+    entryPrice?: number | null;
+    limitPrice?: number | null;
+    orderType?: string | null;
+    timeInForce?: string | null;
+  };
+  riskChecks?: Array<{
+    name: string;
+    passed?: boolean | null;
+    observed?: number | string | boolean | null;
+    limit?: number | string | null;
+    reason?: string | null;
+    detail?: string | null;
+  }>;
+  reasonSummary?: {
+    primaryReason?: string | null;
+    supportingReasons?: string[];
+    humanSummary?: string | null;
+    machineCodes?: string[];
+  };
+  aiContext?: {
+    status?: 'AI_NOT_USED' | 'USED' | 'UNAVAILABLE' | 'NOT_RECORDED';
+    recommendation?: string | null;
+    confidence?: number | null;
+    summary?: string | null;
+    explanation?: string | null;
+    promptVersion?: string | null;
+    modelUsed?: string | null;
+  };
+  dataAvailability?: {
+    fields?: Record<string, 'AVAILABLE' | 'UNAVAILABLE' | 'NOT_APPLICABLE' | 'NOT_RECORDED'>;
   };
   executionReference: {
     orderIntentId?: string | null;

@@ -68,6 +68,30 @@ const controller: ControllerRuntime = {
   lastCompletedWindowKey: null,
 };
 
+async function captureDecisionJournalLive(automationSessionId: string): Promise<void> {
+  try {
+    const { captureDecisionJournalForAutomationSession } = await import('../../intelligence/services/decisionJournal.service');
+    const results = await captureDecisionJournalForAutomationSession(automationSessionId);
+    logAutomationEvent({
+      service: 'scheduler',
+      event: 'DECISION_JOURNAL_CAPTURED',
+      automationSessionId,
+      payload: {
+        generated: results.filter(result => !result.idempotent).length,
+        existing: results.filter(result => result.idempotent).length,
+      },
+    });
+  } catch (error: any) {
+    logAutomationEvent({
+      service: 'scheduler',
+      event: 'DECISION_JOURNAL_CAPTURE_FAILED',
+      severity: 'warning',
+      automationSessionId,
+      payload: { error: String(error?.message ?? error) },
+    });
+  }
+}
+
 /** The universe evaluation → Approved Evaluation Request. Never submits. */
 export type EvaluateSession = (
   sessionId: string,
@@ -87,12 +111,14 @@ async function defaultEvaluateSession(
     // launch-authorized path under the Options Advanced entitlement.
     const { processOptionsFlowTick } = await import('./optionsFlowUniverseEvaluator.service');
     const { orderIntent, outcomeLabel } = await processOptionsFlowTick(sessionId, adapter);
+    await captureDecisionJournalLive(sessionId);
     return { approvedIntentId: orderIntent ? String(orderIntent._id) : null, outcome: outcomeLabel };
   }
   // EQUITY_MOMENTUM: the underlying-bar strategy (unauthorized under the current
   // plan; warned at startup, retained for entitlements that include stock intraday).
   const { processUniverseTick } = await import('./universeTickProcessor.service');
   const { evaluation, orderIntent } = await processUniverseTick(sessionId, adapter);
+  await captureDecisionJournalLive(sessionId);
   return { approvedIntentId: orderIntent ? String(orderIntent._id) : null, outcome: evaluation.outcome };
 }
 

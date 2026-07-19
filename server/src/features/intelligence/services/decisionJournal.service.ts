@@ -10,13 +10,16 @@ import { TradingSessionModel } from '../models/tradingSession.model';
 import { TradeReportModel } from '../models/tradeReport.model';
 import {
   DecisionJournalModel,
+  type DataAvailabilityStatus,
   type DecisionAction,
   type DecisionJournalDocument,
   type DecisionJournalHydratedDocument,
+  type DecisionRiskCheck,
   type DecisionJournalWarning,
   type DecisionTimelineEvent,
   type DecisionType,
 } from '../models/decisionJournal.model';
+import { captureSessionProgress } from './tradingSessionCapture.service';
 
 const GENERATOR_VERSION = 'decision-journal-v1';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -93,6 +96,14 @@ function evidenceWindowForSession(session: any): { start: Date; end: Date } {
 function sourceQuery(session: any, dateField: string, window: { start: Date; end: Date }) {
   const dateClause = { [dateField]: { $gte: window.start, $lt: window.end } };
   return session.automationSessionId ? { automationSessionId: session.automationSessionId, ...dateClause } : dateClause;
+}
+
+function multiDateSourceQuery(session: any, dateFields: string[], window: { start: Date; end: Date }) {
+  const inWindow = { $gte: window.start, $lt: window.end };
+  const dateClause = { $or: dateFields.map(field => ({ [field]: inWindow })) };
+  return session.automationSessionId
+    ? { $and: [{ automationSessionId: session.automationSessionId }, dateClause] }
+    : dateClause;
 }
 
 function positionSourceQuery(session: any, window: { start: Date; end: Date }) {
@@ -191,6 +202,7 @@ function timelineEvent(
 
 function defaultEvaluation(overrides: Partial<DecisionDraft['evaluation']> = {}): DecisionDraft['evaluation'] {
   return {
+    signal: null,
     signalStrength: null,
     confidence: null,
     flowScore: null,
@@ -224,22 +236,192 @@ function defaultInputs(overrides: Partial<DecisionDraft['inputs']> = {}): Decisi
 function defaultRiskSnapshot(overrides: Partial<DecisionDraft['riskSnapshot']> = {}): DecisionDraft['riskSnapshot'] {
   return {
     positionSize: null,
+    buyingPowerUsed: null,
     riskPercent: null,
     maxLoss: null,
     estimatedReward: null,
     estimatedRR: null,
+    quantity: null,
+    entryPrice: null,
+    limitPrice: null,
+    orderType: null,
+    timeInForce: null,
     ...overrides,
   };
+}
+
+function defaultMarketSnapshot(overrides: Partial<DecisionDraft['marketSnapshot']> = {}): DecisionDraft['marketSnapshot'] {
+  return {
+    underlying: null,
+    underlyingPrice: null,
+    bid: null,
+    ask: null,
+    mark: null,
+    spread: null,
+    iv: null,
+    delta: null,
+    volume: null,
+    openInterest: null,
+    dte: null,
+    quoteTimestamp: null,
+    marketSession: null,
+    ...overrides,
+  };
+}
+
+function defaultContractSnapshot(overrides: Partial<DecisionDraft['contractSnapshot']> = {}): DecisionDraft['contractSnapshot'] {
+  return {
+    contractSymbol: null,
+    strike: null,
+    expiration: null,
+    type: null,
+    contractScore: null,
+    liquidityScore: null,
+    spreadPct: null,
+    scoreComponents: null,
+    ...overrides,
+  };
+}
+
+function defaultAiContext(): DecisionDraft['aiContext'] {
+  return {
+    status: 'AI_NOT_USED',
+    recommendation: null,
+    confidence: null,
+    summary: null,
+    explanation: null,
+    promptVersion: null,
+    modelUsed: null,
+  };
+}
+
+function dataStatus(value: unknown): DataAvailabilityStatus {
+  if (value === 'NOT_APPLICABLE') return 'NOT_APPLICABLE';
+  if (value === 'NOT_RECORDED') return 'NOT_RECORDED';
+  if (value == null || (Array.isArray(value) && value.length === 0)) return 'UNAVAILABLE';
+  return 'AVAILABLE';
 }
 
 function evidenceQuality(fields: Record<string, unknown>, warnings: DecisionJournalWarning[] = []) {
   const persistedFields: string[] = [];
   const missingFields: string[] = [];
   for (const [key, value] of Object.entries(fields)) {
-    if (value == null || (Array.isArray(value) && value.length === 0)) missingFields.push(key);
-    else persistedFields.push(key);
+    if (dataStatus(value) === 'AVAILABLE') persistedFields.push(key);
+    else missingFields.push(key);
   }
   return { persistedFields: persistedFields.sort(), missingFields: missingFields.sort(), warnings };
+}
+
+function availability(fields: Record<string, unknown>): DecisionDraft['dataAvailability'] {
+  const statuses: Record<string, DataAvailabilityStatus> = {};
+  for (const [key, value] of Object.entries(fields)) statuses[key] = dataStatus(value);
+  return { fields: statuses };
+}
+
+function reasonSummary(reasonCodes: string[], decisionType: DecisionType, extra: string[] = []): DecisionDraft['reasonSummary'] {
+  const machineCodes = unique(reasonCodes.length ? reasonCodes : [decisionType]);
+  const supportingReasons = unique([...machineCodes.map(reasonText), ...extra]);
+  const primaryReason = supportingReasons[0] ?? reasonText(decisionType);
+  return {
+    primaryReason,
+    supportingReasons,
+    humanSummary: `${decisionType.replace(/_/g, ' ').toLowerCase()}: ${primaryReason}`,
+    machineCodes,
+  };
+}
+
+function featureSnapshot(candidate: any | null): Record<string, unknown> {
+  return recordOrNull(candidate?.marketDataHealth?.featureSnapshot) ?? {};
+}
+
+function signalFor(candidate: any | null, symbolRecord?: any | null): string | null {
+  const direct = candidate?.signalDirection ?? symbolRecord?.signalDirection ?? symbolRecord?.direction;
+  if (typeof direct === 'string' && direct) return direct;
+  if (candidate?.status === 'NO_TRADE') return 'NO_TRADE';
+  return null;
+}
+
+function confidenceFor(candidate: any | null, symbolRecord?: any | null): number | null {
+  return (
+    numberOrNull(candidate?.marketDataHealth?.score) ??
+    numberOrNull(symbolRecord?.confidence) ??
+    numberOrNull(conditions(candidate).confidence)
+  );
+}
+
+function flowScoreFor(candidate: any | null, symbolRecord?: any | null): number | null {
+  return numberOrNull(candidate?.marketDataHealth?.score) ?? numberOrNull(symbolRecord?.confidence) ?? numberOrNull(conditions(candidate).flowScore);
+}
+
+function marketSessionFromClock(clock: unknown): string | null {
+  const record = recordOrNull(clock);
+  const state = record?.state;
+  return typeof state === 'string' ? state : null;
+}
+
+function marketSnapshot(args: {
+  candidate?: any | null;
+  selection?: any | null;
+  selected?: any | null;
+  intent?: any | null;
+  position?: any | null;
+  universe?: any | null;
+}): DecisionDraft['marketSnapshot'] {
+  const selected = args.selected ?? selectedContract(args.selection);
+  const spread =
+    numberOrNull(selected?.spreadDollars) ??
+    (numberOrNull(selected?.ask) != null && numberOrNull(selected?.bid) != null
+      ? Number((numberOrNull(selected?.ask)! - numberOrNull(selected?.bid)!).toFixed(4))
+      : null);
+  return defaultMarketSnapshot({
+    underlying: args.candidate?.underlying ?? args.selection?.underlying ?? args.intent?.underlying ?? args.position?.underlying ?? args.universe?.selectedSymbol ?? null,
+    underlyingPrice: numberOrNull(args.selection?.underlyingPrice),
+    bid: numberOrNull(selected?.bid),
+    ask: numberOrNull(selected?.ask),
+    mark: numberOrNull(selected?.mid),
+    spread,
+    iv: numberOrNull(selected?.iv),
+    delta: numberOrNull(selected?.delta),
+    volume: numberOrNull(selected?.volume),
+    openInterest: numberOrNull(selected?.openInterest),
+    dte: numberOrNull(selected?.dte),
+    quoteTimestamp: selected?.quoteTimestamp ? new Date(selected.quoteTimestamp) : null,
+    marketSession: marketSessionFromClock(args.candidate?.marketClockDecision ?? args.universe?.marketClockDecision),
+  });
+}
+
+function contractSnapshot(selected: any | null): DecisionDraft['contractSnapshot'] {
+  const components = recordOrNull(selected?.scoreComponents);
+  return defaultContractSnapshot({
+    contractSymbol: selected?.symbol ?? null,
+    strike: numberOrNull(selected?.strike),
+    expiration: typeof selected?.expiration === 'string' ? selected.expiration : null,
+    type: typeof selected?.type === 'string' ? selected.type : null,
+    contractScore: numberOrNull(selected?.score),
+    liquidityScore: numberOrNull(components?.liquidity),
+    spreadPct: numberOrNull(selected?.spreadPct),
+    scoreComponents: components,
+  });
+}
+
+function riskChecks(risk: any | null): DecisionRiskCheck[] {
+  const checks = Array.isArray(risk?.checks) ? risk.checks : [];
+  return checks.map((check: any) => ({
+    name: String(check?.name ?? 'unknown'),
+    passed: typeof check?.passed === 'boolean' ? check.passed : null,
+    observed: (check?.observed ?? null) as any,
+    limit: (check?.limit ?? null) as any,
+    reason: typeof check?.detail === 'string' ? check.detail : null,
+    detail: typeof check?.detail === 'string' ? check.detail : null,
+  }));
+}
+
+function symbolRecordForCandidate(evaluations: any[], candidateId: string): any | null {
+  for (const evaluation of evaluations) {
+    const match = (evaluation.symbolResults ?? []).find((item: any) => item?.candidateId === candidateId);
+    if (match) return match;
+  }
+  return null;
 }
 
 function decisionState(type: DecisionType, reasonCodes: string[]): DecisionDraft['decision'] {
@@ -293,12 +475,18 @@ function baseDraft(args: {
   reasonCodes?: string[];
   evaluation?: Partial<DecisionDraft['evaluation']>;
   inputs?: Partial<DecisionDraft['inputs']>;
+  marketSnapshot?: Partial<DecisionDraft['marketSnapshot']>;
+  contractSnapshot?: Partial<DecisionDraft['contractSnapshot']>;
   riskSnapshot?: Partial<DecisionDraft['riskSnapshot']>;
+  riskChecks?: DecisionRiskCheck[];
+  reasonSummary?: Partial<DecisionDraft['reasonSummary']>;
+  aiContext?: DecisionDraft['aiContext'];
   evidenceFields?: Record<string, unknown>;
   warnings?: DecisionJournalWarning[];
   timeline?: DecisionTimelineEvent[];
 }): DecisionDraft {
   const reasonCodes = unique(args.reasonCodes?.length ? args.reasonCodes : [args.decisionType]);
+  const evidenceFields = args.evidenceFields ?? {};
   return {
     decisionId: args.decisionId,
     sessionId: args.session?.sessionId ?? null,
@@ -321,14 +509,23 @@ function baseDraft(args: {
     },
     evaluation: defaultEvaluation(args.evaluation),
     inputs: defaultInputs(args.inputs),
+    marketSnapshot: defaultMarketSnapshot(args.marketSnapshot),
+    contractSnapshot: defaultContractSnapshot(args.contractSnapshot),
     decision: decisionState(args.decisionType, reasonCodes),
     riskSnapshot: defaultRiskSnapshot(args.riskSnapshot),
+    riskChecks: args.riskChecks ?? [],
+    reasonSummary: {
+      ...reasonSummary(reasonCodes, args.decisionType),
+      ...(args.reasonSummary ?? {}),
+    },
+    aiContext: args.aiContext ?? defaultAiContext(),
+    dataAvailability: availability(evidenceFields),
     executionReference: {
       orderIntentId: args.orderIntentId ?? null,
       brokerOrderId: args.brokerOrderId ?? null,
       positionId: args.positionId ?? null,
     },
-    evidenceQuality: evidenceQuality(args.evidenceFields ?? {}, args.warnings ?? []),
+    evidenceQuality: evidenceQuality(evidenceFields, args.warnings ?? []),
     timeline: args.timeline ?? [],
     generation: {
       schemaVersion: 1,
@@ -427,16 +624,33 @@ function findTradeReportForPosition(position: any | null, reports: any[]): any |
 function riskNumbers(risk: any | null): Partial<DecisionDraft['riskSnapshot']> {
   const outputs = recordOrNull(risk?.sizing?.outputs) ?? {};
   const inputs = recordOrNull(risk?.sizing?.inputs) ?? {};
+  const quantity =
+    numberOrNull(outputs.quantity) ??
+    numberOrNull(outputs.contracts) ??
+    numberOrNull(outputs.positionSize);
+  const plannedLossPerContract = numberOrNull(outputs.plannedLossPerContract);
+  const accountEquity = numberOrNull(inputs.accountEquity);
+  const maxLoss =
+    numberOrNull(outputs.maxLoss) ??
+    numberOrNull(inputs.maxLoss) ??
+    (quantity != null && plannedLossPerContract != null ? Number((quantity * plannedLossPerContract).toFixed(2)) : null);
+  const riskPercent =
+    numberOrNull(outputs.riskPercent) ??
+    numberOrNull(outputs.riskPct) ??
+    numberOrNull(inputs.riskPercent) ??
+    (maxLoss != null && accountEquity != null && accountEquity > 0 ? Number((maxLoss / accountEquity).toFixed(6)) : null);
   return {
     positionSize:
-      numberOrNull(outputs.quantity) ??
-      numberOrNull(outputs.contracts) ??
+      quantity ??
       numberOrNull(outputs.positionSize) ??
       numberOrNull(outputs.positionValue),
-    riskPercent: numberOrNull(outputs.riskPercent) ?? numberOrNull(outputs.riskPct) ?? numberOrNull(inputs.riskPercent),
-    maxLoss: numberOrNull(outputs.maxLoss) ?? numberOrNull(inputs.maxLoss),
+    buyingPowerUsed: numberOrNull(outputs.totalPositionCost),
+    riskPercent,
+    maxLoss,
     estimatedReward: numberOrNull(outputs.estimatedReward) ?? numberOrNull(outputs.reward),
     estimatedRR: numberOrNull(outputs.estimatedRR) ?? numberOrNull(outputs.rewardRiskRatio),
+    quantity,
+    entryPrice: numberOrNull(inputs.selectedAsk),
   };
 }
 
@@ -453,6 +667,33 @@ function buildUniverseDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
   return bundle.universeEvaluations.map(evaluation => {
     const type = universeDecisionType(evaluation);
     const selected = evaluation.ranking?.find((item: any) => item?.symbol === evaluation.selectedSymbol) ?? evaluation.ranking?.[0] ?? null;
+    const symbolRecord = (evaluation.symbolResults ?? []).find((item: any) => item?.symbol === (evaluation.selectedSymbol ?? selected?.symbol)) ?? null;
+    const selectedCandidateId = evaluation.selectedCandidateId ?? selected?.candidateId ?? null;
+    const candidate = selectedCandidateId ? bundle.candidates.find(item => idOf(item) === selectedCandidateId) ?? null : null;
+    const selection = selectedCandidateId ? bundle.selections.find(item => item.tradeCandidateId === selectedCandidateId) ?? null : null;
+    const selectedContractRecord = selectedContract(selection);
+    const risk = selectedCandidateId ? bundle.riskDecisions.find(item => item.tradeCandidateId === selectedCandidateId) ?? null : null;
+    const intent = evaluation.orderIntentId ? bundle.orderIntents.find(item => idOf(item) === evaluation.orderIntentId) ?? null : null;
+    const riskSnap = { ...riskNumbers(risk), limitPrice: numberOrNull(intent?.limitPrice), orderType: intent?.orderType ?? null, timeInForce: intent?.timeInForce ?? null };
+    const market = marketSnapshot({ candidate, selection, selected: selectedContractRecord, intent, universe: evaluation });
+    const contract = contractSnapshot(selectedContractRecord);
+    const checks = riskChecks(risk);
+    const signal = signalFor(candidate, symbolRecord);
+    const evidenceFields = {
+      outcome: evaluation.outcome,
+      reasonCodes: evaluation.reasonCodes,
+      ranking: evaluation.ranking,
+      symbolResults: evaluation.symbolResults,
+      marketClockDecision: evaluation.marketClockDecision,
+      signal,
+      confidence: confidenceFor(candidate, symbolRecord),
+      marketSnapshot: market.bid != null || market.ask != null ? market : null,
+      contractSnapshot: contract.contractSymbol,
+      riskChecks: checks,
+      riskSnapshot: riskSnap.positionSize,
+      orderIntent: intent ? idOf(intent) : null,
+      aiContext: 'AI_NOT_USED',
+    };
     return baseDraft({
       decisionId: `decision:universe:${idOf(evaluation)}`,
       session: bundle.session,
@@ -468,7 +709,10 @@ function buildUniverseDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       orderIntentId: evaluation.orderIntentId ?? null,
       reasonCodes: [...(evaluation.reasonCodes ?? []), ...(evaluation.riskReasonCodes ?? [])],
       evaluation: {
+        signal,
         signalStrength: numberOrNull(selected?.opportunityScore),
+        confidence: confidenceFor(candidate, symbolRecord),
+        flowScore: flowScoreFor(candidate, symbolRecord),
         riskScore: evaluation.riskApproved === true ? 1 : evaluation.riskApproved === false ? 0 : null,
         candidateRank: numberOrNull(selected?.rank),
       },
@@ -479,13 +723,11 @@ function buildUniverseDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
         marketClock: recordOrNull(evaluation.marketClockDecision),
         watchlistRank: numberOrNull(selected?.rank),
       },
-      evidenceFields: {
-        outcome: evaluation.outcome,
-        reasonCodes: evaluation.reasonCodes,
-        ranking: evaluation.ranking,
-        symbolResults: evaluation.symbolResults,
-        marketClockDecision: evaluation.marketClockDecision,
-      },
+      marketSnapshot: market,
+      contractSnapshot: contract,
+      riskSnapshot: riskSnap,
+      riskChecks: checks,
+      evidenceFields,
       timeline: timelineEvent(evaluation.evaluatedAt ?? evaluation.createdAt, `Universe decision ${evaluation.outcome}`, 'UniverseEvaluation', idOf(evaluation), type === 'BUY_APPROVED' ? 'info' : 'warning'),
     });
   });
@@ -501,8 +743,34 @@ function buildCandidateDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
     const report = findTradeReportForPosition(position, bundle.tradeReports);
     const selected = selectedContract(selection);
     const ranking = rankingForCandidate(bundle.universeEvaluations, candidateId);
+    const symbolRecord = symbolRecordForCandidate(bundle.universeEvaluations, candidateId);
     const c = conditions(candidate);
+    const features = featureSnapshot(candidate);
     const decisionType = candidateDecisionType(candidate);
+    const riskSnap = { ...riskNumbers(risk), limitPrice: numberOrNull(intent?.limitPrice), orderType: intent?.orderType ?? null, timeInForce: intent?.timeInForce ?? null };
+    const market = marketSnapshot({ candidate, selection, selected, intent, position });
+    const contract = contractSnapshot(selected);
+    const checks = riskChecks(risk);
+    const signal = signalFor(candidate, symbolRecord);
+    const evidenceFields = {
+      candidateStatus: candidate.status,
+      reasonCodes: candidate.reasonCodes,
+      indicatorSnapshot: candidate.indicatorSnapshot,
+      optionsFlowFeatureSnapshot: Object.keys(features).length ? features : null,
+      conditions: candidate.conditions,
+      marketClockDecision: candidate.marketClockDecision,
+      selection: selection ? idOf(selection) : null,
+      riskDecision: risk ? idOf(risk) : null,
+      orderIntent: intent ? idOf(intent) : null,
+      signal,
+      confidence: confidenceFor(candidate, symbolRecord),
+      flowScore: flowScoreFor(candidate, symbolRecord),
+      marketSnapshot: market.bid != null || market.ask != null ? market : null,
+      contractSnapshot: contract.contractSymbol,
+      riskChecks: checks,
+      riskSnapshot: riskSnap.positionSize,
+      aiContext: 'AI_NOT_USED',
+    };
     return baseDraft({
       decisionId: `decision:candidate:${candidateId}`,
       session: bundle.session,
@@ -521,8 +789,9 @@ function buildCandidateDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       positionId: position ? idOf(position) : null,
       reasonCodes: candidate.reasonCodes?.length ? candidate.reasonCodes : [candidate.status],
       evaluation: {
-        confidence: numberOrNull(c.confidence),
-        flowScore: numberOrNull(c.flowScore),
+        signal,
+        confidence: confidenceFor(candidate, symbolRecord),
+        flowScore: flowScoreFor(candidate, symbolRecord),
         momentumScore: numberOrNull(c.momentumScore),
         trendScore: numberOrNull(c.trendScore),
         marketRegime: typeof c.regime === 'string' ? c.regime : null,
@@ -540,17 +809,11 @@ function buildCandidateDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
         watchlistRank: numberOrNull(ranking?.rank),
         ...riskInputNumbers(risk),
       },
-      riskSnapshot: riskNumbers(risk),
-      evidenceFields: {
-        candidateStatus: candidate.status,
-        reasonCodes: candidate.reasonCodes,
-        indicatorSnapshot: candidate.indicatorSnapshot,
-        conditions: candidate.conditions,
-        marketClockDecision: candidate.marketClockDecision,
-        selection: selection ? idOf(selection) : null,
-        riskDecision: risk ? idOf(risk) : null,
-        orderIntent: intent ? idOf(intent) : null,
-      },
+      marketSnapshot: market,
+      contractSnapshot: contract,
+      riskSnapshot: riskSnap,
+      riskChecks: checks,
+      evidenceFields,
       timeline: timelineEvent(candidate.barTimestamp ?? candidate.createdAt, `Candidate ${candidate.status}`, 'TradeCandidate', candidateId, decisionType === 'BUY_APPROVED' ? 'info' : 'warning'),
     });
   });
@@ -561,6 +824,22 @@ function buildSelectionDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
     const candidate = bundle.candidates.find(item => idOf(item) === selection.tradeCandidateId) ?? null;
     const selected = selectedContract(selection);
     const decisionType: DecisionType = selected ? 'BUY_APPROVED' : 'BUY_REJECTED';
+    const symbolRecord = symbolRecordForCandidate(bundle.universeEvaluations, selection.tradeCandidateId);
+    const signal = signalFor(candidate, symbolRecord);
+    const market = marketSnapshot({ candidate, selection, selected });
+    const contract = contractSnapshot(selected);
+    const evidenceFields = {
+      consideredCount: selection.consideredCount,
+      passedCount: selection.passedCount,
+      selected: selected?.symbol,
+      noSelectionReason: selection.noSelectionReason,
+      rejectedCandidates: (selection.candidates ?? []).filter((item: any) => item?.passed === false).length,
+      signal,
+      confidence: confidenceFor(candidate, symbolRecord),
+      marketSnapshot: market.bid != null || market.ask != null ? market : null,
+      contractSnapshot: contract.contractSymbol,
+      aiContext: 'AI_NOT_USED',
+    };
     return baseDraft({
       decisionId: `decision:selection:${idOf(selection)}`,
       session: bundle.session,
@@ -574,7 +853,9 @@ function buildSelectionDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       strategy: candidate?.strategyVersionId ?? null,
       reasonCodes: selected ? ['CONTRACT_SELECTED'] : [selection.noSelectionReason ?? 'NO_CONTRACT_SELECTED'],
       evaluation: {
-        confidence: numberOrNull(conditions(candidate).confidence),
+        signal,
+        confidence: confidenceFor(candidate, symbolRecord),
+        flowScore: flowScoreFor(candidate, symbolRecord),
         signalStrength: numberOrNull(selected?.score),
         marketRegime: typeof conditions(candidate).regime === 'string' ? String(conditions(candidate).regime) : null,
       },
@@ -585,13 +866,9 @@ function buildSelectionDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
         iv: numberOrNull(selected?.iv),
         delta: numberOrNull(selected?.delta),
       },
-      evidenceFields: {
-        consideredCount: selection.consideredCount,
-        passedCount: selection.passedCount,
-        selected: selected?.symbol,
-        noSelectionReason: selection.noSelectionReason,
-        rejectedCandidates: (selection.candidates ?? []).filter((item: any) => item?.passed === false).length,
-      },
+      marketSnapshot: market,
+      contractSnapshot: contract,
+      evidenceFields,
       timeline: timelineEvent(selection.createdAt ?? selection.chainFetchedAt, selected ? 'Contract selected' : 'No contract selected', 'ContractSelection', idOf(selection), selected ? 'info' : 'warning'),
     });
   });
@@ -605,6 +882,26 @@ function buildRiskDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
     const intent = findEntryIntent(candidate, bundle.orderIntents);
     const position = findPositionForIntent(intent, bundle.positions);
     const report = findTradeReportForPosition(position, bundle.tradeReports);
+    const symbolRecord = symbolRecordForCandidate(bundle.universeEvaluations, risk.tradeCandidateId);
+    const signal = signalFor(candidate, symbolRecord);
+    const riskSnap = { ...riskNumbers(risk), limitPrice: numberOrNull(intent?.limitPrice), orderType: intent?.orderType ?? null, timeInForce: intent?.timeInForce ?? null };
+    const market = marketSnapshot({ candidate, selection, selected, intent, position });
+    const contract = contractSnapshot(selected);
+    const checks = riskChecks(risk);
+    const evidenceFields = {
+      approved: risk.approved,
+      reasonCodes: risk.reasonCodes,
+      checks: risk.checks,
+      sizing: risk.sizing,
+      signal,
+      confidence: confidenceFor(candidate, symbolRecord),
+      marketSnapshot: market.bid != null || market.ask != null ? market : null,
+      contractSnapshot: contract.contractSymbol,
+      riskChecks: checks,
+      riskSnapshot: riskSnap.positionSize,
+      orderIntent: intent ? idOf(intent) : null,
+      aiContext: 'AI_NOT_USED',
+    };
     return baseDraft({
       decisionId: `decision:risk:${idOf(risk)}`,
       session: bundle.session,
@@ -623,7 +920,9 @@ function buildRiskDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       positionId: position ? idOf(position) : null,
       reasonCodes: risk.reasonCodes?.length ? risk.reasonCodes : [risk.approved ? 'RISK_APPROVED' : 'RISK_REJECTED'],
       evaluation: {
-        confidence: numberOrNull(conditions(candidate).confidence),
+        signal,
+        confidence: confidenceFor(candidate, symbolRecord),
+        flowScore: flowScoreFor(candidate, symbolRecord),
         riskScore: risk.approved ? 1 : 0,
         marketRegime: typeof conditions(candidate).regime === 'string' ? String(conditions(candidate).regime) : null,
       },
@@ -635,13 +934,11 @@ function buildRiskDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
         delta: numberOrNull(selected?.delta),
         ...riskInputNumbers(risk),
       },
-      riskSnapshot: riskNumbers(risk),
-      evidenceFields: {
-        approved: risk.approved,
-        reasonCodes: risk.reasonCodes,
-        checks: risk.checks,
-        sizing: risk.sizing,
-      },
+      marketSnapshot: market,
+      contractSnapshot: contract,
+      riskSnapshot: riskSnap,
+      riskChecks: checks,
+      evidenceFields,
       timeline: timelineEvent(risk.decidedAt ?? risk.createdAt, risk.approved ? 'Risk approved' : 'Risk rejected', 'RiskDecision', idOf(risk), risk.approved ? 'info' : 'warning'),
     });
   });
@@ -651,6 +948,11 @@ function buildIntentDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
   return bundle.orderIntents.map(intent => {
     const position = findPositionForIntent(intent, bundle.positions);
     const report = findTradeReportForPosition(position, bundle.tradeReports);
+    const candidate = position?.tradeCandidateId ? bundle.candidates.find(item => idOf(item) === position.tradeCandidateId) ?? null : null;
+    const selection = position?.contractSelectionId ? bundle.selections.find(item => idOf(item) === position.contractSelectionId) ?? null : null;
+    const risk = position?.riskDecisionId ? bundle.riskDecisions.find(item => idOf(item) === position.riskDecisionId) ?? null : null;
+    const selected = selectedContract(selection);
+    const symbolRecord = candidate ? symbolRecordForCandidate(bundle.universeEvaluations, idOf(candidate)) : null;
     const isExit = intent.intentType === 'EXIT';
     let decisionType: DecisionType = isExit ? 'SELL_APPROVED' : 'BUY_APPROVED';
     if (intent.status === 'BROKER_REJECTED' || intent.status === 'FAILED' || intent.status === 'MANUAL_REVIEW') {
@@ -662,6 +964,31 @@ function buildIntentDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       isExit ? position?.exitReason : null,
       isExit && position?.exitReason ? 'EXIT_TRIGGERED' : null,
     ]);
+    const riskSnap = {
+      ...riskNumbers(risk),
+      positionSize: numberOrNull(intent.quantity),
+      quantity: numberOrNull(intent.quantity),
+      limitPrice: numberOrNull(intent.limitPrice),
+      orderType: intent.orderType ?? null,
+      timeInForce: intent.timeInForce ?? null,
+      entryPrice: numberOrNull(intent.limitPrice),
+    };
+    const market = marketSnapshot({ candidate, selection, selected, intent, position });
+    const contract = contractSnapshot(selected);
+    const checks = riskChecks(risk);
+    const signal = signalFor(candidate, symbolRecord);
+    const evidenceFields = {
+      intentType: intent.intentType,
+      direction: intent.direction,
+      quantity: intent.quantity,
+      limitPrice: intent.limitPrice,
+      status: intent.status,
+      idempotencyKey: intent.idempotencyKey ? '[redacted]' : null,
+      marketSnapshot: market.bid != null || market.ask != null ? market : null,
+      contractSnapshot: contract.contractSymbol,
+      riskChecks: checks.length ? checks : 'NOT_APPLICABLE',
+      aiContext: 'AI_NOT_USED',
+    };
     return baseDraft({
       decisionId: `decision:intent:${idOf(intent)}`,
       session: bundle.session,
@@ -679,15 +1006,12 @@ function buildIntentDrafts(bundle: DecisionSourceBundle): DecisionDraft[] {
       brokerOrderId: intent.brokerOrderId ?? null,
       positionId: position ? idOf(position) : null,
       reasonCodes,
-      riskSnapshot: { positionSize: numberOrNull(intent.quantity) },
-      evidenceFields: {
-        intentType: intent.intentType,
-        direction: intent.direction,
-        quantity: intent.quantity,
-        limitPrice: intent.limitPrice,
-        status: intent.status,
-        idempotencyKey: intent.idempotencyKey ? '[redacted]' : null,
-      },
+      evaluation: { signal, confidence: confidenceFor(candidate, symbolRecord), flowScore: flowScoreFor(candidate, symbolRecord) },
+      marketSnapshot: market,
+      contractSnapshot: contract,
+      riskSnapshot: riskSnap,
+      riskChecks: checks,
+      evidenceFields,
       timeline: timelineEvent(intent.createdAt ?? intent.submittedAt, `${intent.intentType} intent ${intent.status}`, 'OrderIntent', idOf(intent), decisionType.endsWith('REJECTED') ? 'warning' : 'info'),
     });
   });
@@ -699,6 +1023,26 @@ function buildPositionExitDrafts(bundle: DecisionSourceBundle): DecisionDraft[] 
     .map(position => {
       const report = findTradeReportForPosition(position, bundle.tradeReports);
       const reasonCodes = unique([position.exitReason, position.overnightReason, position.status]);
+      const entryIntent = bundle.orderIntents.find(intent => idOf(intent) === position.entryIntentId) ?? null;
+      const exitIntent = position.exitIntentId ? bundle.orderIntents.find(intent => idOf(intent) === position.exitIntentId) ?? null : null;
+      const candidate = position.tradeCandidateId ? bundle.candidates.find(item => idOf(item) === position.tradeCandidateId) ?? null : null;
+      const selection = position.contractSelectionId ? bundle.selections.find(item => idOf(item) === position.contractSelectionId) ?? null : null;
+      const selected = selectedContract(selection);
+      const risk = position.riskDecisionId ? bundle.riskDecisions.find(item => idOf(item) === position.riskDecisionId) ?? null : null;
+      const symbolRecord = candidate ? symbolRecordForCandidate(bundle.universeEvaluations, idOf(candidate)) : null;
+      const market = marketSnapshot({ candidate, selection, selected, intent: exitIntent ?? entryIntent, position });
+      const contract = contractSnapshot(selected);
+      const checks = riskChecks(risk);
+      const riskSnap = {
+        ...riskNumbers(risk),
+        positionSize: numberOrNull(position.filledQty),
+        quantity: numberOrNull(position.filledQty),
+        entryPrice: numberOrNull(position.avgEntryPrice),
+        limitPrice: numberOrNull(exitIntent?.limitPrice),
+        orderType: exitIntent?.orderType ?? null,
+        timeInForce: exitIntent?.timeInForce ?? null,
+      };
+      const signal = signalFor(candidate, symbolRecord);
       return baseDraft({
         decisionId: `decision:position-exit:${idOf(position)}`,
         session: bundle.session,
@@ -716,13 +1060,21 @@ function buildPositionExitDrafts(bundle: DecisionSourceBundle): DecisionDraft[] 
         brokerOrderId: position.exitBrokerOrderId ?? null,
         positionId: idOf(position),
         reasonCodes: reasonCodes.length ? reasonCodes : ['EXIT_TRIGGERED'],
-        riskSnapshot: { positionSize: numberOrNull(position.filledQty) },
+        evaluation: { signal, confidence: confidenceFor(candidate, symbolRecord), flowScore: flowScoreFor(candidate, symbolRecord) },
+        marketSnapshot: market,
+        contractSnapshot: contract,
+        riskSnapshot: riskSnap,
+        riskChecks: checks,
         evidenceFields: {
           exitReason: position.exitReason,
           exitPolicy: position.exitPolicy,
           overnightRecoveryRequired: position.overnightRecoveryRequired,
           exitIntentId: position.exitIntentId,
           closedAt: position.closedAt,
+          marketSnapshot: market.bid != null || market.ask != null ? market : null,
+          contractSnapshot: contract.contractSymbol,
+          riskChecks: checks.length ? checks : 'NOT_APPLICABLE',
+          aiContext: 'AI_NOT_USED',
         },
         timeline: timelineEvent(position.exitSubmittedAt ?? position.closedAt ?? position.updatedAt, `Exit decision ${position.exitReason ?? position.status}`, 'AutomationPosition', idOf(position), position.exitReason === 'EMERGENCY_STOP' ? 'critical' : 'warning'),
       });
@@ -791,7 +1143,7 @@ async function loadDecisionSource(session: any): Promise<DecisionSourceBundle> {
     TradeReportModel.find({ sessionId: session.sessionId }).lean(),
     UniverseEvaluationModel.find(sourceQuery(session, 'evaluatedAt', window)).sort({ evaluatedAt: 1 }).lean(),
     TradeCandidateModel.find(sourceQuery(session, 'barTimestamp', window)).sort({ barTimestamp: 1 }).lean(),
-    ContractSelectionModel.find(sourceQuery(session, 'createdAt', window)).sort({ createdAt: 1 }).lean(),
+    ContractSelectionModel.find(multiDateSourceQuery(session, ['createdAt', 'chainFetchedAt'], window)).sort({ chainFetchedAt: 1, createdAt: 1 }).lean(),
     RiskDecisionModel.find(sourceQuery(session, 'decidedAt', window)).sort({ decidedAt: 1 }).lean(),
     OrderIntentModel.find(sourceQuery(session, 'createdAt', window)).sort({ createdAt: 1 }).lean(),
     AutomationPositionModel.find(positionSourceQuery(session, window)).sort({ createdAt: 1 }).lean(),
@@ -838,6 +1190,15 @@ export async function backfillDecisionJournalForSession(sessionId: string): Prom
     },
   });
   return results;
+}
+
+export async function captureDecisionJournalForAutomationSession(automationSessionId: string): Promise<CaptureResult[]> {
+  let session = await TradingSessionModel.findOne({ automationSessionId }).sort({ updatedAt: -1 }).lean();
+  if (!session) {
+    const captured = await captureSessionProgress({ automationSessionId });
+    session = captured.toObject();
+  }
+  return backfillDecisionJournalForSession(session.sessionId);
 }
 
 export async function backfillDecisionJournalForDate(tradingDate: string): Promise<CaptureResult[]> {

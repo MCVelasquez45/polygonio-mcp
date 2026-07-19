@@ -32,7 +32,6 @@ import {
   type TimelineEvent,
 } from './ui';
 import {
-  ABSENT,
   fmtDateTime,
   fmtDecimal,
   fmtNum,
@@ -60,7 +59,46 @@ function outcome(entry: DecisionJournalEntry): { label: string; tone: Tone } {
 }
 
 function display(value: string | null | undefined): string {
-  return value && value.trim() ? value : ABSENT;
+  return value && value.trim() ? value : 'Unavailable';
+}
+
+type Availability = 'AVAILABLE' | 'UNAVAILABLE' | 'NOT_APPLICABLE' | 'NOT_RECORDED';
+
+function availabilityCopy(status?: Availability | null): string {
+  switch (status) {
+    case 'NOT_APPLICABLE':
+      return 'Not Applicable';
+    case 'NOT_RECORDED':
+      return 'Not Recorded';
+    case 'UNAVAILABLE':
+    default:
+      return 'Unavailable';
+  }
+}
+
+function fieldStatus(entry: DecisionJournalEntry, field: string): Availability | null {
+  return entry.dataAvailability?.fields?.[field] ?? null;
+}
+
+function metricValue(
+  entry: DecisionJournalEntry,
+  field: string,
+  value: number | string | null | undefined,
+  formatter: (value: any) => string = String
+): string {
+  if (value == null || value === '') return availabilityCopy(fieldStatus(entry, field));
+  return formatter(value);
+}
+
+function refValue(value: string | null | undefined): string {
+  return value && value.trim() ? value : 'Pending';
+}
+
+function completeness(entry: DecisionJournalEntry): { captured: number; total: number; pct: number } {
+  const captured = entry.evidenceQuality.persistedFields.length;
+  const missing = entry.evidenceQuality.missingFields.length;
+  const total = captured + missing;
+  return { captured, total, pct: total > 0 ? Math.round((captured / total) * 100) : 0 };
 }
 
 export function DecisionJournalPage({ initialEntries = [], loadOnMount = true }: Props) {
@@ -138,6 +176,7 @@ export function DecisionJournalPage({ initialEntries = [], loadOnMount = true }:
   }, [entries, filtered, selectedId]);
 
   const selectedOutcome = selected ? outcome(selected) : null;
+  const selectedCompleteness = selected ? completeness(selected) : null;
 
   return (
     <div className="flex flex-col gap-4 pb-24" data-testid="decision-journal-page">
@@ -323,26 +362,43 @@ export function DecisionJournalPage({ initialEntries = [], loadOnMount = true }:
 
                 {/* KEY METRICS — confidence, signal scores, risk snapshot. */}
                 <MetricStrip cols={6}>
-                  <Metric label="Confidence" value={fmtPct(selected.evaluation.confidence, 1)} emphasis />
-                  <Metric label="Signal" value={fmtNum(selected.evaluation.signalStrength)} />
-                  <Metric label="Flow" value={fmtDecimal(selected.evaluation.flowScore)} />
-                  <Metric label="Momentum" value={fmtDecimal(selected.evaluation.momentumScore)} />
-                  <Metric label="Trend" value={fmtDecimal(selected.evaluation.trendScore)} />
-                  <Metric label="Risk Score" value={fmtDecimal(selected.evaluation.riskScore)} />
+                  <Metric label="Signal" value={metricValue(selected, 'signal', selected.evaluation.signal)} emphasis />
+                  <Metric label="Confidence" value={metricValue(selected, 'confidence', selected.evaluation.confidence, v => fmtPct(v, 1))} />
+                  <Metric label="Flow" value={metricValue(selected, 'flowScore', selected.evaluation.flowScore, fmtDecimal)} />
+                  <Metric label="Momentum" value={metricValue(selected, 'momentumScore', selected.evaluation.momentumScore, fmtDecimal)} />
+                  <Metric label="Trend" value={metricValue(selected, 'trendScore', selected.evaluation.trendScore, fmtDecimal)} />
+                  <Metric label="Risk Score" value={metricValue(selected, 'riskScore', selected.evaluation.riskScore, fmtDecimal)} />
                 </MetricStrip>
 
                 <MetricStrip cols={5}>
-                  <Metric label="Position Size" value={fmtNum(selected.riskSnapshot.positionSize)} />
-                  <Metric label="Risk %" value={fmtPct(selected.riskSnapshot.riskPercent, 2)} />
-                  <Metric label="Max Loss" value={fmtUsd(selected.riskSnapshot.maxLoss)} />
-                  <Metric label="Est. Reward" value={fmtUsd(selected.riskSnapshot.estimatedReward)} />
-                  <Metric label="Reward / Risk" value={fmtDecimal(selected.riskSnapshot.estimatedRR)} />
+                  <Metric label="Position Size" value={metricValue(selected, 'positionSize', selected.riskSnapshot.positionSize, fmtNum)} />
+                  <Metric label="Risk %" value={metricValue(selected, 'riskPercent', selected.riskSnapshot.riskPercent, v => fmtPct(v, 2))} />
+                  <Metric label="Max Loss" value={metricValue(selected, 'maxLoss', selected.riskSnapshot.maxLoss, fmtUsd)} />
+                  <Metric label="Buying Power Used" value={metricValue(selected, 'buyingPowerUsed', selected.riskSnapshot.buyingPowerUsed, fmtUsd)} />
+                  <Metric label="Reward / Risk" value={metricValue(selected, 'estimatedRR', selected.riskSnapshot.estimatedRR, fmtDecimal)} />
                 </MetricStrip>
 
                 {/* REASONS — collapsed, opens by default so the "why" is visible. */}
                 <Panel title="Reason Codes & Reasons" icon={<CheckCircle2 className="h-4 w-4" />}
                   summary={`${selected.decision.reasonCodes.length} code${selected.decision.reasonCodes.length === 1 ? '' : 's'}`}>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="mb-4 rounded-panel border border-intel-line bg-intel-panel2 p-3">
+                    <p className="font-mono text-[10px] uppercase tracking-label text-intel-ink3">Primary Reason</p>
+                    <p className="mt-1 text-sm font-semibold text-intel-ink">{display(selected.reasonSummary?.primaryReason)}</p>
+                    {selected.reasonSummary?.humanSummary && (
+                      <p className="mt-1 text-sm text-intel-ink2">{selected.reasonSummary.humanSummary}</p>
+                    )}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <p className="mb-2 font-mono text-[10px] uppercase tracking-label text-intel-ink3">Supporting Reasons</p>
+                      {selected.reasonSummary?.supportingReasons?.length ? (
+                        <ul className="space-y-1.5 text-sm text-intel-ink2">
+                          {selected.reasonSummary.supportingReasons.map(r => <li key={r}>{r}</li>)}
+                        </ul>
+                      ) : (
+                        <p className="text-sm text-intel-ink2">Unavailable</p>
+                      )}
+                    </div>
                     <div>
                       <p className="mb-2 font-mono text-[10px] uppercase tracking-label text-intel-ink3">Reason codes</p>
                       {selected.decision.reasonCodes.length ? (
@@ -372,34 +428,96 @@ export function DecisionJournalPage({ initialEntries = [], loadOnMount = true }:
                   summary={display(selected.context.marketRegime ?? selected.evaluation.marketRegime)}>
                   <MetricStrip cols={4}>
                     <Metric label="Regime" value={display(selected.context.marketRegime ?? selected.evaluation.marketRegime)} />
-                    <Metric label="Spread" value={fmtDecimal(selected.inputs.spread, 4)} />
-                    <Metric label="Volume" value={fmtNum(selected.inputs.volume)} />
-                    <Metric label="IV" value={fmtPct(selected.inputs.iv, 1)} />
-                    <Metric label="Delta" value={fmtDecimal(selected.inputs.delta)} />
-                    <Metric label="Buying Power" value={fmtUsd(selected.inputs.buyingPower)} />
-                    <Metric label="Existing Positions" value={fmtNum(selected.inputs.existingPositions)} />
-                    <Metric label="Watchlist Rank" value={fmtNum(selected.inputs.watchlistRank)} />
+                    <Metric label="Spread" value={metricValue(selected, 'spread', selected.inputs.spread, v => fmtDecimal(v, 4))} />
+                    <Metric label="Volume" value={metricValue(selected, 'volume', selected.inputs.volume, fmtNum)} />
+                    <Metric label="IV" value={metricValue(selected, 'iv', selected.inputs.iv, v => fmtPct(v, 1))} />
+                    <Metric label="Delta" value={metricValue(selected, 'delta', selected.inputs.delta, fmtDecimal)} />
+                    <Metric label="Buying Power" value={metricValue(selected, 'buyingPower', selected.inputs.buyingPower, fmtUsd)} />
+                    <Metric label="Existing Positions" value={metricValue(selected, 'existingPositions', selected.inputs.existingPositions, fmtNum)} />
+                    <Metric label="Watchlist Rank" value={metricValue(selected, 'watchlistRank', selected.inputs.watchlistRank, fmtNum)} />
                   </MetricStrip>
                   {!selected.inputs.marketClock && (
-                    <p className="mt-3 text-sm text-intel-ink2">Market clock evidence was not captured for this decision.</p>
+                    <p className="mt-3 text-sm text-intel-ink2">Market clock evidence is {availabilityCopy(fieldStatus(selected, 'marketClockDecision'))} for this decision.</p>
                   )}
                 </Panel>
 
-                <Panel title="Execution Reference" icon={<FileSearch className="h-4 w-4" />} collapsible defaultOpen={false}
-                  summary={display(selected.executionReference.orderIntentId)}>
-                  <MetricStrip cols={2}>
-                    <Metric label="Order Intent" value={display(selected.executionReference.orderIntentId)} />
-                    <Metric label="Broker Order" value={display(selected.executionReference.brokerOrderId)} />
-                    <Metric label="Position" value={display(selected.executionReference.positionId)} />
-                    <Metric label="Trade Report" value={display(selected.reportId)} />
+                <Panel title="Market Snapshot" icon={<Gauge className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={display(selected.marketSnapshot?.underlying ?? selected.context.symbol)}>
+                  <MetricStrip cols={4}>
+                    <Metric label="Underlying" value={display(selected.marketSnapshot?.underlying ?? selected.context.symbol)} />
+                    <Metric label="Underlying Price" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.underlyingPrice, fmtUsd)} />
+                    <Metric label="Bid" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.bid, fmtUsd)} />
+                    <Metric label="Ask" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.ask, fmtUsd)} />
+                    <Metric label="Mark" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.mark, fmtUsd)} />
+                    <Metric label="Spread" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.spread, v => fmtDecimal(v, 4))} />
+                    <Metric label="Volume" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.volume, fmtNum)} />
+                    <Metric label="Open Interest" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.openInterest, fmtNum)} />
+                    <Metric label="DTE" value={metricValue(selected, 'marketSnapshot', selected.marketSnapshot?.dte, fmtNum)} />
+                    <Metric label="Session" value={display(selected.marketSnapshot?.marketSession)} />
+                    <Metric label="Quote Time" value={selected.marketSnapshot?.quoteTimestamp ? fmtDateTime(selected.marketSnapshot.quoteTimestamp) : availabilityCopy(fieldStatus(selected, 'marketSnapshot'))} />
                   </MetricStrip>
                 </Panel>
 
-                <Panel title="Evidence Quality" icon={<DatabaseZap className="h-4 w-4" />} collapsible defaultOpen={false}
-                  summary={`${selected.evidenceQuality.missingFields.length} missing`}>
+                <Panel title="Contract Snapshot" icon={<Binary className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={display(selected.contractSnapshot?.contractSymbol ?? selected.context.contract)}>
+                  <MetricStrip cols={4}>
+                    <Metric label="Contract" value={display(selected.contractSnapshot?.contractSymbol ?? selected.context.contract)} />
+                    <Metric label="Type" value={display(selected.contractSnapshot?.type)} />
+                    <Metric label="Strike" value={metricValue(selected, 'contractSnapshot', selected.contractSnapshot?.strike, fmtNum)} />
+                    <Metric label="Expiration" value={display(selected.contractSnapshot?.expiration)} />
+                    <Metric label="Contract Score" value={metricValue(selected, 'contractSnapshot', selected.contractSnapshot?.contractScore, fmtDecimal)} />
+                    <Metric label="Liquidity Score" value={metricValue(selected, 'contractSnapshot', selected.contractSnapshot?.liquidityScore, fmtDecimal)} />
+                    <Metric label="Spread %" value={metricValue(selected, 'contractSnapshot', selected.contractSnapshot?.spreadPct, v => fmtPct(v, 2))} />
+                  </MetricStrip>
+                </Panel>
+
+                <Panel title="Risk Checks" icon={<ShieldAlert className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={selected.riskChecks?.length ? `${selected.riskChecks.length} checks` : 'Not Applicable'}>
+                  {selected.riskChecks?.length ? (
+                    <div className="grid gap-px overflow-hidden rounded-panel border border-intel-line bg-intel-line">
+                      {selected.riskChecks.map(check => (
+                        <div key={`${check.name}-${check.detail}`} className="grid gap-2 bg-intel-panel p-3 sm:grid-cols-[1.1fr_0.5fr_1fr_1fr_1.4fr]">
+                          <span className="font-mono text-[11px] text-intel-ink">{check.name}</span>
+                          <Badge tone={check.passed ? 'pos' : 'neg'}>{check.passed ? 'PASS' : 'FAIL'}</Badge>
+                          <span className="text-xs text-intel-ink2">Observed {check.observed ?? 'Unavailable'}</span>
+                          <span className="text-xs text-intel-ink2">Limit {check.limit ?? 'Unavailable'}</span>
+                          <span className="text-xs text-intel-ink2">{check.reason ?? check.detail ?? 'Unavailable'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-intel-ink2">Risk checks are {availabilityCopy(fieldStatus(selected, 'riskChecks'))} for this decision.</p>
+                  )}
+                </Panel>
+
+                <Panel title="AI Context" icon={<Binary className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={selected.aiContext?.status === 'AI_NOT_USED' ? 'AI Not Used' : display(selected.aiContext?.status)}>
+                  <MetricStrip cols={3}>
+                    <Metric label="AI Status" value={selected.aiContext?.status === 'AI_NOT_USED' ? 'AI Not Used' : display(selected.aiContext?.status)} />
+                    <Metric label="Recommendation" value={display(selected.aiContext?.recommendation)} />
+                    <Metric label="Model" value={display(selected.aiContext?.modelUsed)} />
+                  </MetricStrip>
+                </Panel>
+
+                <Panel title="Execution Reference" icon={<FileSearch className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={refValue(selected.executionReference.orderIntentId)}>
                   <MetricStrip cols={2}>
-                    <Metric label="Persisted Fields" value={fmtNum(selected.evidenceQuality.persistedFields.length)} />
-                    <Metric label="Missing Fields" value={fmtNum(selected.evidenceQuality.missingFields.length)} tone={selected.evidenceQuality.missingFields.length ? 'warn' : 'pos'} />
+                    <Metric label="Order Intent" value={refValue(selected.executionReference.orderIntentId)} />
+                    <Metric label="Broker Order" value={refValue(selected.executionReference.brokerOrderId)} />
+                    <Metric label="Position" value={refValue(selected.executionReference.positionId)} />
+                    <Metric label="Trade Report" value={refValue(selected.reportId)} />
+                    <Metric label="Quantity" value={metricValue(selected, 'quantity', selected.riskSnapshot.quantity, fmtNum)} />
+                    <Metric label="Limit Price" value={metricValue(selected, 'limitPrice', selected.riskSnapshot.limitPrice, fmtUsd)} />
+                    <Metric label="Order Type" value={display(selected.riskSnapshot.orderType)} />
+                    <Metric label="TIF" value={display(selected.riskSnapshot.timeInForce)} />
+                  </MetricStrip>
+                </Panel>
+
+                <Panel title="Data Completeness" icon={<DatabaseZap className="h-4 w-4" />} collapsible defaultOpen={false}
+                  summary={selectedCompleteness ? `${selectedCompleteness.captured} / ${selectedCompleteness.total} fields · ${selectedCompleteness.pct}%` : 'Unavailable'}>
+                  <MetricStrip cols={2}>
+                    <Metric label="Fields Captured" value={selectedCompleteness ? `${selectedCompleteness.captured} / ${selectedCompleteness.total}` : 'Unavailable'} />
+                    <Metric label="Completeness" value={selectedCompleteness ? `${selectedCompleteness.pct}%` : 'Unavailable'} tone={selected.evidenceQuality.missingFields.length ? 'warn' : 'pos'} />
                   </MetricStrip>
                   {selected.evidenceQuality.missingFields.length > 0 && (
                     <div className="mt-3">

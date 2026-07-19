@@ -198,8 +198,9 @@ describe('DecisionJournalPage', () => {
     };
     const { container } = render(<DecisionJournalPage initialEntries={[missing]} loadOnMount={false} />);
 
-    // Absent scalars spell out "Not recorded" via the shared formatters.
-    expect(screen.getAllByText('Not recorded').length).toBeGreaterThan(0);
+    // Absent scalars render as unavailable instead of implying persistence failed.
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain('Not recorded');
     // The (collapsed) Timeline panel honestly summarizes the absence of events.
     expect(screen.getByText('No events captured')).toBeInTheDocument();
     expect(container.textContent).not.toContain('N/A');

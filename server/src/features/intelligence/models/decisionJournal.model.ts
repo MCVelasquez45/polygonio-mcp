@@ -36,6 +36,17 @@ export type DecisionTimelineEvent = {
   severity: 'info' | 'warning' | 'critical';
 };
 
+export type DataAvailabilityStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'NOT_APPLICABLE' | 'NOT_RECORDED';
+
+export type DecisionRiskCheck = {
+  name: string;
+  passed: boolean | null;
+  observed?: number | string | boolean | null;
+  limit?: number | string | null;
+  reason: string | null;
+  detail: string | null;
+};
+
 export interface DecisionJournalDocument {
   _id?: unknown;
   decisionId: string;
@@ -58,6 +69,7 @@ export interface DecisionJournalDocument {
     marketRegime: string | null;
   };
   evaluation: {
+    signal: string | null;
     signalStrength: number | null;
     confidence: number | null;
     flowScore: number | null;
@@ -81,6 +93,31 @@ export interface DecisionJournalDocument {
     existingPositions: number | null;
     watchlistRank: number | null;
   };
+  marketSnapshot: {
+    underlying: string | null;
+    underlyingPrice: number | null;
+    bid: number | null;
+    ask: number | null;
+    mark: number | null;
+    spread: number | null;
+    iv: number | null;
+    delta: number | null;
+    volume: number | null;
+    openInterest: number | null;
+    dte: number | null;
+    quoteTimestamp: Date | null;
+    marketSession: string | null;
+  };
+  contractSnapshot: {
+    contractSymbol: string | null;
+    strike: number | null;
+    expiration: string | null;
+    type: string | null;
+    contractScore: number | null;
+    liquidityScore: number | null;
+    spreadPct: number | null;
+    scoreComponents: Record<string, unknown> | null;
+  };
   decision: {
     decision: DecisionAction;
     approved: boolean;
@@ -91,10 +128,35 @@ export interface DecisionJournalDocument {
   };
   riskSnapshot: {
     positionSize: number | null;
+    buyingPowerUsed: number | null;
     riskPercent: number | null;
     maxLoss: number | null;
     estimatedReward: number | null;
     estimatedRR: number | null;
+    quantity: number | null;
+    entryPrice: number | null;
+    limitPrice: number | null;
+    orderType: string | null;
+    timeInForce: string | null;
+  };
+  riskChecks: DecisionRiskCheck[];
+  reasonSummary: {
+    primaryReason: string | null;
+    supportingReasons: string[];
+    humanSummary: string | null;
+    machineCodes: string[];
+  };
+  aiContext: {
+    status: 'AI_NOT_USED' | 'USED' | 'UNAVAILABLE' | 'NOT_RECORDED';
+    recommendation: string | null;
+    confidence: number | null;
+    summary: string | null;
+    explanation: string | null;
+    promptVersion: string | null;
+    modelUsed: string | null;
+  };
+  dataAvailability: {
+    fields: Record<string, DataAvailabilityStatus>;
   };
   executionReference: {
     orderIntentId: string | null;
@@ -139,6 +201,18 @@ const TimelineSchema = new Schema<DecisionTimelineEvent>(
   { _id: false }
 );
 
+const RiskCheckSchema = new Schema<DecisionRiskCheck>(
+  {
+    name: { type: String, required: true },
+    passed: { type: Boolean, default: null },
+    observed: { type: Schema.Types.Mixed, default: null },
+    limit: { type: Schema.Types.Mixed, default: null },
+    reason: { type: String, default: null },
+    detail: { type: String, default: null },
+  },
+  { _id: false }
+);
+
 const DecisionJournalSchema = new Schema<DecisionJournalDocument>(
   {
     decisionId: { type: String, required: true, unique: true, index: true },
@@ -164,6 +238,7 @@ const DecisionJournalSchema = new Schema<DecisionJournalDocument>(
       marketRegime: { type: String, default: null },
     },
     evaluation: {
+      signal: { type: String, default: null },
       signalStrength: { type: Number, default: null },
       confidence: { type: Number, default: null },
       flowScore: { type: Number, default: null },
@@ -187,6 +262,31 @@ const DecisionJournalSchema = new Schema<DecisionJournalDocument>(
       existingPositions: { type: Number, default: null },
       watchlistRank: { type: Number, default: null },
     },
+    marketSnapshot: {
+      underlying: { type: String, default: null },
+      underlyingPrice: { type: Number, default: null },
+      bid: { type: Number, default: null },
+      ask: { type: Number, default: null },
+      mark: { type: Number, default: null },
+      spread: { type: Number, default: null },
+      iv: { type: Number, default: null },
+      delta: { type: Number, default: null },
+      volume: { type: Number, default: null },
+      openInterest: { type: Number, default: null },
+      dte: { type: Number, default: null },
+      quoteTimestamp: { type: Date, default: null },
+      marketSession: { type: String, default: null },
+    },
+    contractSnapshot: {
+      contractSymbol: { type: String, default: null },
+      strike: { type: Number, default: null },
+      expiration: { type: String, default: null },
+      type: { type: String, default: null },
+      contractScore: { type: Number, default: null },
+      liquidityScore: { type: Number, default: null },
+      spreadPct: { type: Number, default: null },
+      scoreComponents: { type: Schema.Types.Mixed, default: null },
+    },
     decision: {
       decision: { type: String, enum: DECISION_ACTIONS, required: true },
       approved: { type: Boolean, required: true, default: false },
@@ -197,10 +297,35 @@ const DecisionJournalSchema = new Schema<DecisionJournalDocument>(
     },
     riskSnapshot: {
       positionSize: { type: Number, default: null },
+      buyingPowerUsed: { type: Number, default: null },
       riskPercent: { type: Number, default: null },
       maxLoss: { type: Number, default: null },
       estimatedReward: { type: Number, default: null },
       estimatedRR: { type: Number, default: null },
+      quantity: { type: Number, default: null },
+      entryPrice: { type: Number, default: null },
+      limitPrice: { type: Number, default: null },
+      orderType: { type: String, default: null },
+      timeInForce: { type: String, default: null },
+    },
+    riskChecks: { type: [RiskCheckSchema], required: true, default: [] },
+    reasonSummary: {
+      primaryReason: { type: String, default: null },
+      supportingReasons: { type: [String], required: true, default: [] },
+      humanSummary: { type: String, default: null },
+      machineCodes: { type: [String], required: true, default: [] },
+    },
+    aiContext: {
+      status: { type: String, enum: ['AI_NOT_USED', 'USED', 'UNAVAILABLE', 'NOT_RECORDED'], required: true, default: 'AI_NOT_USED' },
+      recommendation: { type: String, default: null },
+      confidence: { type: Number, default: null },
+      summary: { type: String, default: null },
+      explanation: { type: String, default: null },
+      promptVersion: { type: String, default: null },
+      modelUsed: { type: String, default: null },
+    },
+    dataAvailability: {
+      fields: { type: Schema.Types.Mixed, required: true, default: {} },
     },
     executionReference: {
       orderIntentId: { type: String, default: null },

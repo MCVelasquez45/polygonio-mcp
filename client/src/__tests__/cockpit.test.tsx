@@ -3,7 +3,7 @@
  * the rendered Position panel never shows fabricated zero values for absent data.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 
 const socket = vi.hoisted(() => ({ on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }));
 vi.mock('../lib/socket', () => ({ getSharedSocket: () => socket }));
@@ -164,8 +164,9 @@ describe('CockpitWorkspace position panel', () => {
     expect(screen.getAllByText('$1.92')).toHaveLength(1);
     expect(screen.getAllByText('$1.85').length).toBeGreaterThan(0);
     expect(screen.getAllByText('$0.14')).toHaveLength(1);
+    const commandBar = screen.getByTestId('cockpit-command-bar');
     for (const label of ['Entry', 'Mark', 'P&L', 'Return', 'Bid', 'Ask', 'Mid', 'Spread']) {
-      expect(screen.getAllByText(label)).toHaveLength(1);
+      expect(within(commandBar).getAllByText(label)).toHaveLength(1);
     }
   });
 });

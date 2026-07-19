@@ -194,7 +194,21 @@ async function createCandidate(mods, overrides = {}) {
       rollingVolumeAvg: 180000,
     },
     marketClockDecision: { state: 'OPEN', canEnter: true, decidedAt: start.toISOString(), reasons: [] },
-    marketDataHealth: { ok: true },
+    marketDataHealth: {
+      ok: true,
+      score: overrides.confidence ?? 0.72,
+      featureSnapshot: {
+        callPremium: 125000,
+        putPremium: 30000,
+        netPremiumTilt: 0.6129,
+        volumeRatio: 4.1667,
+        callVolume: 820,
+        putVolume: 197,
+        callIv: 0.31,
+        putIv: 0.34,
+        ivSkew: 0.03,
+      },
+    },
     strategyConfigSnapshot: { name: 'options-flow-v1' },
     conditions: {
       confidence: overrides.confidence ?? 0.72,
@@ -246,7 +260,7 @@ async function seedDecisionEvidence(mods) {
   await createTradingSession(mods);
   const approved = await createCandidate(mods);
   const selected = selectedContract('XLE260717C00090000');
-  await mods.ContractSelectionModel.create({
+  const selection = await mods.ContractSelectionModel.create({
     tradeCandidateId: String(approved._id),
     automationSessionId,
     direction: 'BULLISH',
@@ -264,6 +278,10 @@ async function seedDecisionEvidence(mods) {
     selected,
     noSelectionReason: null,
   });
+  await mods.ContractSelectionModel.updateOne(
+    { _id: selection._id },
+    { $set: { createdAt: new Date('2026-07-16T14:31:30.000Z'), updatedAt: new Date('2026-07-16T14:31:30.000Z') } }
+  );
   await mods.RiskDecisionModel.create({
     tradeCandidateId: String(approved._id),
     automationSessionId,
@@ -285,6 +303,14 @@ async function seedDecisionEvidence(mods) {
     submittedAt: new Date('2026-07-16T20:58:00.000Z'),
     brokerOrderId: 'broker-EXIT-XLE',
   });
+  await mods.OrderIntentModel.updateOne(
+    { _id: entryIntent._id },
+    { $set: { createdAt: new Date('2026-07-16T14:32:00.000Z'), updatedAt: new Date('2026-07-16T14:32:00.000Z') } }
+  );
+  await mods.OrderIntentModel.updateOne(
+    { _id: exitIntent._id },
+    { $set: { createdAt: new Date('2026-07-16T20:58:00.000Z'), updatedAt: new Date('2026-07-16T20:58:00.000Z') } }
+  );
   await mods.AutomationPositionModel.create({
     source: 'AUTOMATION',
     automationSessionId,
@@ -432,9 +458,22 @@ test('Decision Journal', async (t) => {
     const approvedRisk = entries.find(entry => entry.source.type === 'RiskDecision' && entry.decisionType === 'BUY_APPROVED');
     assert.equal(approvedRisk.context.symbol, 'XLE');
     assert.equal(approvedRisk.decision.approved, true);
+    assert.equal(approvedRisk.evaluation.signal, 'BULLISH');
+    assert.equal(approvedRisk.evaluation.confidence, 0.72);
+    assert.equal(approvedRisk.evaluation.flowScore, 0.72);
     assert.equal(approvedRisk.inputs.buyingPower, 10000);
     assert.equal(approvedRisk.riskSnapshot.positionSize, 1);
+    assert.equal(approvedRisk.riskSnapshot.maxLoss, 169);
+    assert.equal(approvedRisk.marketSnapshot.bid, 1.68);
+    assert.equal(approvedRisk.marketSnapshot.ask, 1.72);
+    assert.equal(approvedRisk.contractSnapshot.contractSymbol, 'XLE260717C00090000');
+    assert.equal(approvedRisk.contractSnapshot.contractScore, 88);
+    assert.equal(approvedRisk.riskChecks[0].name, 'position-size');
+    assert.equal(approvedRisk.aiContext.status, 'AI_NOT_USED');
+    assert.equal(approvedRisk.dataAvailability.fields.aiContext, 'AVAILABLE');
+    assert.ok(approvedRisk.reasonSummary.primaryReason);
     assert.ok(approvedRisk.evidenceQuality.persistedFields.includes('checks'));
+    assert.ok(approvedRisk.evidenceQuality.persistedFields.includes('riskChecks'));
     assert.ok(approvedRisk.timeline.some(event => event.label === 'Risk approved'));
 
     const second = await mods.backfillDecisionJournalForDate(tradingDate);
