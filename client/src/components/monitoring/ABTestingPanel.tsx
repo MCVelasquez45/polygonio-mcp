@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DemoDataBadge } from '../shared/DemoDataBadge';
 
 type StrategyVersion = {
   id: string;
@@ -38,7 +39,9 @@ export function ABTestingPanel() {
   return (
     <div className="ab-testing-panel">
       <div className="header">
-        <h2>⚖️ A/B TESTING & VERSION HISTORY</h2>
+        <h2>
+          ⚖️ A/B TESTING & VERSION HISTORY <DemoDataBadge note="Version metrics and diffs shown here are illustrative — not real strategy history." />
+        </h2>
         <div className="controls">
           <div className="control-group">
             <label>Baseline (A)</label>

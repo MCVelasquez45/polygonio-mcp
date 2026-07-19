@@ -176,7 +176,13 @@ export type BacktestResult = {
   sharpeRatio?: number;
   maxDrawdownPct?: number;
   equityCurve?: { timestamp: string; equity: number }[];
-  diagnostics?: { provider: string; barsLoaded: number; usedFallbackData: boolean };
+  diagnostics?: {
+    provider: string;
+    barsLoaded: number;
+    usedFallbackData: boolean;
+    dataWarning?: string;
+    resolvedSymbol?: string;
+  };
 };
 
 export type BacktestRunRecord = {

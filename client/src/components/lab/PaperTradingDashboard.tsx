@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { io } from 'socket.io-client';
 import { futuresApi } from '../../api';
-import { getApiBaseUrl } from '../../api/http';
+import { getSharedSocket } from '../../lib/socket';
 import type { FuturesPaperSession } from '../../types/futures';
 
 type Props = {
@@ -37,7 +36,8 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
   }, [sessionId]);
 
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    // Listen on the app-wide shared socket; do not open a private connection.
+    const socket = getSharedSocket();
     const handleMarketUpdate = (payload: any) => {
       if (!sessionId || payload?.sessionId !== sessionId) return;
       setSession(prev => (prev ? { ...prev, state: payload.state, status: payload.status } : prev));
@@ -66,7 +66,6 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
     return () => {
       socket.off('futures:market:update', handleMarketUpdate);
       socket.off('futures:position:update', handlePositionUpdate);
-      socket.disconnect();
     };
   }, [sessionId]);
 
@@ -85,7 +84,7 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
 
   const pnlColor = useMemo(() => {
     const dailyPnl = session?.state.dailyPnl ?? 0;
-    return dailyPnl >= 0 ? '#10b981' : '#ef4444';
+    return dailyPnl >= 0 ? '#35d29a' : '#f87171';
   }, [session]);
 
   return (
@@ -158,7 +157,7 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
                 <td>{session?.state.position.contracts ?? 0}</td>
                 <td>{(session?.state.position.avgEntryPrice ?? 0).toFixed(2)}</td>
                 <td>{(session?.state.markPrice ?? 0).toFixed(2)}</td>
-                <td style={{ color: (session?.state.unrealizedPnl ?? 0) >= 0 ? '#10b981' : '#ef4444' }}>
+                <td style={{ color: (session?.state.unrealizedPnl ?? 0) >= 0 ? '#35d29a' : '#f87171' }}>
                   {(session?.state.unrealizedPnl ?? 0).toFixed(2)}
                 </td>
                 <td>{session?.state.position.currentContract ?? '-'}</td>
@@ -177,8 +176,8 @@ export function PaperTradingDashboard({ sessionId, strategyId, strategyName, onR
 const styles = `
   .paper-dashboard {
     padding: 1.5rem;
-    color: #e5e5e5;
-    background: #0a0a0f;
+    color: #e9edf6;
+    background: #020617;
     height: 100%;
     overflow-y: auto;
   }
@@ -187,17 +186,17 @@ const styles = `
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid #1e293b;
     padding-bottom: 1rem;
     gap: 1rem;
   }
-  .header-left h2 { margin: 0; font-size: 1.1rem; }
+  .header-left h2 { margin: 0; font-size: 1.1rem; color: #e9edf6; }
   .status-badge {
     margin-top: 0.5rem;
     display: inline-block;
     font-size: 0.8rem;
-    color: #10b981;
-    background: rgba(16,185,129,0.15);
+    color: #f5a623;
+    background: rgba(245,166,35,0.12);
     padding: 0.2rem 0.6rem;
     border-radius: 999px;
   }
@@ -209,12 +208,12 @@ const styles = `
     cursor: pointer;
     font-size: 0.8rem;
   }
-  .btn-primary { background: #10b981; color: #fff; }
-  .btn-secondary { background: #374151; color: #fff; }
-  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-primary { background: #f5a623; color: #020617; }
+  .btn-secondary { background: #111a2b; color: #e9edf6; border: 1px solid #1e293b; }
+  .btn-danger { background: transparent; color: #f87171; border: 1px solid rgba(248,113,113,0.4); }
   .btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }
-  .notice { margin-bottom: 1rem; font-size: 0.85rem; color: #9ca3af; }
-  .notice.error { color: #fca5a5; }
+  .notice { margin-bottom: 1rem; font-size: 0.85rem; color: #94a3b8; }
+  .notice.error { color: #f87171; }
   .metrics-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -222,22 +221,22 @@ const styles = `
     margin-bottom: 1.25rem;
   }
   .metric-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 10px;
     padding: 0.75rem;
     display: flex;
     flex-direction: column;
   }
-  .metric-label { color: #9ca3af; font-size: 0.7rem; }
-  .metric-value { color: #e5e5e5; font-size: 1.3rem; font-weight: 600; margin-top: 0.25rem; }
-  .metric-sub { color: #6b7280; font-size: 0.75rem; }
-  .section h3 { font-size: 0.9rem; color: #9ca3af; margin-bottom: 0.5rem; }
-  .table-container { border: 1px solid #333; border-radius: 10px; overflow: hidden; }
+  .metric-label { color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric-value { color: #e9edf6; font-size: 1.3rem; font-weight: 600; margin-top: 0.25rem; font-variant-numeric: tabular-nums; }
+  .metric-sub { color: #64748b; font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .section h3 { font-size: 0.9rem; color: #64748b; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .table-container { border: 1px solid #1e293b; border-radius: 10px; overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 0.75rem; border-bottom: 1px solid #23232a; text-align: left; }
-  th { color: #9ca3af; font-size: 0.75rem; }
-  td { color: #e5e5e5; font-size: 0.85rem; }
+  th, td { padding: 0.75rem; border-bottom: 1px solid #1e293b; text-align: left; }
+  th { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { color: #e9edf6; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
   @media (max-width: 1200px) {
     .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }

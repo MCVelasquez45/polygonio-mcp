@@ -11,8 +11,13 @@ import {
   getMassiveOptionContract,
   getMassiveOptionsSnapshot,
   getOptionAggregates,
-  massiveGet
+  massiveGet,
+  REQUEST_PRIORITY
 } from '../../../shared/data/massive';
+
+// Checklist refreshes are watchlist-class consumers: low queue priority and a
+// longer snapshot TTL so they never starve automation-decision requests.
+const WATCHLIST_SNAPSHOT_OPTS = { priority: REQUEST_PRIORITY.WATCHLIST, cacheTtlMs: 30_000 } as const;
 
 const FASTAPI_BASE_URL =
   process.env.FASTAPI_BASE_URL || process.env.AGENT_API_URL || process.env.FASTAPI_URL || '';
@@ -401,7 +406,7 @@ async function loadMinuteBars(symbol: string, window: number): Promise<StoredAgg
   }
   if (!bars.length) {
     try {
-      const snapshot = await getMassiveOptionsSnapshot(upper);
+      const snapshot = await getMassiveOptionsSnapshot(upper, WATCHLIST_SNAPSHOT_OPTS);
       const price = snapshot?.price;
       if (typeof price === 'number' && Number.isFinite(price)) {
         const bar: StoredAggregateBar = {
@@ -653,9 +658,9 @@ async function fetchContextSnapshots(targetSymbol: string) {
     symbols.map(async key => {
       try {
         if (key === 'TARGET') {
-          return [key, await getMassiveOptionsSnapshot(targetSymbol)];
+          return [key, await getMassiveOptionsSnapshot(targetSymbol, WATCHLIST_SNAPSHOT_OPTS)];
         }
-        return [key, await getMassiveOptionsSnapshot(key)];
+        return [key, await getMassiveOptionsSnapshot(key, WATCHLIST_SNAPSHOT_OPTS)];
       } catch (error) {
         console.warn('[CHECKLIST] context snapshot failed', { key, error });
         return [key, null];

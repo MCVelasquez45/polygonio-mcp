@@ -1,20 +1,43 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
+import { getSharedSocket } from './lib/socket';
+import {
+  publishQuote,
+  publishTrade,
+  replaceTradeHistory,
+  removeSymbols as removeLiveSymbols,
+} from './lib/liveMarketStore';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
+import { NavRail } from './components/layout/NavRail';
+import { MobileTabBar } from './components/layout/MobileTabBar';
+import { MarketContextBar } from './components/layout/MarketContextBar';
+import { CommandPalette } from './components/layout/CommandPalette';
 import { ChartPanel } from './components/trading/ChartPanel';
 import { GreeksPanel } from './components/options/GreeksPanel';
 import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
 import { OptionsChainPanel } from './components/options/OptionsChainPanel';
-import { OptionsScanner } from './components/screener/OptionsScanner';
-import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
+import { PriceLadder } from './components/options/PriceLadder';
 import { ChatDock } from './components/chat/ChatDock';
-import { Dashboard } from './components/dashboard';
-import { analysisApi, chatApi, marketApi, alpacaApi } from './api';
+
+// Route-level code splitting: the heavy switchable views load on demand, so the
+// initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
+// Intelligence + Operations up front. Named exports are adapted to the
+// default-export shape React.lazy expects.
+const OptionsScanner = lazy(() => import('./components/screener/OptionsScanner').then(m => ({ default: m.OptionsScanner })));
+const PortfolioPanel = lazy(() => import('./components/portfolio/PortfolioPanel').then(m => ({ default: m.PortfolioPanel })));
+const CockpitLayout = lazy(() => import('./components/cockpit/CockpitLayout').then(m => ({ default: m.CockpitLayout })));
+const TradingIntelligencePage = lazy(() => import('./components/intelligence/TradingIntelligencePage').then(m => ({ default: m.TradingIntelligencePage })));
+const SystemOperationsPage = lazy(() => import('./components/operations/SystemOperationsPage').then(m => ({ default: m.SystemOperationsPage })));
+import { analysisApi, chatApi, marketApi } from './api';
+import {
+  LEGACY_SUBMISSION_DISABLED_MESSAGE,
+  classifyOrderHistoryError,
+  getOptionOrdersForPolling,
+} from './api/orderHistory';
 import { computeExpirationDte } from './utils/expirations';
-import { getApiBaseUrl } from './api/http';
 import { DEFAULT_ASSISTANT_MESSAGE } from './constants';
 import { getExpirationTimestamp } from './utils/expirations';
 import type {
@@ -65,7 +88,6 @@ const AI_CHART_ANALYSIS_ENABLED_KEY = 'market-copilot.aiChartAnalysisEnabled';
 const CHART_SESSION_MODE_KEY = 'market-copilot.chartSessionMode';
 const AUTO_DESK_INSIGHTS_KEY = 'market-copilot.autoDeskInsights';
 const AUTO_CONTRACT_SELECTION_KEY = 'market-copilot.autoContractSelection';
-const AUTO_SUBMIT_ORDERS_KEY = 'market-copilot.autoSubmitOrders';
 const AUTO_SCANNER_ENABLED_KEY = 'market-copilot.autoScannerEnabled';
 const OPENING_RANGE_START_MINUTES = 9 * 60 + 30;
 const OPENING_RANGE_END_MINUTES = 9 * 60 + 35;
@@ -333,7 +355,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+type View = 'trading' | 'portfolio' | 'cockpit' | 'intelligence' | 'operations';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -409,7 +431,7 @@ function formatRelativeTime(value?: string | null): string | null {
   return `in ${days}d ${remainingHours}h`;
 }
 
-// Root component controlling all trading/scanner/portfolio views. Manages data
+// Root component controlling the workstation views. Manages data
 // fetching, caches, and cross-panel selection state.
 function App() {
   const [view, setView] = useState<View>('trading');
@@ -417,6 +439,20 @@ function App() {
   const normalizedTicker = ticker.trim().toUpperCase() || 'SPY';
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Keyboard-first navigation: ⌘K / Ctrl-K toggles the command palette from
+  // anywhere in the workstation.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+        event.preventDefault();
+        setCommandPaletteOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Option chain state (expirations + selected leg/contract).
   const [chainExpirations, setChainExpirations] = useState<OptionChainExpirationGroup[]>([]);
@@ -450,8 +486,6 @@ function App() {
   const [chartAnalysisError, setChartAnalysisError] = useState<string | null>(null);
   const [chartAnalysisUpdatedAt, setChartAnalysisUpdatedAt] = useState<number | null>(null);
 
-  const [quote, setQuote] = useState<QuoteSnapshot | null>(null);
-  const [trades, setTrades] = useState<TradePrint[]>([]);
   const [underlyingSnapshot, setUnderlyingSnapshot] = useState<WatchlistSnapshot | null>(null);
   const underlyingSnapshotRef = useRef<WatchlistSnapshot | null>(null);
 
@@ -485,7 +519,6 @@ function App() {
   );
   const [autoDeskInsights, setAutoDeskInsights] = useState(() => readStoredBoolean(AUTO_DESK_INSIGHTS_KEY, false));
   const [autoContractSelection, setAutoContractSelection] = useState(() => readStoredBoolean(AUTO_CONTRACT_SELECTION_KEY, false));
-  const [autoSubmitOrders, setAutoSubmitOrders] = useState(() => readStoredBoolean(AUTO_SUBMIT_ORDERS_KEY, false));
   const [autoScannerEnabled, setAutoScannerEnabled] = useState(() => readStoredBoolean(AUTO_SCANNER_ENABLED_KEY, false));
   const deskInsightsAllowed = aiEnabled && aiDeskInsightsEnabled;
   const contractSelectionAllowed = aiEnabled && aiContractSelectionEnabled;
@@ -498,7 +531,6 @@ function App() {
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
-  const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const chartFocusRef = useRef<{ symbol: string | null; timeframe: string; sessionMode: ChartSessionMode } | null>(
     null
   );
@@ -516,13 +548,11 @@ function App() {
   const lastChecklistRefreshRef = useRef(0);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
-  const [lastLiveQuoteAt, setLastLiveQuoteAt] = useState<number | null>(null);
-  const [lastLiveTradeAt, setLastLiveTradeAt] = useState<number | null>(null);
+  // Tick timestamps are refs, not state: only the fallback logic reads them,
+  // and holding them as state re-rendered the whole app on every market tick.
   const lastLiveQuoteAtRef = useRef<number | null>(null);
   const lastLiveTradeAtRef = useRef<number | null>(null);
   const socketRef = useRef<Socket | null>(null);
-  const [liveChainQuotes, setLiveChainQuotes] = useState<Record<string, QuoteSnapshot>>({});
-  const [liveChainTrades, setLiveChainTrades] = useState<Record<string, TradePrint>>({});
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
   const [contractSelection, setContractSelection] = useState<ContractSelectionResult | null>(null);
@@ -534,7 +564,6 @@ function App() {
   const autoContractSelectionKeyRef = useRef<string | null>(null);
   const [contractAnalysisRequestId, setContractAnalysisRequestId] = useState(0);
   const selectionSourceRef = useRef<'auto' | 'user' | null>(null);
-  const warmTickersTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSnapshotSymbolRef = useRef<string | null>(null);
   const [tradeMarkers, setTradeMarkers] = useState<SeriesMarker<UTCTimestamp>[]>([]);
 
@@ -721,7 +750,6 @@ function App() {
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(AUTO_CONTRACT_SELECTION_KEY, String(autoContractSelection));
-      window.localStorage.setItem(AUTO_SUBMIT_ORDERS_KEY, String(autoSubmitOrders));
       window.localStorage.setItem(AUTO_SCANNER_ENABLED_KEY, String(autoScannerEnabled));
     } catch {
       // ignore persistence failures
@@ -743,15 +771,7 @@ function App() {
   useEffect(() => {
     if (autoContractSelection) return;
     autoContractSelectionKeyRef.current = null;
-  }, [autoContractSelection, autoSubmitOrders, autoScannerEnabled]);
-
-  useEffect(() => {
-    lastLiveQuoteAtRef.current = lastLiveQuoteAt;
-  }, [lastLiveQuoteAt]);
-
-  useEffect(() => {
-    lastLiveTradeAtRef.current = lastLiveTradeAt;
-  }, [lastLiveTradeAt]);
+  }, [autoContractSelection, autoScannerEnabled]);
 
   // Whenever the watchlist contents change, refresh the scanner reports for those tickers.
   // Fetch the option chain whenever the ticker or selected expiration changes.
@@ -760,61 +780,40 @@ function App() {
   // Request chart focus updates over the socket (server-owned candles).
   // Establish Socket.IO connection for live Massive feed.
   useEffect(() => {
-    const baseUrl = getApiBaseUrl();
-    const parsed = typeof window !== 'undefined' ? new URL(baseUrl, window.location.href) : null;
-    const isMixedContent =
-      typeof window !== 'undefined' &&
-      window.location.protocol === 'https:' &&
-      parsed?.protocol === 'http:';
-    const socket = io(baseUrl, {
-      transports: isMixedContent ? ['polling'] : ['websocket', 'polling'],
-      upgrade: !isMixedContent,
-      withCredentials: false,
-      path: '/socket.io',
-      timeout: 10_000,
-      reconnection: true,
-      reconnectionDelay: 1_000,
-      reconnectionDelayMax: 5_000
-    });
+    // Attach to the app-wide shared socket. The connection itself outlives this
+    // component; we only own our listeners and subscriptions.
+    const socket = getSharedSocket();
     socketRef.current = socket;
 
-    const forcePolling = () => {
-      const opts = socket.io.opts;
-      if (opts.transports?.length === 1 && opts.transports[0] === 'polling') return;
-      opts.transports = ['polling'];
-      opts.upgrade = false;
-      if (socket.connected) {
-        socket.disconnect();
-      }
-      socket.connect();
-    };
-
-    socket.on('connect', () => {
+    const handleConnect = () => {
       setLiveSocketConnected(true);
-    });
-    socket.on('connect_error', (error: any) => {
-      const description =
-        typeof (error as { description?: unknown })?.description === 'string'
-          ? (error as { description?: string }).description
-          : undefined;
-      console.warn('[CLIENT] live feed connect error', {
-        message: error?.message,
-        ...(description ? { description } : {})
-      });
-      const shouldForcePolling = isMixedContent || String(error?.message ?? '').toLowerCase().includes('websocket');
-      if (shouldForcePolling) {
-        forcePolling();
-      }
-    });
-    socket.on('disconnect', () => {
+    };
+    const handleDisconnect = () => {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
-    });
-    socket.on('live:error', (payload: any) => {
+    };
+    const handleLiveError = (payload: any) => {
       console.warn('[CLIENT] live feed error', payload);
-    });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('live:error', handleLiveError);
+    if (socket.connected) {
+      setLiveSocketConnected(true);
+    }
+
     return () => {
-      socket.disconnect();
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('live:error', handleLiveError);
+      // Release everything this view subscribed to on the shared connection:
+      // residual near-the-money strip symbols and the chart focus.
+      liveChainSymbolsRef.current.forEach((symbol: string) => {
+        socket.emit('live:unsubscribe', { symbol });
+      });
+      liveChainSymbolsRef.current = new Set();
+      socket.emit('chart:focus', { symbol: null });
       socketRef.current = null;
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
@@ -850,10 +849,11 @@ function App() {
     const handleQuote = (payload: any) => {
       const normalized = normalizeLiveQuote(payload);
       if (!normalized) return;
-      setLiveChainQuotes((prev: Record<string, QuoteSnapshot>) => ({ ...prev, [normalized.ticker]: normalized }));
+      // Publish into the live store: only panels rendering this symbol
+      // re-render. No App state is touched on the hot tick path.
+      publishQuote(normalized);
       if (activeSymbol && normalized.ticker === activeSymbol) {
-        setQuote(normalized);
-        setLastLiveQuoteAt(Date.now());
+        lastLiveQuoteAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
       }
     };
@@ -862,13 +862,9 @@ function App() {
       const normalized = normalizeLiveTrade(payload);
       if (!normalized) return;
       if (!normalized.ticker) return;
-      setLiveChainTrades((prev: Record<string, TradePrint>) => ({ ...prev, [normalized.ticker]: normalized }));
+      publishTrade(normalized);
       if (activeSymbol && normalized.ticker === activeSymbol) {
-        setTrades((prev: TradePrint[]) => {
-          if (prev.length > 0 && prev[0]?.id === normalized.id) return prev;
-          return [normalized, ...prev].slice(0, MAX_TRADE_HISTORY);
-        });
-        setLastLiveTradeAt(Date.now());
+        lastLiveTradeAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
       }
     };
@@ -1292,6 +1288,7 @@ function App() {
     let cancelled = false;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     let hasRetried = false;
+    const controller = new AbortController();
     async function loadChain() {
       setChainLoading(true);
       setChainError(null);
@@ -1300,12 +1297,7 @@ function App() {
           ticker: normalizedTicker,
           limit: selectedExpiration ? 200 : 150,
           expiration: selectedExpiration ?? undefined
-        });
-        console.log('[CLIENT] options chain response', {
-          ticker: normalizedTicker,
-          expirations: response?.expirations?.length ?? 0,
-          sample: response?.expirations?.[0]
-        });
+        }, controller.signal);
         if (!cancelled) {
           const groups = Array.isArray(response.expirations) ? response.expirations : [];
           if (!groups.length) {
@@ -1333,7 +1325,7 @@ function App() {
           }
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const status = error?.response?.status;
           const isNetworkError = !error?.response;
           if (status === 404 && selectedExpiration) {
@@ -1371,6 +1363,7 @@ function App() {
     loadChain();
     return () => {
       cancelled = true;
+      controller.abort();
       if (retryTimeout) {
         clearTimeout(retryTimeout);
       }
@@ -1380,8 +1373,6 @@ function App() {
   useEffect(() => {
     setSelectedLeg(null);
     setContractDetail(null);
-    setQuote(null);
-    setTrades([]);
     setMarketError(null);
     setChainExpirations([]);
     setChainUnderlyingPrice(null);
@@ -1415,6 +1406,7 @@ function App() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     setChainError(null);
     setAvailableExpirations([]);
     setSelectedExpiration(null);
@@ -1422,7 +1414,7 @@ function App() {
     setChainUnderlyingPrice(null);
     async function loadExpirations() {
       try {
-        const payload = await marketApi.getOptionExpirations(normalizedTicker);
+        const payload = await marketApi.getOptionExpirations(normalizedTicker, controller.signal);
         if (cancelled) return;
         const expirations = Array.isArray(payload?.expirations) ? payload.expirations : [];
         setAvailableExpirations(expirations);
@@ -1440,7 +1432,7 @@ function App() {
           setSelectedExpiration(null);
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load expirations';
           setChainError(message);
           setAvailableExpirations([]);
@@ -1451,6 +1443,7 @@ function App() {
     loadExpirations();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [normalizedTicker]);
 
@@ -1540,16 +1533,17 @@ function App() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     async function loadSnapshot() {
       try {
-        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker]);
+        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker], controller.signal);
         if (!cancelled) {
           const snapshot = payload.entries?.[0] ?? null;
           setUnderlyingSnapshot(snapshot);
           underlyingSnapshotRef.current = snapshot ?? null;
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           console.warn('Failed to load underlying snapshot', error);
           setUnderlyingSnapshot(null);
           underlyingSnapshotRef.current = null;
@@ -1559,6 +1553,7 @@ function App() {
     loadSnapshot();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [normalizedTicker]);
 
@@ -1592,8 +1587,9 @@ function App() {
     if (!needsGreeks && !needsIv && !needsOi) return;
 
     let cancelled = false;
+    const controller = new AbortController();
     marketApi
-      .getOptionContractDetail(symbol)
+      .getOptionContractDetail(symbol, controller.signal)
       .then(detail => {
         if (cancelled) return;
         const merged = mergeContractDetail(baseDetail, detail);
@@ -1601,11 +1597,12 @@ function App() {
         setContractDetail(merged);
       })
       .catch(error => {
-        if (cancelled) return;
+        if (cancelled || isAbortError(error)) return;
         console.warn('Failed to load contract details', error);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [selectedLeg]);
 
@@ -1640,9 +1637,12 @@ function App() {
     }
 
     let isMounted = true;
+    let structuralFailure = false;
+    const controller = new AbortController();
     const fetchOrders = async () => {
+      if (structuralFailure) return;
       try {
-        const { orders } = await alpacaApi.getOptionOrders({ status: 'filled', limit: 50 });
+        const { orders } = await getOptionOrdersForPolling({ status: 'filled', limit: 50 }, controller.signal);
         if (!isMounted) return;
 
         // Filter and map orders for the current display ticker
@@ -1668,7 +1668,30 @@ function App() {
           .filter((m): m is SeriesMarker<UTCTimestamp> => m !== null);
 
         setTradeMarkers(markers);
-      } catch (err) {
+      } catch (err: any) {
+        if (!isMounted) return;
+        const classification = classifyOrderHistoryError(err);
+        if (classification === 'canceled') {
+          console.debug('fetchOrders canceled');
+          return;
+        }
+        if (classification === 'legacy-disabled') {
+          structuralFailure = true;
+          console.warn(LEGACY_SUBMISSION_DISABLED_MESSAGE);
+          return;
+        }
+        if (classification === 'structural') {
+          structuralFailure = true;
+          console.warn('Order-history polling stopped after structural HTTP error', {
+            status: err?.response?.status,
+            url: err?.config?.url,
+          });
+          return;
+        }
+        if (err?.code === 'BACKEND_UNAVAILABLE' || classification === 'network') {
+          console.debug('Order-history polling paused while backend health recovers');
+          return;
+        }
         console.error('Failed to fetch trade markers:', err);
       }
     };
@@ -1677,36 +1700,10 @@ function App() {
     const interval = setInterval(fetchOrders, 30000); // Poll every 30s
     return () => {
       isMounted = false;
+      controller.abort();
       clearInterval(interval);
     };
   }, [displayTicker, chartDataSymbol]);
-
-  useEffect(() => {
-    const targets = new Set<string>();
-    watchlistSymbols.forEach((symbol: string) => {
-      const normalized = symbol.toUpperCase();
-      if (!normalized.startsWith('O:')) {
-        targets.add(normalized);
-      }
-    });
-    if (chartTicker && !chartTicker.startsWith('O:')) targets.add(chartTicker.toUpperCase());
-    const tickers = Array.from(targets).filter(Boolean);
-    if (!tickers.length) return;
-    if (warmTickersTimeoutRef.current) {
-      clearTimeout(warmTickersTimeoutRef.current);
-    }
-    warmTickersTimeoutRef.current = setTimeout(() => {
-      marketApi.warmAggregates(tickers).catch(error => {
-        console.warn('Failed to warm aggregate cache', error);
-      });
-    }, 500);
-    return () => {
-      if (warmTickersTimeoutRef.current) {
-        clearTimeout(warmTickersTimeoutRef.current);
-        warmTickersTimeoutRef.current = null;
-      }
-    };
-  }, [watchlistSignature, chartTicker, activeContractSymbol, watchlistSymbols]);
 
   const handleChartAnalysisRun = useCallback(async () => {
     if (!chartAnalysisAllowed) {
@@ -1893,34 +1890,35 @@ function App() {
 
   useEffect(() => {
     if (!activeContractSymbol) {
-      setQuote(null);
-      setTrades([]);
-      setLastLiveQuoteAt(null);
-      setLastLiveTradeAt(null);
+      lastLiveQuoteAtRef.current = null;
+      lastLiveTradeAtRef.current = null;
       lastSnapshotSymbolRef.current = null;
       return;
     }
     const symbol = activeContractSymbol.toUpperCase();
     let cancelled = false;
     let fetching = false;
+    const controller = new AbortController();
 
     const loadSnapshots = async (reason: 'initial' | 'fallback') => {
       if (cancelled || fetching) return;
       fetching = true;
       try {
         const [tradesPayload, quotePayload] = await Promise.all([
-          marketApi.getTrades(symbol),
-          marketApi.getQuote(symbol),
+          marketApi.getTrades(symbol, controller.signal),
+          marketApi.getQuote(symbol, controller.signal),
         ]);
         if (!cancelled) {
-          setTrades((tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
-          setQuote(quotePayload);
+          // REST snapshots land in the same live store the socket feeds, so
+          // panels have one source of truth regardless of transport.
+          replaceTradeHistory(symbol, (tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
+          publishQuote({ ...quotePayload, ticker: symbol });
           if (reason === 'fallback') {
             console.debug('[CLIENT] fallback snapshot refreshed', { symbol, trades: tradesPayload.trades?.length ?? 0 });
           }
         }
       } catch (error: any) {
-        if (!cancelled) {
+        if (!cancelled && !isAbortError(error)) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load market snapshots';
           setMarketError(message);
         }
@@ -1954,6 +1952,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(interval);
     };
   }, [
@@ -2041,42 +2040,49 @@ function App() {
     }
   }
 
+  // Stable handlers so memoized children don't re-render on unrelated updates.
+  const handleSidebarSelectTicker = useCallback((next: string, snapshot?: WatchlistSnapshot | null) => {
+    const normalized = next.toUpperCase();
+    setTicker(normalized);
+    // Selecting a new underlying legitimately resets the chart; the focus
+    // effect will re-request candles for the new symbol.
+    setBars([]);
+    setIndicators(undefined);
+    setMarketSessionMeta(null);
+    setSelectedLeg(null);
+    setContractDetail(null);
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+    if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
+      const referenceContract = snapshot.referenceContract.toUpperCase();
+      pendingSelectionRef.current.contract = referenceContract;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
+      setDesiredContract(referenceContract);
+    } else if (normalized.startsWith('O:')) {
+      pendingSelectionRef.current.contract = normalized;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+      setDesiredContract(normalized);
+    } else {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+    setSidebarOpen(false);
+  }, []);
+
+  const handleSidebarSnapshotUpdate = useCallback((ticker: string, snapshot?: WatchlistSnapshot | null) => {
+    if (!ticker) return;
+    if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
+    setUnderlyingSnapshot(snapshot ?? null);
+    underlyingSnapshotRef.current = snapshot ?? null;
+  }, [normalizedTicker]);
+
   // Sidebar component handles watchlist interactions + ticker selection.
   const sidebar = (
     <TradingSidebar
       selectedTicker={normalizedTicker}
-      onSelectTicker={(next, snapshot) => {
-        const normalized = next.toUpperCase();
-        setTicker(normalized);
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-        setSelectedLeg(null);
-        setContractDetail(null);
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-        if (snapshot?.entryType === 'underlying' && snapshot.referenceContract) {
-          const referenceContract = snapshot.referenceContract.toUpperCase();
-          pendingSelectionRef.current.contract = referenceContract;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(referenceContract);
-          setDesiredContract(referenceContract);
-        } else if (normalized.startsWith('O:')) {
-          pendingSelectionRef.current.contract = normalized;
-          pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-          setDesiredContract(normalized);
-        } else {
-          pendingSelectionRef.current.contract = null;
-          pendingSelectionRef.current.expiration = null;
-          setDesiredContract(null);
-        }
-        setSidebarOpen(false);
-      }}
-      onSnapshotUpdate={(ticker, snapshot) => {
-        if (!ticker) return;
-        if (ticker.toUpperCase() !== normalizedTicker.toUpperCase()) return;
-        setUnderlyingSnapshot(snapshot ?? null);
-        underlyingSnapshotRef.current = snapshot ?? null;
-      }}
+      onSelectTicker={handleSidebarSelectTicker}
+      onSnapshotUpdate={handleSidebarSnapshotUpdate}
       onWatchlistChange={handleWatchlistChange}
       onRequestAutoSelect={handleContractSelectionRequest}
       autoSelectDisabled={contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed}
@@ -2088,11 +2094,10 @@ function App() {
     (leg: OptionLeg | null, source: 'auto' | 'user' = 'user') => {
       selectionSourceRef.current = source;
       setSelectedLeg(leg);
-      if (leg) {
-        setBars([]);
-        setIndicators(undefined);
-        setMarketSessionMeta(null);
-      }
+      // NOTE: do NOT clear chart bars/indicators here. The chart tracks the
+      // underlying equity (chartDataSymbol), which is unchanged when only the
+      // selected contract changes. The chart-focus effect already resets bars
+      // whenever the chart symbol or timeframe actually changes.
       if (source === 'user') {
         setContractSelection(null);
       }
@@ -2129,10 +2134,60 @@ function App() {
     setDesiredContract(null);
   }, []);
 
+  const handleTimeframeChange = useCallback((value: string) => {
+    setTimeframe(value as TimeframeKey);
+  }, []);
+
+  const handleOrderSubmitted = useCallback((ticker: string, side: string, qty: number, price: number) => {
+    console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
+    // Future: add to visual journaling history
+  }, []);
+
+  const handleHeaderTickerSubmit = useCallback((value: string) => {
+    const normalized = value.trim().toUpperCase();
+    if (!normalized) return;
+    setTicker(normalized);
+    setSelectedLeg(null);
+    setContractDetail(null);
+    if (normalized.startsWith('O:')) {
+      pendingSelectionRef.current.contract = normalized;
+      pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
+      setDesiredContract(normalized);
+    } else {
+      pendingSelectionRef.current.contract = null;
+      pendingSelectionRef.current.expiration = null;
+      setDesiredContract(null);
+    }
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarOpen(prev => !prev);
+  }, []);
+
+  const handleToggleSettings = useCallback(() => {
+    setSettingsOpen(prev => !prev);
+  }, []);
+
+  // Scanner rows and Lab panels jump the workspace to a symbol's trading view.
+  const handleWorkspaceTickerSelect = useCallback((value: string) => {
+    setTicker(value);
+    setView('trading');
+  }, []);
+
   // Prefer the latest chain price for Greeks panel, fall back to watchlist snapshot.
   const greeksUnderlyingPrice =
     chainUnderlyingPrice ??
     (underlyingSnapshot && underlyingSnapshot.entryType === 'underlying' ? underlyingSnapshot.price ?? null : null);
+
+  // Stable object identity so the memoized ChartPanel doesn't re-render on
+  // every App render (a fresh object literal would defeat React.memo).
+  const chartFallbackChange = useMemo(
+    () =>
+      underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
+        ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
+        : undefined,
+    [underlyingSnapshot]
+  );
 
   // Determine the best available underlying price for options chain calculations.
   const resolvedUnderlyingPrice = useMemo(() => {
@@ -2336,12 +2391,12 @@ function App() {
   const sentimentTone = sentimentLabel ? sentimentLabel.toLowerCase() : 'neutral';
   const sentimentStyles =
     sentimentTone === 'bullish'
-      ? 'border-emerald-500/30 text-emerald-200 bg-emerald-500/10'
+      ? 'border-intel-pos/30 text-intel-pos bg-intel-pos/10'
       : sentimentTone === 'bearish'
-        ? 'border-rose-500/30 text-rose-200 bg-rose-500/10'
-        : 'border-gray-800 text-gray-300 bg-gray-900/60';
+        ? 'border-intel-neg/30 text-intel-neg bg-intel-neg/10'
+        : 'border-intel-line text-intel-ink2 bg-intel-panel2';
   const sentimentDot =
-    sentimentTone === 'bullish' ? 'bg-emerald-400' : sentimentTone === 'bearish' ? 'bg-rose-400' : 'bg-gray-500';
+    sentimentTone === 'bullish' ? 'bg-intel-pos' : sentimentTone === 'bearish' ? 'bg-intel-neg' : 'bg-intel-ink3';
   const sentimentText =
     sentimentLabel && sentimentScore != null
       ? `${sentimentLabel} (${sentimentScore.toFixed(2)})`
@@ -2349,9 +2404,6 @@ function App() {
   const fedEvent = deskInsight?.fedEvent ?? null;
   const deskHighlights = (deskInsight?.highlights ?? []).slice(0, 3);
   const deskInsightUpdatedLabel = deskInsightUpdatedAt ? new Date(deskInsightUpdatedAt).toLocaleTimeString() : null;
-  const activeContractKey = activeContractSymbol?.toUpperCase() ?? null;
-  const activeLiveQuote = activeContractKey ? liveChainQuotes[activeContractKey] : null;
-  const activeLiveTrade = activeContractKey ? liveChainTrades[activeContractKey] : null;
 
   // Subscribe to a near-the-money strip so the chain shows live prices.
   useEffect(() => {
@@ -2381,16 +2433,7 @@ function App() {
       }
     });
     if (removed.length) {
-      setLiveChainQuotes((prev: Record<string, any>) => {
-        const next = { ...prev };
-        removed.forEach(symbol => delete next[symbol]);
-        return next;
-      });
-      setLiveChainTrades((prev: Record<string, any>) => {
-        const next = { ...prev };
-        removed.forEach(symbol => delete next[symbol]);
-        return next;
-      });
+      removeLiveSymbols(removed);
     }
     liveChainSymbolsRef.current = nextSymbols;
   }, [
@@ -2431,30 +2474,28 @@ function App() {
     ]
   );
 
-  // Main trading workspace layout (chart, insights, greeks, and options chain).
+  // Main trading workspace layout (watchlist, search, chart, scanner, chain, contract analysis, order ticket).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
         {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
           <div
-            className={`rounded-2xl border px-4 py-3 ${marketSessionMeta.marketClosed
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+            className={`flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-panel border-l-2 bg-intel-panel px-3 py-1.5 ${marketSessionMeta.marketClosed
+              ? 'border-intel-warn text-intel-warn'
+              : 'border-intel-info text-intel-info'
               }`}
+            title={marketSessionMeta.note ?? undefined}
           >
-            <p className="text-sm font-semibold flex items-center gap-2">
+            <span className="font-mono text-[11px] font-semibold uppercase tracking-label">
               {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
-              {marketSessionMeta.usingLastSession && (
-                <span className="text-[10px] uppercase tracking-[0.3em] opacity-80">Last Session</span>
-              )}
-            </p>
-            <p className="text-xs mt-1">
+              {marketSessionMeta.usingLastSession ? ' · Last Session' : ''}
+            </span>
+            <span className="font-mono text-[11px] text-intel-ink3">
               {marketSessionMeta.marketClosed
                 ? 'Data reflects the last completed trading session.'
-                : 'Prices are updating slower during the extended session.'}{' '}
+                : 'Prices update slower during the extended session.'}{' '}
               {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
-            </p>
-            {marketSessionMeta.note && <p className="text-[11px] mt-1 opacity-80">{marketSessionMeta.note}</p>}
+            </span>
           </div>
         )}
         <ChartPanel
@@ -2464,7 +2505,7 @@ function App() {
           data={bars}
           indicators={indicators}
           isLoading={chartLoading}
-          onTimeframeChange={value => setTimeframe(value as TimeframeKey)}
+          onTimeframeChange={handleTimeframeChange}
           sessionMode={chartSessionMode}
           onSessionModeChange={setChartSessionMode}
           onRunAnalysis={handleChartAnalysisRun}
@@ -2478,21 +2519,17 @@ function App() {
               ? underlyingSnapshot.price ?? null
               : null
           }
-          fallbackChange={
-            underlyingSnapshot && underlyingSnapshot.entryType === 'underlying'
-              ? { absolute: underlyingSnapshot.change ?? null, percent: underlyingSnapshot.changePercent ?? null }
-              : undefined
-          }
+          fallbackChange={chartFallbackChange}
           sessionMeta={marketSessionMeta}
           markers={tradeMarkers}
         />
-        <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="bg-intel-panel rounded-panel p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-intel-divider pb-2">
             <div>
-              <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Latest Insight</p>
-              <p className="text-sm text-gray-400">AI desk notes for {deskInsightSymbol}</p>
+              <p className="font-mono text-[10px] uppercase tracking-label text-intel-ai">Latest Insight · AI</p>
+              <p className="text-sm text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
               {deskInsightUpdatedLabel && (
-                <p className="text-[11px] text-gray-500">Last updated {deskInsightUpdatedLabel}</p>
+                <p className="text-[11px] text-intel-ink3">Last updated {deskInsightUpdatedLabel}</p>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -2500,7 +2537,7 @@ function App() {
                 type="button"
                 onClick={handleDeskInsightRefresh}
                 disabled={deskInsightLoading || !deskInsightsAllowed}
-                className="px-3 py-1 rounded-full border border-gray-800 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+                className="px-3 py-1 rounded-full border border-intel-line text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent disabled:opacity-60"
               >
                 Refresh
               </button>
@@ -2508,7 +2545,7 @@ function App() {
                 type="button"
                 onClick={handleToggleChat}
                 disabled={!chatAllowed}
-                className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-60"
+                className="px-3 py-1 rounded-full border border-intel-accentLine text-xs text-intel-accent hover:bg-intel-accentSoft disabled:opacity-60"
               >
                 Ask AI
               </button>
@@ -2516,13 +2553,13 @@ function App() {
           </div>
           {deskInsightLoading ? (
             <div className="space-y-2 animate-pulse">
-              <div className="h-3 w-3/4 rounded bg-gray-800" />
-              <div className="h-3 w-1/2 rounded bg-gray-800" />
-              <div className="h-3 w-2/3 rounded bg-gray-800" />
+              <div className="h-3 w-3/4 rounded bg-intel-panel2" />
+              <div className="h-3 w-1/2 rounded bg-intel-panel2" />
+              <div className="h-3 w-2/3 rounded bg-intel-panel2" />
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-gray-200 whitespace-pre-line">
+              <p className="text-sm text-intel-ink whitespace-pre-line">
                 {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
               </p>
               {(sentimentText || fedEvent) && (
@@ -2534,17 +2571,17 @@ function App() {
                     </span>
                   )}
                   {fedEvent && (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-intel-warn/30 bg-intel-warn/10 px-2 py-1 text-intel-warn">
                       Fed: {fedEvent.title ?? fedEvent.name ?? 'Upcoming event'} · {fedEvent.date ?? 'TBD'}
                     </span>
                   )}
                 </div>
               )}
               {deskHighlights.length ? (
-                <ul className="space-y-1 text-xs text-gray-300">
+                <ul className="space-y-1 text-xs text-intel-ink2">
                   {deskHighlights.map((item: string) => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="text-emerald-300">•</span>
+                      <span className="text-intel-accent">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -2565,31 +2602,24 @@ function App() {
           selectionDisabled={!contractSelectionAllowed}
           analysisRequestId={contractAnalysisRequestId}
           analysisDisabled={!contractAnalysisAllowed}
-          liveQuote={activeLiveQuote}
-          liveTrade={activeLiveTrade}
         />
       </div>
-      <div className="lg:col-span-1 min-h-[26rem] min-w-0">
+      <div className="lg:col-span-1 min-h-[26rem] min-w-0 flex flex-col gap-4">
         <OrderTicketPanel
           contract={contractDetail}
-          quote={quote}
-          trades={trades}
           isLoading={false}
           label={displayTicker}
           spotPrice={resolvedUnderlyingPrice}
           marketClosed={marketSessionMeta?.marketClosed}
           afterHours={marketSessionMeta?.afterHours}
           nextOpen={marketSessionMeta?.nextOpen ?? null}
-          autoSubmit={autoSubmitOrders}
-          onOrderSubmitted={(ticker, side, qty, price) => {
-            console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
-            // Future: add to visual journaling history
-          }}
+          onOrderSubmitted={handleOrderSubmitted}
         />
+        <PriceLadder symbol={displayTicker} />
       </div>
       <div className="lg:col-span-3 min-w-0">
         {marketSessionMeta?.marketClosed && (
-          <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 text-amber-100 px-4 py-2 text-xs">
+          <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
             Options quotes are paused — spreads reflect the last available snapshot.
           </div>
         )}
@@ -2604,264 +2634,256 @@ function App() {
           onExpirationChange={handleExpirationChange}
           selectedContract={selectedLeg}
           onContractSelect={handleContractSelection}
-          liveQuotes={liveChainQuotes}
-          liveTrades={liveChainTrades}
           selectedContractDetail={contractDetail}
           preferredSide={preferredOptionSide}
           onRequestAnalysis={handleContractAnalysisRequest}
           analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
         />
       </div>
+      <div className="lg:col-span-3 min-w-0">
+        <OptionsScanner
+          reports={scannerReports}
+          isLoading={scannerLoading}
+          highlights={checklistHighlights}
+          highlightLoading={checklistLoading}
+          onRunScan={handleScannerRefresh}
+          runDisabled={!watchlistSymbols.length || !scannerAllowed}
+          aiDisabled={!scannerAllowed}
+          onTickerSelect={handleWorkspaceTickerSelect}
+        />
+      </div>
     </div>
   );
 
+  const showTradingSidebar = view === 'trading';
+
   return (
-    <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
+    <div className="h-screen w-full overflow-x-hidden flex flex-col bg-intel-bg text-intel-ink">
       <TradingHeader
         selectedTicker={normalizedTicker}
-        onTickerSubmit={value => {
-          const normalized = value.trim().toUpperCase();
-          if (!normalized) return;
-          setTicker(normalized);
-          setSelectedLeg(null);
-          setContractDetail(null);
-          if (normalized.startsWith('O:')) {
-            pendingSelectionRef.current.contract = normalized;
-            pendingSelectionRef.current.expiration = parseOptionExpirationFromTicker(normalized);
-            setDesiredContract(normalized);
-          } else {
-            pendingSelectionRef.current.contract = null;
-            pendingSelectionRef.current.expiration = null;
-            setDesiredContract(null);
-          }
-        }}
+        onTickerSubmit={handleHeaderTickerSubmit}
         onAddToWatchlist={addTickerToWatchlist}
         currentView={view}
         onViewChange={setView}
-        onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+        onToggleSidebar={handleToggleSidebar}
         onToggleChat={handleToggleChat}
         isChatOpen={isChatOpen}
-        onToggleSettings={() => setSettingsOpen(prev => !prev)}
+        onToggleSettings={handleToggleSettings}
         isSettingsOpen={settingsOpen}
         chatDisabled={!chatAllowed}
+        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
+      <MarketContextBar />
       {settingsOpen && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4"
           onClick={() => setSettingsOpen(false)}
         >
           <div
-            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-gray-800 bg-gray-950 p-5 space-y-4"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-panel border border-intel-line bg-intel-panel p-5 space-y-4"
             onClick={event => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Settings</p>
-                <h2 className="text-lg font-semibold">AI Request Controls</h2>
+                <p className="text-xs uppercase tracking-[0.3em] text-intel-ink3">Settings</p>
+                <h2 className="text-lg font-semibold text-intel-ink">AI Request Controls</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setSettingsOpen(false)}
-                className="rounded-full border border-gray-800 px-3 py-1 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white"
+                className="rounded-full border border-intel-line px-3 py-1 text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent"
               >
                 Close
               </button>
             </div>
-            <div className="space-y-4 text-sm text-gray-300">
-              <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
+            <div className="space-y-4 text-sm text-intel-ink2">
+              <label className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
                 <span>
-                  <span className="block text-sm font-semibold text-white">Enable AI features</span>
-                  <span className="block text-xs text-gray-500">Master switch for all AI-powered tools.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Enable AI features</span>
+                  <span className="block text-xs text-intel-ink3">Master switch for all AI-powered tools.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiEnabled(event.target.checked)}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI chat</span>
-                  <span className="block text-xs text-gray-500">Enable the AI Desk chat dock.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI chat</span>
+                  <span className="block text-xs text-intel-ink3">Enable the AI Desk chat dock.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiChatEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiChatEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Desk insights</span>
-                  <span className="block text-xs text-gray-500">Enable AI summaries, sentiment, and highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Desk insights</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI summaries, sentiment, and highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiDeskInsightsEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiDeskInsightsEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Auto desk insights</span>
-                  <span className="block text-xs text-gray-500">Automatically fetch AI insight when you change tickers.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Auto desk insights</span>
+                  <span className="block text-xs text-intel-ink3">Automatically fetch AI insight when you change tickers.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoDeskInsights}
                   onChange={event => setAutoDeskInsights(event.target.checked)}
                   disabled={!deskInsightsAllowed}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI contract selection</span>
-                  <span className="block text-xs text-gray-500">Enable AI-driven contract picks on demand.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI contract selection</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI-driven contract picks on demand.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiContractSelectionEnabled}
                   onChange={event => setAiContractSelectionEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Auto contract selection</span>
-                  <span className="block text-xs text-gray-500">Let AI pick a contract when the chain loads.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Auto contract selection</span>
+                  <span className="block text-xs text-intel-ink3">Let AI pick a contract when the chain loads.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoContractSelection}
                   onChange={event => setAutoContractSelection(event.target.checked)}
                   disabled={!contractSelectionAllowed}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI contract analysis</span>
-                  <span className="block text-xs text-gray-500">Enable “Analyze with AI” explanations.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI contract analysis</span>
+                  <span className="block text-xs text-intel-ink3">Enable “Analyze with AI” explanations.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiContractAnalysisEnabled}
                   onChange={event => setAiContractAnalysisEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">5-minute chart analysis</span>
-                  <span className="block text-xs text-gray-500">Enable the opening-range analysis panel.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">5-minute chart analysis</span>
+                  <span className="block text-xs text-intel-ink3">Enable the opening-range analysis panel.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiChartAnalysisEnabled}
                   onChange={event => setAiChartAnalysisEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI watchlist scanner</span>
-                  <span className="block text-xs text-gray-500">Enable AI scanner reports + checklist highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI watchlist scanner</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI scanner reports + checklist highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiScannerEnabled}
                   onChange={event => setAiScannerEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Portfolio sentiment</span>
-                  <span className="block text-xs text-gray-500">Enable AI sentiment refresh for positions.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Portfolio sentiment</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI sentiment refresh for positions.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiPortfolioSentimentEnabled}
                   onChange={event => setAiPortfolioSentimentEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
             </div>
           </div>
           <div className="space-y-4">
-            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-gray-400 font-semibold flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-intel-ink2 font-semibold flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-intel-warn" />
               Autonomous Operations
             </h3>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
+              <div className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
                 <span>
-                  <span className="block text-sm font-semibold text-amber-100">Auto submit orders</span>
-                  <span className="block text-xs text-amber-500/80">Automatically execute AI-selected contracts.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Order execution</span>
+                  <span className="block text-xs text-intel-ink2">
+                    Research is read-only. Manual orders require explicit confirmation in the ticket.
+                    Autonomous execution runs only through the deterministic automation engine.
+                  </span>
                 </span>
-                <input
-                  type="checkbox"
-                  checked={autoSubmitOrders}
-                  onChange={event => setAutoSubmitOrders(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
-                />
-              </label>
+              </div>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-warn/20 bg-intel-warn/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-amber-100">Auto scanner loop</span>
-                  <span className="block text-xs text-amber-500/80">Periodically refresh watchlist highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-warn">Auto scanner loop</span>
+                  <span className="block text-xs text-intel-warn/80">Periodically refresh watchlist highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoScannerEnabled}
                   onChange={event => setAutoScannerEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
+                  className="h-4 w-4 rounded border-intel-warn/60 bg-intel-panel2 text-intel-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-warn"
                 />
               </label>
             </div>
@@ -2869,41 +2891,45 @@ function App() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden bg-gray-950 relative">
-        {sidebarOpen && (
+      <div className="flex flex-1 overflow-hidden bg-intel-bg relative">
+        <NavRail
+          currentView={view}
+          onViewChange={setView}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
+        {sidebarOpen && showTradingSidebar && (
           <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-            } ${view === 'dashboard' ? 'lg:w-0 lg:overflow-hidden lg:-translate-x-full' : 'lg:w-72'}`}
+          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-intel-bg border-r border-intel-line lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen && showTradingSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+            } ${showTradingSidebar ? 'lg:w-72' : 'lg:w-0 lg:overflow-hidden lg:-translate-x-full'}`}
+          aria-hidden={!showTradingSidebar}
         >
           <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto">
-          {view === 'dashboard' ? (
-            <Dashboard
-              socket={socketRef.current}
-              onTickerSelect={(ticker) => {
-                setTicker(ticker);
-                setView('trading');
-              }}
-            />
-          ) : (
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center py-20 text-sm text-intel-ink2">
+                Loading workspace…
+              </div>
+            }
+          >
             <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
               {marketError && (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
+                <div className="rounded-panel border border-intel-neg/30 bg-intel-neg/10 text-sm text-intel-neg px-4 py-3">
                   {marketError}
                 </div>
               )}
               {aiRequestWarning && (
-                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-100 px-4 py-3 flex items-start justify-between gap-4">
+                <div className="rounded-panel border border-intel-warn/30 bg-intel-warn/10 text-sm text-intel-warn px-4 py-3 flex items-start justify-between gap-4">
                   <span>{aiRequestWarning}</span>
                   <button
                     type="button"
                     onClick={() => setAiRequestWarning(null)}
-                    className="text-xs uppercase tracking-[0.2em] text-amber-200 hover:text-white"
+                    className="text-xs uppercase tracking-[0.2em] text-intel-warn hover:text-intel-ink"
                   >
                     Dismiss
                   </button>
@@ -2911,32 +2937,34 @@ function App() {
               )}
 
               {view === 'trading' && tradingView}
-              {view === 'scanner' && (
+              {view === 'portfolio' && (
                 <div className="pb-24">
-                  <OptionsScanner
-                    reports={scannerReports}
-                    isLoading={scannerLoading}
-                    highlights={checklistHighlights}
-                    highlightLoading={checklistLoading}
-                    onRunScan={handleScannerRefresh}
-                    runDisabled={!watchlistSymbols.length || !scannerAllowed}
-                    aiDisabled={!scannerAllowed}
-                    onTickerSelect={value => {
-                      setTicker(value);
-                      setView('trading');
-                    }}
+                  <PortfolioPanel
+                    aiEnabled={aiEnabled}
+                    sentimentEnabled={aiPortfolioSentimentEnabled}
+                    onOpenSystemOperations={() => setView('operations')}
                   />
                 </div>
               )}
-              {view === 'portfolio' && (
+              {view === 'cockpit' && (
                 <div className="pb-24">
-                  <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+                  <CockpitLayout />
                 </div>
               )}
+              {view === 'intelligence' && <TradingIntelligencePage />}
+              {view === 'operations' && <SystemOperationsPage />}
             </div>
-          )}
+          </Suspense>
         </main>
       </div>
+
+      <MobileTabBar currentView={view} onViewChange={setView} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onViewChange={setView}
+        onTickerSubmit={handleHeaderTickerSubmit}
+      />
 
       <ChatDock
         isOpen={isChatOpen && chatAllowed}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { runAgentScan } from '../../api/agent';
-import { getApiBaseUrl } from '../../api/http';
+import { getSharedSocket } from '../../lib/socket';
 
 type ScannerSignal = {
   strategyId: string;
@@ -26,6 +26,7 @@ type ScannerSignal = {
 };
 
 type Props = {
+  /** @deprecated Signals arrive on the app-wide shared socket; this prop is ignored. */
   socketUrl?: string;
   maxSignals?: number;
   onTickerSelect?: (ticker: string) => void;
@@ -48,7 +49,7 @@ function formatTime(dateStr: string): string {
   });
 }
 
-export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 20, onTickerSelect }: Props) {
+export function ScannerResultsPanel({ maxSignals = 20, onTickerSelect }: Props) {
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastSignalTime, setLastSignalTime] = useState<Date | null>(null);
@@ -57,34 +58,38 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    const socket = io(socketUrl, {
-      transports: ['websocket', 'polling']
-    });
+    // Listen on the app-wide shared socket; do not open a private connection.
+    const socket = getSharedSocket();
     socketRef.current = socket;
 
-    socket.on('connect', () => {
-      console.log('[ScannerResults] Socket connected');
+    const handleConnect = () => {
       setConnected(true);
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[ScannerResults] Socket disconnected');
+    };
+    const handleDisconnect = () => {
       setConnected(false);
-    });
-
-    socket.on('screener_signal', (signal: ScannerSignal) => {
-      console.log('[ScannerResults] Received signal:', signal);
+    };
+    const handleSignal = (signal: ScannerSignal) => {
       setSignals(prev => {
         const updated = [signal, ...prev].slice(0, maxSignals);
         return updated;
       });
       setLastSignalTime(new Date());
-    });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('screener_signal', handleSignal);
+    if (socket.connected) {
+      setConnected(true);
+    }
 
     return () => {
-      socket.disconnect();
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('screener_signal', handleSignal);
+      socketRef.current = null;
     };
-  }, [socketUrl, maxSignals]);
+  }, [maxSignals]);
 
   const clearSignals = () => {
     setSignals([]);
@@ -250,10 +255,10 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
       <style>{`
         .agent-insight {
           margin: 1rem;
-          background: rgba(124, 58, 237, 0.1); /* Violet tint */
-          border: 1px solid rgba(124, 58, 237, 0.3);
+          background: #111a2b;
+          border: 1px solid #1e293b;
           border-radius: 0.5rem;
-          color: #e5e5e5;
+          color: #e9edf6;
           font-size: 0.9rem;
           overflow: hidden;
         }
@@ -262,18 +267,18 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
           align-items: center;
           gap: 0.5rem;
           padding: 0.75rem 1rem;
-          background: rgba(124, 58, 237, 0.15);
-          border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+          background: rgba(245, 166, 35, 0.12);
+          border-bottom: 1px solid rgba(245, 166, 35, 0.38);
         }
         .agent-title {
           font-weight: 600;
-          color: #a78bfa;
+          color: #f5a623;
           flex: 1;
         }
         .close-agent {
           background: none;
           border: none;
-          color: #a78bfa;
+          color: #f5a623;
           font-size: 1.2rem;
           cursor: pointer;
         }
@@ -290,9 +295,9 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
             align-items: center;
             gap: 0.5rem;
             padding: 0.4rem 0.85rem;
-            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
-            border: 1px solid #5b21b6;
-            color: white;
+            background: #f5a623;
+            border: 1px solid #f5a623;
+            color: #020617;
             border-radius: 0.375rem;
             font-size: 0.75rem;
             font-weight: 600;
@@ -308,11 +313,11 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
             opacity: 0.7;
             cursor: wait;
         }
-        
+
         .scanner-panel {
-          background: #111118;
-          border-radius: 1rem;
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: #0b1220;
+          border-radius: 12px;
+          border: 1px solid #1e293b;
           overflow: hidden;
         }
 
@@ -321,19 +326,20 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
           justify-content: space-between;
           align-items: flex-start;
           padding: 1.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          border-bottom: 1px solid #1e293b;
         }
 
         .header-title h2 {
           margin: 0 0 0.25rem;
           font-size: 1.25rem;
           font-weight: 600;
+          color: #e9edf6;
         }
 
         .header-subtitle {
           margin: 0;
           font-size: 0.85rem;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .header-controls {
@@ -356,21 +362,21 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         }
 
         .connection-status.connected .status-dot {
-          background: #10b981;
-          box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+          background: #35d29a;
+          box-shadow: 0 0 8px rgba(53, 210, 154, 0.5);
           animation: pulse 2s ease-in-out infinite;
         }
 
         .connection-status.connected .status-text {
-          color: #10b981;
+          color: #35d29a;
         }
 
         .connection-status.disconnected .status-dot {
-          background: #ef4444;
+          background: #f87171;
         }
 
         .connection-status.disconnected .status-text {
-          color: #ef4444;
+          color: #f87171;
         }
 
         @keyframes pulse {
@@ -381,23 +387,23 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         .clear-btn {
           padding: 0.4rem 0.75rem;
           background: transparent;
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          border: 1px solid #1e293b;
           border-radius: 0.375rem;
-          color: #9ca3af;
+          color: #94a3b8;
           font-size: 0.75rem;
           cursor: pointer;
           transition: all 0.15s ease;
         }
 
         .clear-btn:hover {
-          border-color: rgba(255, 255, 255, 0.2);
-          color: #e5e5e5;
+          border-color: rgba(245, 166, 35, 0.38);
+          color: #f5a623;
         }
 
         .empty-state {
           padding: 4rem 2rem;
           text-align: center;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .empty-icon {
@@ -408,7 +414,7 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
 
         .empty-hint {
           font-size: 0.8rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .signals-list {
@@ -421,16 +427,16 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         }
 
         .signal-card {
-          background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          border-radius: 0.75rem;
+          background: #111a2b;
+          border: 1px solid #1e293b;
+          border-radius: 12px;
           padding: 1rem;
           cursor: pointer;
           transition: all 0.15s ease;
         }
 
         .signal-card:hover {
-          border-color: rgba(16, 185, 129, 0.4);
+          border-color: rgba(245, 166, 35, 0.38);
           transform: translateY(-1px);
         }
 
@@ -465,20 +471,22 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         .signal-ticker {
           font-size: 1rem;
           font-weight: 600;
-          color: #10b981;
+          color: #f5a623;
+          font-variant-numeric: tabular-nums;
         }
 
         .signal-strategy {
           font-size: 0.75rem;
-          color: #9ca3af;
-          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
+          background: #020617;
           padding: 0.2rem 0.5rem;
           border-radius: 0.25rem;
         }
 
         .signal-time {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
+          font-variant-numeric: tabular-nums;
         }
 
         .signal-details {
@@ -501,7 +509,7 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         }
 
         .detail-item.highlight {
-          background: rgba(16, 185, 129, 0.1);
+          background: rgba(245, 166, 35, 0.12);
           padding: 0.35rem 0.5rem;
           border-radius: 0.375rem;
           margin: -0.35rem;
@@ -509,7 +517,7 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
 
         .detail-label {
           font-size: 0.65rem;
-          color: #6b7280;
+          color: #64748b;
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
@@ -517,35 +525,37 @@ export function ScannerResultsPanel({ socketUrl = getApiBaseUrl(), maxSignals = 
         .detail-value {
           font-size: 0.85rem;
           font-weight: 500;
+          color: #e9edf6;
+          font-variant-numeric: tabular-nums;
         }
 
         .detail-value.yield {
-          color: #10b981;
+          color: #35d29a;
           font-size: 1rem;
           font-weight: 700;
         }
 
         .detail-value.positive {
-          color: #10b981;
+          color: #35d29a;
         }
 
         .signal-cta {
           margin-top: 0.75rem;
           padding-top: 0.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          border-top: 1px solid #1e293b;
         }
 
         .cta-text {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .panel-footer {
           padding: 0.75rem 1rem;
           text-align: right;
           font-size: 0.75rem;
-          color: #6b7280;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          color: #64748b;
+          border-top: 1px solid #1e293b;
         }
       `}</style>
     </div>

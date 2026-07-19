@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { io } from 'socket.io-client';
 import { futuresApi } from '../../api';
-import { getApiBaseUrl } from '../../api/http';
+import { getSharedSocket } from '../../lib/socket';
 import { ReconciliationView } from './ReconciliationView';
 import type { FuturesEngineState } from '../../types/futures';
 
@@ -32,7 +31,8 @@ export function EngineRoomDashboard({ sessionId }: Props) {
   }, []);
 
   useEffect(() => {
-    const socket = io(getApiBaseUrl(), { transports: ['websocket', 'polling'] });
+    // Listen on the app-wide shared socket; do not open a private connection.
+    const socket = getSharedSocket();
 
     const handleEngineUpdate = () => {
       futuresApi.getFuturesEngineStatus().then(setEngineStatus).catch(() => undefined);
@@ -49,7 +49,6 @@ export function EngineRoomDashboard({ sessionId }: Props) {
     return () => {
       socket.off('futures:engine:update', handleEngineUpdate);
       socket.off('futures:risk:update', handleRiskUpdate);
-      socket.disconnect();
     };
   }, [sessionId]);
 

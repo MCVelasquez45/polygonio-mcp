@@ -6,7 +6,7 @@ export async function seedDefaultContractSpecs() {
     await FuturesContractSpecModel.findOneAndUpdate(
       { symbol: spec.symbol },
       { $set: spec },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
   }
 }

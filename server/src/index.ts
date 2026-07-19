@@ -1,14 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import { createServer } from 'http';
+import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 // Central application entrypoint wiring platform feature routers + shared middleware.
 import { analyzeRouter } from './features/assistant';
 import { chatRouter, conversationsRouter } from './features/conversations';
 import { marketRouter } from './features/market';
-import { brokerRouter } from './features/broker';
+import { brokerRouter, manualTradingRouter } from './features/broker';
 import { analysisRouter } from './features/analysis';
 import { handoffRouter } from './features/handoff/handoff.routes';
 import { labRouter } from './features/lab/lab.routes';
@@ -16,7 +17,34 @@ import { chartHealthRouter } from './features/market/chartHealth.routes';
 import { engineRouter } from './features/engine/engine.routes';
 import { futuresRouter, initFuturesRuntime, seedDefaultContractSpecs } from './features/futures';
 import { strategyRouter } from './features/strategy/strategy.routes';
+import { automationRouter } from './features/automation/automation.routes';
+import { automationOpsRouter } from './features/automation/automationOps.routes';
+import { watchlistRouter } from './features/watchlist';
+import { systemHealthRouter } from './features/system/systemHealth.routes';
+import {
+  startAutomationScheduler,
+  stopAutomationScheduler,
+} from './features/automation/services/schedulerController.service';
+import {
+  startMonitorScheduler,
+  stopMonitorScheduler,
+} from './features/automation/services/monitorController.service';
+import {
+  startOrderReconciliationWorker,
+  stopOrderReconciliationWorker,
+} from './features/automation/services/orderReconciliation.service';
+import { getAutomationRuntime } from './features/automation/services/sessionRecovery.service';
+import { portfolioRouter } from './features/portfolio/portfolio.routes';
+import {
+  registerAutomationVisibilityHandlers,
+  startAutomationVisibilityBroadcaster,
+  stopAutomationVisibilityBroadcaster,
+} from './features/portfolio/automationVisibilitySocket.service';
+import { marketDataRouter } from './features/marketData/marketData.routes';
+import { intelligenceRouter } from './features/intelligence/intelligence.routes';
+import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
+import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
 import {
@@ -28,7 +56,12 @@ import {
 import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
 
 const app = express();
-app.use(cors());
+const corsOrigin = buildCorsOrigin();
+const corsOptions: CorsOptions = {
+  origin: corsOrigin,
+  credentials: false,
+};
+app.use(cors(corsOptions));
 
 // Proxy: Python Screener Service
 // Must be placed before bodyParser/express.json() to stream requests correctly
@@ -43,13 +76,35 @@ app.use(
 
 app.use(express.json());
 
-app.use((req, _res, next) => {
-  console.log(`[SERVER] ${req.method} ${req.originalUrl} received`, req.body ?? {});
+type RequestWithContext = express.Request & { requestId?: string };
+
+app.use((req: RequestWithContext, res, next) => {
+  const headerRequestId = req.header('x-request-id');
+  const requestId = headerRequestId && headerRequestId.length <= 128 ? headerRequestId : randomUUID();
+  req.requestId = requestId;
+  res.setHeader('x-request-id', requestId);
+  writeStructuredLog({
+    component: 'server',
+    module: 'http',
+    event: 'HTTP_REQUEST',
+    severity: 'info',
+    requestId,
+    context: {
+      method: req.method,
+      path: req.originalUrl,
+      queryParamNames: Object.keys(req.query ?? {}),
+    },
+  });
   next();
 });
 
 app.get('/health', (_req, res) => {
-  console.log('[SERVER] GET /health responded with ok');
+  writeStructuredLog({
+    component: 'server',
+    module: 'health',
+    event: 'HEALTH_CHECK_OK',
+    severity: 'debug',
+  });
   res.json({ ok: true });
 });
 
@@ -58,6 +113,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/broker', brokerRouter);
+app.use('/api/trading/manual', manualTradingRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/handoff', handoffRouter);
 app.use('/api/lab', labRouter);
@@ -66,9 +122,26 @@ app.use('/api/engine', engineRouter);
 app.use('/api/lab/futures', futuresRouter);
 app.use('/api/engine/futures', futuresRouter);
 app.use('/api/strategy', strategyRouter);
+app.use('/api/automation', automationRouter);
+app.use('/api/automation', automationOpsRouter);
+app.use('/api/watchlist', watchlistRouter);
+app.use('/api/system', systemHealthRouter);
+app.use('/api/portfolio', portfolioRouter);
+app.use('/api/market-data', marketDataRouter);
+app.use('/api/intelligence', intelligenceRouter);
 
-app.use((error: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[SERVER] Unhandled error', { path: req.originalUrl, error });
+app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
+  writeStructuredLog({
+    component: 'server',
+    module: 'http',
+    event: 'UNHANDLED_ERROR',
+    severity: 'error',
+    requestId: req.requestId,
+    context: {
+      path: req.originalUrl,
+      error: serializeErrorForLog(error),
+    },
+  });
   const status = error?.response?.status ?? error?.status ?? 500;
   const payload = error?.response?.data ?? { error: error?.message ?? 'Internal server error' };
   res.status(status).json(payload);
@@ -78,21 +151,38 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const httpServer = createServer(app);
 
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*' }
+  cors: {
+    origin: corsOrigin,
+    credentials: false,
+  }
 });
 app.set('io', io);
 initLiveFeed(io);
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 initFuturesRuntime(io);
+startAutomationVisibilityBroadcaster(io);
 
 io.on('connection', socket => {
-  console.log('[SERVER] WebSocket client connected:', socket.id);
+  writeStructuredLog({
+    component: 'server',
+    module: 'socket',
+    event: 'SOCKET_CONNECTED',
+    severity: 'info',
+    context: { socketId: socket.id },
+  });
   socket.emit('connected', { msg: 'WebSocket connected' });
   registerLiveFeedHandlers(socket);
   registerChartHubHandlers(socket);
+  registerAutomationVisibilityHandlers(io, socket);
 
   socket.on('disconnect', reason => {
-    console.log('[SERVER] WebSocket client disconnected:', socket.id, reason);
+    writeStructuredLog({
+      component: 'server',
+      module: 'socket',
+      event: 'SOCKET_DISCONNECTED',
+      severity: 'info',
+      context: { socketId: socket.id, reason },
+    });
   });
 });
 
@@ -138,7 +228,51 @@ async function start() {
   httpServer.listen(PORT, () => {
     console.log(`[SERVER] API listening on :${PORT}`);
   });
+
+  // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
+  // server is up so a broker/Mongo problem never blocks unrelated features.
+  // When Mongo is down this resolves to state UNAVAILABLE without throwing.
+  //
+  // The two schedulers start ONLY after init resolves ready — i.e. after
+  // startup reconciliation succeeded (reconciliation before activation).
+  //   • evaluation scheduler → entries (evaluate → approve → submit)
+  //   • monitoring scheduler → everything after a fill (monitor, stop-loss,
+  //     profit-target, cancel unfilled entries, reconcile EXITING, flatten EOD)
+  // Both take independent single-owner DB leases; together they make the full
+  // paper-trading lifecycle autonomous.
+  initializeAutomation()
+    .then(result => {
+      if (result.ready) {
+        // Keep broker truth current via the REST reconciliation worker (also the
+        // fallback when a trade-update stream is unavailable).
+        const adapter = getAutomationRuntime().adapter ?? undefined;
+        if (adapter) startOrderReconciliationWorker(adapter);
+        startAutomationScheduler();
+        startMonitorScheduler();
+      }
+    })
+    .catch(error => {
+      console.error('[SERVER] Automation initialization failed (automation stays unavailable)', error);
+    });
 }
+
+// Graceful shutdown: release the scheduler lease so a replacement instance can
+// take ownership immediately instead of waiting for the lease to expire.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[SERVER] ${signal} received — stopping automation schedulers`);
+  stopAutomationVisibilityBroadcaster();
+  stopOrderReconciliationWorker();
+  await Promise.all([
+    stopAutomationScheduler(signal).catch(() => undefined),
+    stopMonitorScheduler(signal).catch(() => undefined),
+  ]);
+  process.exit(0);
+}
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
 start().catch(error => {
   console.error('[SERVER] Uncaught bootstrap error', error);
@@ -219,4 +353,65 @@ function logMongoGuidance(config: MongoConfig) {
     console.log('[SERVER] Tip: start mongod locally or point MONGO_URI to Atlas.');
   }
   console.log('[SERVER] AGG_WORKER_ENABLED controls background aggregate ingestion.');
+}
+
+type CorsOriginCallback = NonNullable<CorsOptions['origin']>;
+
+function buildCorsOrigin(): CorsOriginCallback {
+  const configuredOrigins = [
+    ...splitOrigins(process.env.CORS_ORIGINS),
+    ...splitOrigins(process.env.CLIENT_ORIGIN),
+    ...splitOrigins(process.env.FRONTEND_ORIGIN),
+    ...splitOrigins(process.env.VERCEL_FRONTEND_URL),
+  ];
+  const allowed = new Set(
+    configuredOrigins.map(origin => origin.replace(/\/+$/, '')).filter(Boolean)
+  );
+
+  if (process.env.NODE_ENV !== 'production') {
+    for (const origin of [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:3000',
+      'http://localhost:4000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:4000',
+    ]) {
+      allowed.add(origin);
+    }
+  }
+
+  if (process.env.NODE_ENV === 'production' && allowed.size === 0) {
+    writeStructuredLog({
+      component: 'server',
+      module: 'cors',
+      event: 'CORS_ORIGINS_NOT_CONFIGURED',
+      severity: 'warning',
+      context: {
+        message: 'Browser CORS requests will be rejected until CORS_ORIGINS or FRONTEND_ORIGIN is configured.',
+      },
+    });
+  }
+
+  return (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const normalizedOrigin = origin.replace(/\/+$/, '');
+    if (allowed.has(normalizedOrigin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
+  };
+}
+
+function splitOrigins(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
 }

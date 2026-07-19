@@ -30,19 +30,18 @@ function formatMsAgo(ms: number | null): string {
 
 function getModeColor(mode: string): string {
   switch (mode) {
-    case 'LIVE': return '#10b981';
-    case 'DEGRADED': return '#f59e0b';
-    case 'BACKFILLING': return '#3b82f6';
-    case 'FROZEN': return '#6b7280';
-    default: return '#9ca3af';
+    case 'LIVE': return '#35d29a';      // intel-pos
+    case 'DEGRADED': return '#fbbf24';  // intel-warn
+    case 'BACKFILLING': return '#6aa5f5'; // intel-info
+    case 'FROZEN': return '#64748b';    // intel-ink3
+    default: return '#94a3b8';          // intel-ink2
   }
 }
 
 function getQualityColor(score: number): string {
-  if (score >= 80) return '#10b981';
-  if (score >= 60) return '#f59e0b';
-  if (score >= 40) return '#ef4444';
-  return '#dc2626';
+  if (score >= 80) return '#35d29a';  // intel-pos
+  if (score >= 60) return '#fbbf24';  // intel-warn
+  return '#f87171';                   // intel-neg
 }
 
 export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs = 5000 }: Props) {
@@ -147,14 +146,14 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
                 </div>
                 <div className="stat-row">
                   <span className="stat-key">Gaps</span>
-                  <span className="stat-val" style={{ color: metric.gapsDetected > 0 ? '#f59e0b' : 'inherit' }}>
+                  <span className="stat-val" style={{ color: metric.gapsDetected > 0 ? '#fbbf24' : 'inherit' }}>
                     {metric.gapsDetected}
                   </span>
                 </div>
                 {metric.anomalyCount > 0 && (
                   <div className="stat-row">
                     <span className="stat-key">Anomalies</span>
-                    <span className="stat-val" style={{ color: '#ef4444' }}>
+                    <span className="stat-val" style={{ color: '#f87171' }}>
                       {metric.anomalyCount}
                     </span>
                   </div>
@@ -177,9 +176,9 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
 
       <style>{`
         .data-health-panel {
-          background: #111118;
-          border-radius: 1rem;
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: #0b1220;
+          border-radius: 12px;
+          border: 1px solid #1e293b;
           overflow: hidden;
         }
 
@@ -188,19 +187,20 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
           justify-content: space-between;
           align-items: flex-start;
           padding: 1.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          border-bottom: 1px solid #1e293b;
         }
 
         .header-title h2 {
           margin: 0 0 0.25rem;
           font-size: 1.25rem;
           font-weight: 600;
+          color: #e9edf6;
         }
 
         .header-subtitle {
           margin: 0;
           font-size: 0.85rem;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .header-stats {
@@ -217,19 +217,21 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         .stat-value {
           font-size: 1.5rem;
           font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          color: #e9edf6;
         }
 
         .stat-label {
           font-size: 0.75rem;
-          color: #9ca3af;
+          color: #64748b;
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
 
         .error-banner {
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.3);
-          color: #fca5a5;
+          background: rgba(248, 113, 113, 0.1);
+          border: 1px solid rgba(248, 113, 113, 0.4);
+          color: #f87171;
           padding: 0.75rem 1rem;
           margin: 1rem;
           border-radius: 0.5rem;
@@ -239,7 +241,7 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         .loading-state, .empty-state {
           padding: 3rem;
           text-align: center;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .empty-icon {
@@ -250,7 +252,7 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
 
         .empty-hint {
           font-size: 0.8rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .metrics-grid {
@@ -261,9 +263,9 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         }
 
         .metric-card {
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 0.75rem;
+          background: #111a2b;
+          border: 1px solid #1e293b;
+          border-radius: 12px;
           padding: 1rem;
         }
 
@@ -278,12 +280,13 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
           font-size: 1.1rem;
           font-weight: 600;
           letter-spacing: 0.02em;
+          color: #e9edf6;
         }
 
         .metric-timeframe {
           font-size: 0.8rem;
-          color: #9ca3af;
-          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
+          background: #020617;
           padding: 0.25rem 0.5rem;
           border-radius: 0.25rem;
         }
@@ -304,8 +307,8 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         }
 
         .source-badge {
-          background: rgba(255, 255, 255, 0.05);
-          color: #9ca3af;
+          background: #020617;
+          color: #94a3b8;
         }
 
         .metric-stats {
@@ -321,18 +324,20 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         }
 
         .stat-key {
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .stat-val {
           font-weight: 500;
+          font-variant-numeric: tabular-nums;
+          color: #e9edf6;
         }
 
         .throttle-warning {
           margin-top: 0.75rem;
           font-size: 0.8rem;
-          color: #f59e0b;
-          background: rgba(245, 158, 11, 0.1);
+          color: #fbbf24;
+          background: rgba(251, 191, 36, 0.1);
           padding: 0.5rem;
           border-radius: 0.25rem;
           text-align: center;
@@ -342,8 +347,8 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
           padding: 0.75rem 1rem;
           text-align: right;
           font-size: 0.75rem;
-          color: #6b7280;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          color: #64748b;
+          border-top: 1px solid #1e293b;
         }
       `}</style>
     </div>

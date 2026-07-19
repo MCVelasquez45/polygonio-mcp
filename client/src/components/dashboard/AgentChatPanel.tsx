@@ -219,42 +219,43 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
           display: flex;
           flex-direction: column;
           height: calc(100vh - 120px);
-          background: rgba(17, 17, 24, 0.95);
+          background: #0b1220;
           border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          border: 1px solid #1e293b;
           overflow: hidden;
         }
-        
+
         .agent-chat-panel.embedded {
           height: 100%;
           border-radius: 0;
           border: none;
-          border-left: 1px solid #333;
-          background: #252526;
+          border-left: 1px solid #1e293b;
+          background: #0b1220;
         }
 
         .chat-header.embedded {
-           background: #2d2d2d;
+           background: #111a2b;
            padding: 0.5rem 1rem;
         }
 
         .close-btn {
           background: transparent;
           border: none;
-          color: #9ca3af;
+          color: #94a3b8;
           font-size: 1.2rem;
           cursor: pointer;
           margin-left: 0.5rem;
         }
-        .close-btn:hover { color: #e5e5e5; }
+        .close-btn:hover { color: #e9edf6; }
 
         .chat-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
           padding: 1rem 1.25rem;
-          background: rgba(0, 0, 0, 0.3);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          background: #020617;
+          border-bottom: 1px solid #1e293b;
+          color: #e9edf6;
         }
 
         .header-title {
@@ -271,9 +272,9 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .clear-btn {
           padding: 0.4rem 0.75rem;
-          background: rgba(239, 68, 68, 0.1);
+          background: rgba(248, 113, 113, 0.1);
           color: #f87171;
-          border: 1px solid rgba(239, 68, 68, 0.2);
+          border: 1px solid rgba(248, 113, 113, 0.4);
           border-radius: 6px;
           font-size: 0.8rem;
           cursor: pointer;
@@ -281,7 +282,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         }
 
         .clear-btn:hover:not(:disabled) {
-          background: rgba(239, 68, 68, 0.2);
+          background: rgba(248, 113, 113, 0.2);
         }
 
         .clear-btn:disabled {
@@ -291,13 +292,13 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .quick-actions {
           padding: 0.75rem 1rem;
-          background: rgba(0, 0, 0, 0.2);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          background: #020617;
+          border-bottom: 1px solid #1e293b;
         }
 
         .quick-label {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
@@ -311,9 +312,9 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .action-btn {
           padding: 0.4rem 0.75rem;
-          background: rgba(16, 185, 129, 0.08);
-          color: #10b981;
-          border: 1px solid rgba(16, 185, 129, 0.15);
+          background: rgba(245, 166, 35, 0.12);
+          color: #f5a623;
+          border: 1px solid rgba(245, 166, 35, 0.38);
           border-radius: 6px;
           font-size: 0.8rem;
           cursor: pointer;
@@ -321,8 +322,8 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         }
 
         .action-btn:hover:not(:disabled) {
-          background: rgba(16, 185, 129, 0.15);
-          border-color: rgba(16, 185, 129, 0.3);
+          background: rgba(245, 166, 35, 0.2);
+          border-color: rgba(245, 166, 35, 0.5);
         }
 
         .action-btn:disabled {
@@ -345,7 +346,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
           align-items: center;
           justify-content: center;
           height: 100%;
-          color: #6b7280;
+          color: #64748b;
           text-align: center;
         }
 
@@ -358,7 +359,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         .empty-title {
           font-size: 1.1rem;
           font-weight: 500;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .empty-subtitle {
@@ -374,14 +375,14 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .message.user {
           align-self: flex-end;
-          background: rgba(59, 130, 246, 0.15);
-          border: 1px solid rgba(59, 130, 246, 0.2);
+          background: rgba(106, 165, 245, 0.12);
+          border: 1px solid rgba(106, 165, 245, 0.35);
         }
 
         .message.assistant {
           align-self: flex-start;
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: #111a2b;
+          border: 1px solid #1e293b;
         }
 
         .message-header {
@@ -399,21 +400,21 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         }
 
         .message.user .message-role {
-          color: #60a5fa;
+          color: #6aa5f5;
         }
 
         .message.assistant .message-role {
-          color: #10b981;
+          color: #f5a623;
         }
 
         .message-time {
-          color: #6b7280;
+          color: #64748b;
         }
 
         .message-content {
           font-size: 0.9rem;
           line-height: 1.6;
-          color: #e5e5e5;
+          color: #e9edf6;
         }
 
         .message-content h1,
@@ -421,7 +422,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         .message-content h3 {
           margin-top: 1rem;
           margin-bottom: 0.5rem;
-          color: #f3f4f6;
+          color: #e9edf6;
         }
 
         .message-content ul,
@@ -455,7 +456,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         }
 
         .message-content strong {
-          color: #f3f4f6;
+          color: #e9edf6;
         }
 
         .loading-indicator {
@@ -467,7 +468,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
         .loading-dot {
           width: 6px;
           height: 6px;
-          background: #10b981;
+          background: #f5a623;
           border-radius: 50%;
           animation: bounce 1.4s infinite ease-in-out;
         }
@@ -478,7 +479,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .loading-text {
           margin-left: 0.5rem;
-          color: #6b7280;
+          color: #64748b;
           font-size: 0.85rem;
         }
 
@@ -491,28 +492,28 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
           display: flex;
           gap: 0.75rem;
           padding: 1rem;
-          background: rgba(0, 0, 0, 0.3);
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          background: #020617;
+          border-top: 1px solid #1e293b;
         }
 
         .chat-input {
           flex: 1;
           padding: 0.75rem 1rem;
-          background: rgba(0, 0, 0, 0.3);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: #111a2b;
+          border: 1px solid #1e293b;
           border-radius: 8px;
-          color: #e5e5e5;
+          color: #e9edf6;
           font-size: 0.9rem;
           outline: none;
           transition: border-color 0.15s ease;
         }
 
         .chat-input:focus {
-          border-color: rgba(16, 185, 129, 0.4);
+          border-color: rgba(245, 166, 35, 0.38);
         }
 
         .chat-input::placeholder {
-          color: #6b7280;
+          color: #64748b;
         }
 
         .chat-input:disabled {
@@ -521,8 +522,8 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .send-btn {
           padding: 0 1.25rem;
-          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-          color: white;
+          background: #f5a623;
+          color: #020617;
           border: none;
           border-radius: 8px;
           font-size: 1.1rem;
@@ -532,7 +533,7 @@ export function AgentChatPanel({ apiBase = getAgentBaseUrl(), embedded = false, 
 
         .send-btn:hover:not(:disabled) {
           transform: scale(1.02);
-          box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+          box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);
         }
 
         .send-btn:disabled {

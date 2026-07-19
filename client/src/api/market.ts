@@ -97,25 +97,31 @@ export async function warmAggregates(tickers: string[]): Promise<{ tickers: stri
   return data;
 }
 
-export async function getTrades(ticker: string): Promise<TradesResponse> {
-  const { data } = await http.get<TradesResponse>(`/api/market/trades/${ticker}`);
+// Fetches that run on ticker/contract switches accept an AbortSignal so a fast
+// symbol change cancels the in-flight request instead of leaving it orphaned.
+export async function getTrades(ticker: string, signal?: AbortSignal): Promise<TradesResponse> {
+  const { data } = await http.get<TradesResponse>(`/api/market/trades/${ticker}`, { signal });
   return data;
 }
 
-export async function getQuote(ticker: string): Promise<QuoteSnapshot & MarketMeta> {
-  const { data } = await http.get<QuoteSnapshot & MarketMeta>(`/api/market/quotes/${ticker}`);
+export async function getQuote(ticker: string, signal?: AbortSignal): Promise<QuoteSnapshot & MarketMeta> {
+  const { data } = await http.get<QuoteSnapshot & MarketMeta>(`/api/market/quotes/${ticker}`, { signal });
   return data;
 }
 
-export async function getOptionsChain(params: { ticker: string; limit?: number; expiration?: string | null }): Promise<OptionChainData & MarketMeta> {
+export async function getOptionsChain(
+  params: { ticker: string; limit?: number; expiration?: string | null },
+  signal?: AbortSignal
+): Promise<OptionChainData & MarketMeta> {
   const { data } = await http.get<OptionChainData & MarketMeta>(`/api/market/options/chain/${params.ticker}`, {
     params: { limit: params.limit, expiration: params.expiration ?? undefined },
+    signal,
   });
   return data;
 }
 
-export async function getOptionContractDetail(symbol: string): Promise<OptionContractDetail & MarketMeta> {
-  const { data } = await http.get<OptionContractDetail & MarketMeta>(`/api/market/options/contracts/${symbol}`);
+export async function getOptionContractDetail(symbol: string, signal?: AbortSignal): Promise<OptionContractDetail & MarketMeta> {
+  const { data } = await http.get<OptionContractDetail & MarketMeta>(`/api/market/options/contracts/${symbol}`, { signal });
   return data;
 }
 
@@ -124,8 +130,8 @@ type ExpirationsResponse = {
   expirations: string[];
 };
 
-export async function getOptionExpirations(ticker: string): Promise<ExpirationsResponse> {
-  const { data } = await http.get<ExpirationsResponse>(`/api/market/options/expirations/${ticker}`);
+export async function getOptionExpirations(ticker: string, signal?: AbortSignal): Promise<ExpirationsResponse> {
+  const { data } = await http.get<ExpirationsResponse>(`/api/market/options/expirations/${ticker}`, { signal });
   return data;
 }
 
@@ -171,11 +177,11 @@ export async function savePersistedSelection(selection: PersistedSelection, user
   await http.post('/api/market/options/selection', { ...selection, userId });
 }
 
-export async function getWatchlistSnapshots(tickers: string[]): Promise<WatchlistResponse> {
+export async function getWatchlistSnapshots(tickers: string[], signal?: AbortSignal): Promise<WatchlistResponse> {
   if (!tickers.length) {
     return { entries: [] };
   }
   const params = { tickers: tickers.join(',') };
-  const { data } = await http.get<WatchlistResponse>('/api/market/watchlist', { params });
+  const { data } = await http.get<WatchlistResponse>('/api/market/watchlist', { params, signal });
   return data;
 }

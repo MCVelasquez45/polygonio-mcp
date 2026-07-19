@@ -1,7 +1,11 @@
 // Builds summary reports for watchlist tickers. Prefers AI-generated summaries
 // (agent service) but falls back to deterministic Massive snapshots when the
 // agent is offline.
-import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume } from '../../../shared/data/massive';
+import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume, REQUEST_PRIORITY } from '../../../shared/data/massive';
+
+// Watchlist refreshes are decoration: they must yield provider capacity to
+// automation decisions and never trigger high-priority fetch storms.
+const WATCHLIST_SNAPSHOT_OPTS = { priority: REQUEST_PRIORITY.WATCHLIST, cacheTtlMs: 30_000 } as const;
 import { getRecentAggregateBars } from '../../market/services/aggregatesStore';
 import { agentAnalyze, type AiRequestMeta } from '../../assistant/agentClient';
 
@@ -125,7 +129,7 @@ async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContex
     tickers.map(async symbol => {
       const isOptionSymbol = symbol.startsWith('O:');
       const [snapshot, dailyBars, minuteBars, shortInterestPayload, shortVolumePayload] = await Promise.all([
-        getMassiveOptionsSnapshot(symbol).catch(() => null),
+        getMassiveOptionsSnapshot(symbol, WATCHLIST_SNAPSHOT_OPTS).catch(() => null),
         getRecentAggregateBars(symbol, 1, 'day', 10).catch(() => []),
         getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => []),
         isOptionSymbol
@@ -218,7 +222,7 @@ async function buildSnapshotReports(tickers: string[]): Promise<WatchlistReport[
   const reports = await Promise.all(
     tickers.map(async symbol => {
       try {
-        const snapshot = await getMassiveOptionsSnapshot(symbol);
+        const snapshot = await getMassiveOptionsSnapshot(symbol, WATCHLIST_SNAPSHOT_OPTS);
         const priceLabel =
           typeof snapshot?.price === 'number'
             ? `$${snapshot.price.toFixed(2)}`

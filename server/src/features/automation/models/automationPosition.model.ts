@@ -1,0 +1,225 @@
+import mongoose, { Document, Schema } from 'mongoose';
+import type { SignalDirection } from './tradeCandidate.model';
+
+// Phase 2C — the durable automation-owned position record. It threads the full
+// lifecycle: session → universe evaluation → candidate → selection → risk →
+// entry intent → entry broker order → fills → monitoring → exit intent →
+// exit broker order → realized P&L. Ownership is ALWAYS explicit: automation
+// may only manage a position it can prove it opened (linked entry intent +
+// client_order_id). Manual positions are never represented here.
+
+export type PositionSource = 'AUTOMATION';
+
+export type AutomationPositionStatus =
+  | 'PENDING_ENTRY' // entry intent submitted, no confirmed fill yet
+  | 'OPEN' // confirmed fill, actively monitored
+  | 'EXITING' // exit intent submitted, awaiting close
+  | 'CLOSED' // broker-confirmed flat, realized P&L computed
+  | 'MANUAL_REVIEW' // ambiguous/unresolved — needs operator attention (blocks engine)
+  | 'RECOVERY_FAILED'; // recovery exhausted with NO live broker exit order — a
+// deterministic terminal-failed state. Distinct from MANUAL_REVIEW: it preserves
+// full audit history but does NOT block new autonomous entries (the engine has
+// given up managing this position; the broker position, if any, remains and is
+// Portfolio-display only). Reached only when exit retries are exhausted AND
+// there is no acknowledged broker exit order (exitBrokerOrderId == null) AND no
+// partial exit fill — i.e. nothing is silently left working at the broker.
+
+export type ExitReason =
+  | 'EMERGENCY_STOP'
+  | 'END_OF_DAY'
+  | 'OVERNIGHT_RECOVERY' // position carried past its intended flatten window — mandatory recovery flatten
+  | 'HARD_STOP'
+  | 'BROKER_MANUAL_CLOSE'
+  | 'OPERATOR_CLOSE'
+  | 'PROFIT_TARGET'
+  | 'STRATEGY_INVALIDATION';
+
+export interface AutomationPositionDocument extends Document {
+  source: PositionSource;
+  automationSessionId: string;
+  strategyVersionId: string;
+  universeEvaluationId: string | null;
+  tradeCandidateId: string | null;
+  contractSelectionId: string | null;
+  riskDecisionId: string | null;
+
+  underlying: string;
+  optionSymbol: string;
+  direction: SignalDirection;
+
+  // Entry
+  entryIntentId: string;
+  entryBrokerOrderId: string | null;
+  entryClientOrderId: string;
+  /** Ordered contract quantity (from the broker order). Sprint 3. */
+  orderedQuantity: number | null;
+  filledQty: number;
+  avgEntryPrice: number | null;
+  entryFees: number | null;
+  openedAt: Date | null;
+  /** Latest broker-truth reconciliation of this position. Sprint 3. */
+  lastBrokerReconciledAt: Date | null;
+
+  // Monitoring
+  status: AutomationPositionStatus;
+  currentMark: number | null;
+  unrealizedPnl: number | null;
+  lastMarkAt: Date | null;
+  maxFavorableExcursion: number | null;
+  maxAdverseExcursion: number | null;
+
+  // Exit policy snapshotted at entry-fill time (immutable for this trade)
+  exitPolicy: {
+    stopLossPct: number;
+    profitTargetPct: number;
+    trailingEnabled: boolean;
+    stopPrice: number | null;
+    targetPrice: number | null;
+  } | null;
+
+  // Exit
+  exitReason: ExitReason | null;
+  exitIntentId: string | null;
+  exitBrokerOrderId: string | null;
+  avgExitPrice: number | null;
+  exitFees: number | null;
+  realizedPnl: number | null;
+  returnPct: number | null;
+  closedAt: Date | null;
+  /** True once this close has been folded into session risk counters (once only). */
+  riskCounted: boolean;
+
+  // Exit lifecycle recovery (Phase 2C finalization). The EXITING state must
+  // never strand a position: a failed exit is retried (bounded) or escalated.
+  /** How many exit orders have been submitted for this position (1 = first). */
+  exitAttemptCount: number;
+  /** When the CURRENT exit order was submitted — basis for the exit timeout. */
+  exitSubmittedAt: Date | null;
+  /** Cumulative broker-confirmed exit fill across all exit attempts. */
+  exitFilledQty: number;
+  /** Why the position was parked in MANUAL_REVIEW (operator-facing). */
+  manualReviewReason: string | null;
+
+  // Overnight recovery (Critical lifecycle repair). An automation position that
+  // survives past its intended intraday flatten window (process down during the
+  // flatten window, discovered OPEN at startup while the options market is
+  // closed, etc.) is a POLICY VIOLATION that must be recovered — never treated
+  // as a healthy open position. These are ADDITIVE: the position keeps its
+  // broker-true status (OPEN) and these fields drive the recovery lifecycle.
+  /** True while this position must be flattened at the earliest valid session. */
+  overnightRecoveryRequired: boolean;
+  /** When the overnight carry was first detected (durable across restarts). */
+  overnightDetectedAt: Date | null;
+  /** Why recovery is required (e.g. CARRIED_PAST_FLATTEN_WINDOW). */
+  overnightReason: string | null;
+  /** Earliest broker-clock time a recovery exit may be submitted (next session open). */
+  recoveryExitEligibleAt: Date | null;
+  /** When the recovery exit was actually submitted (idempotency/audit). */
+  recoveryExitSubmittedAt: Date | null;
+
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const STATUSES: AutomationPositionStatus[] = [
+  'PENDING_ENTRY',
+  'OPEN',
+  'EXITING',
+  'CLOSED',
+  'MANUAL_REVIEW',
+  'RECOVERY_FAILED',
+];
+
+const EXIT_REASONS: ExitReason[] = [
+  'EMERGENCY_STOP',
+  'END_OF_DAY',
+  'OVERNIGHT_RECOVERY',
+  'HARD_STOP',
+  'BROKER_MANUAL_CLOSE',
+  'OPERATOR_CLOSE',
+  'PROFIT_TARGET',
+  'STRATEGY_INVALIDATION',
+];
+
+const AutomationPositionSchema = new Schema<AutomationPositionDocument>(
+  {
+    source: { type: String, enum: ['AUTOMATION'], required: true, default: 'AUTOMATION' },
+    automationSessionId: { type: String, required: true, index: true },
+    strategyVersionId: { type: String, required: true },
+    universeEvaluationId: { type: String, default: null },
+    tradeCandidateId: { type: String, default: null },
+    contractSelectionId: { type: String, default: null },
+    riskDecisionId: { type: String, default: null },
+
+    underlying: { type: String, required: true, uppercase: true, trim: true },
+    optionSymbol: { type: String, required: true, uppercase: true, trim: true },
+    direction: { type: String, enum: ['BULLISH', 'BEARISH'], required: true },
+
+    entryIntentId: { type: String, required: true },
+    entryBrokerOrderId: { type: String, default: null },
+    // Unique: one automation position per entry order. The idempotent entry
+    // intent already guarantees one order; this guarantees one position.
+    entryClientOrderId: { type: String, required: true, unique: true },
+    orderedQuantity: { type: Number, default: null },
+    filledQty: { type: Number, required: true, default: 0 },
+    avgEntryPrice: { type: Number, default: null },
+    entryFees: { type: Number, default: null },
+    openedAt: { type: Date, default: null },
+    lastBrokerReconciledAt: { type: Date, default: null },
+
+    status: { type: String, enum: STATUSES, required: true, default: 'PENDING_ENTRY', index: true },
+    currentMark: { type: Number, default: null },
+    unrealizedPnl: { type: Number, default: null },
+    lastMarkAt: { type: Date, default: null },
+    maxFavorableExcursion: { type: Number, default: null },
+    maxAdverseExcursion: { type: Number, default: null },
+
+    exitPolicy: {
+      type: new Schema(
+        {
+          stopLossPct: { type: Number, required: true },
+          profitTargetPct: { type: Number, required: true },
+          trailingEnabled: { type: Boolean, required: true },
+          stopPrice: { type: Number, default: null },
+          targetPrice: { type: Number, default: null },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+
+    exitReason: { type: String, enum: [...EXIT_REASONS, null], default: null },
+    exitIntentId: { type: String, default: null },
+    exitBrokerOrderId: { type: String, default: null },
+    avgExitPrice: { type: Number, default: null },
+    exitFees: { type: Number, default: null },
+    realizedPnl: { type: Number, default: null },
+    returnPct: { type: Number, default: null },
+    closedAt: { type: Date, default: null },
+    riskCounted: { type: Boolean, required: true, default: false },
+
+    // Exit lifecycle recovery (Phase 2C finalization).
+    exitAttemptCount: { type: Number, required: true, default: 0 },
+    exitSubmittedAt: { type: Date, default: null },
+    exitFilledQty: { type: Number, required: true, default: 0 },
+    manualReviewReason: { type: String, default: null },
+
+    // Overnight recovery (additive — never treated as a healthy open position).
+    overnightRecoveryRequired: { type: Boolean, required: true, default: false, index: true },
+    overnightDetectedAt: { type: Date, default: null },
+    overnightReason: { type: String, default: null },
+    recoveryExitEligibleAt: { type: Date, default: null },
+    recoveryExitSubmittedAt: { type: Date, default: null },
+  },
+  { timestamps: true, collection: 'automation_positions' }
+);
+
+AutomationPositionSchema.index({ automationSessionId: 1, status: 1 });
+AutomationPositionSchema.index({ optionSymbol: 1, status: 1 });
+
+export const AutomationPositionModel =
+  (mongoose.models.AutomationPosition as mongoose.Model<AutomationPositionDocument>) ||
+  mongoose.model<AutomationPositionDocument>('AutomationPosition', AutomationPositionSchema);
+
+/** Positions that still need active management (mark/exit/reconcile). */
+export const LIVE_POSITION_STATUSES: AutomationPositionStatus[] = ['PENDING_ENTRY', 'OPEN', 'EXITING'];

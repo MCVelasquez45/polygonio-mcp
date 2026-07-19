@@ -180,17 +180,17 @@ export function ChatBot({
 
   return (
     <div className="flex flex-col h-full">
-      <header className="flex flex-col gap-2 border-b border-gray-900 p-4">
+      <header className="flex flex-col gap-2 border-b border-intel-line p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">GPT-5 Desk</p>
+            <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">GPT-5 Desk</p>
             <p className="text-lg font-semibold">{conversationTitle}</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300">Live</span>
+            <span className="text-xs px-3 py-1 rounded-full bg-intel-accentSoft text-intel-accent">Live</span>
             <button
               type="button"
-              className="text-xs px-3 py-1 rounded-full border border-gray-800 text-gray-300 hover:text-white"
+              className="text-xs px-3 py-1 rounded-full border border-intel-line text-intel-ink2 hover:text-white"
               onClick={() => {
                 onRequestNewChat();
                 setMessages([DEFAULT_ASSISTANT_MESSAGE]);
@@ -202,8 +202,8 @@ export function ChatBot({
             </button>
           </div>
         </div>
-        <p className="text-xs text-gray-500">
-          Context: watching <span className="text-gray-100 font-medium">{selectedTicker}</span>. Reference tickers, expirations, or
+        <p className="text-xs text-intel-ink3">
+          Context: watching <span className="text-intel-ink font-medium">{selectedTicker}</span>. Reference tickers, expirations, or
           constraints when you ask a question.
         </p>
       </header>
@@ -212,38 +212,38 @@ export function ChatBot({
         {messages.map(message => (
           <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse text-right' : 'text-left'}`}>
             <div
-              className={`h-9 w-9 rounded-2xl flex items-center justify-center text-sm font-semibold ${
+              className={`h-9 w-9 rounded-panel flex items-center justify-center text-sm font-semibold ${
                 message.role === 'assistant'
-                  ? 'bg-emerald-500/15 text-emerald-200'
-                  : 'bg-gray-800 text-gray-200'
+                  ? 'bg-intel-accentSoft text-intel-accent'
+                  : 'bg-intel-panel2 text-intel-ink'
               }`}
             >
               {message.role === 'assistant' ? 'AI' : 'You'}
             </div>
             <div
-              className={`flex-1 rounded-2xl border px-4 py-3 text-sm leading-relaxed ${
+              className={`flex-1 rounded-panel border px-4 py-3 text-sm leading-relaxed ${
                 message.role === 'assistant'
-                  ? 'border-gray-900 bg-gray-950 text-gray-100'
-                  : 'border-emerald-500/30 bg-emerald-500/10 text-white'
+                  ? 'border-intel-line bg-intel-panel text-intel-ink'
+                  : 'border-intel-accentLine bg-intel-accentSoft text-white'
               }`}
             >
               {message.role === 'assistant' ? (
                 <div className="space-y-2">
                   <div>{renderStructuredReply(message.content)}</div>
-                  <div className="flex items-center gap-2 text-[0.65rem] text-gray-400">
+                  <div className="flex items-center gap-2 text-[0.65rem] text-intel-ink2">
                     <button
                       type="button"
                       onClick={() => handleSaveReport(message)}
-                      className="rounded-full border border-gray-800/80 px-2 py-1 text-gray-300 hover:text-white disabled:opacity-40"
+                      className="rounded-full border border-intel-line px-2 py-1 text-intel-ink2 hover:text-white disabled:opacity-40"
                       disabled={reportStatus[message.id]?.state === 'saving'}
                     >
                       {reportStatus[message.id]?.state === 'saving' ? 'Saving…' : 'Save report'}
                     </button>
                     {reportStatus[message.id]?.state === 'saved' && reportStatus[message.id]?.message && (
-                      <span className="text-emerald-300">Saved: {reportStatus[message.id]?.message}</span>
+                      <span className="text-intel-accent">Saved: {reportStatus[message.id]?.message}</span>
                     )}
                     {reportStatus[message.id]?.state === 'error' && reportStatus[message.id]?.message && (
-                      <span className="text-red-300">{reportStatus[message.id]?.message}</span>
+                      <span className="text-intel-neg">{reportStatus[message.id]?.message}</span>
                     )}
                   </div>
                 </div>
@@ -254,14 +254,14 @@ export function ChatBot({
           </div>
         ))}
         {loading && (
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+          <div className="flex items-center gap-2 text-xs text-intel-ink3">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-intel-accent" />
             Thinking…
           </div>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="border-t border-gray-900 p-4 flex flex-col gap-3">
+      <form onSubmit={handleSubmit} className="border-t border-intel-line p-4 flex flex-col gap-3">
         <PromptTemplates
           templates={promptTemplates}
           disabled={loading}
@@ -275,14 +275,14 @@ export function ChatBot({
           value={draft}
           onChange={event => setDraft(event.target.value)}
           placeholder={`Ask the desk about ${selectedTicker} or any risk scenario.`}
-          className="w-full rounded-2xl border border-gray-800 bg-gray-950 p-3 text-sm text-gray-100 focus:border-emerald-500 focus:outline-none"
+          className="w-full rounded-panel border border-intel-line bg-intel-panel p-3 text-sm text-intel-ink focus:border-intel-accentLine focus:outline-none"
         />
-        <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+        <div className="flex items-center justify-between gap-3 text-xs text-intel-ink3">
           <span>{loading ? 'Streaming response…' : 'Agent taps Massive + Polygon data per turn.'}</span>
           <button
             type="submit"
             disabled={loading || !draft.trim()}
-            className="px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold disabled:bg-gray-800"
+            className="px-4 py-2 rounded-full bg-intel-accent text-white text-sm font-semibold disabled:bg-intel-panel2"
           >
             {loading ? 'Sending…' : 'Send'}
           </button>

@@ -1028,7 +1028,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
           <div className="review-section">
             <h4>Instrument</h4>
             <div className="review-details">
-              {tradingMethod && <div><strong>Trading Method:</strong> <span style={{ textTransform: 'capitalize', padding: '2px 8px', borderRadius: '4px', fontSize: '0.85rem', background: tradingMethod === 'options' ? 'rgba(139,92,246,0.15)' : tradingMethod === 'futures' ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)', color: tradingMethod === 'options' ? '#a78bfa' : tradingMethod === 'futures' ? '#fbbf24' : '#6ee7b7' }}>{tradingMethod}</span></div>}
+              {tradingMethod && <div><strong>Trading Method:</strong> <span style={{ textTransform: 'capitalize', padding: '2px 8px', borderRadius: '4px', fontSize: '0.85rem', background: tradingMethod === 'options' ? 'rgba(245,166,35,0.12)' : tradingMethod === 'futures' ? 'rgba(251,191,36,0.15)' : 'rgba(245,166,35,0.12)', color: tradingMethod === 'options' ? '#f5a623' : tradingMethod === 'futures' ? '#fbbf24' : '#f5a623' }}>{tradingMethod}</span></div>}
               {(parameters.underlying_ticker || parameters.underlying_symbol) && <div><strong>Underlying:</strong> {String(parameters.underlying_ticker || parameters.underlying_symbol)}</div>}
             </div>
           </div>
@@ -1039,7 +1039,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
             <h4>Entry Rules ({entryRules.length})</h4>
             <div className="review-details">
               {entryRules.map((rule, i) => (
-                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #162032', fontSize: '0.85rem', color: '#94a3b8' }}>
                   {i + 1}. {rule}
                 </div>
               ))}
@@ -1052,7 +1052,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
             <h4>Exit Rules ({exitRules.length})</h4>
             <div className="review-details">
               {exitRules.map((rule, i) => (
-                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #162032', fontSize: '0.85rem', color: '#94a3b8' }}>
                   {i + 1}. {rule}
                 </div>
               ))}
@@ -1065,7 +1065,7 @@ export function StrategyCreationWizard({ onComplete, onCancel, initialData, sock
             <h4>Risk Management ({riskManagement.length})</h4>
             <div className="review-details">
               {riskManagement.map((rule, i) => (
-                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.85rem', color: '#d1d5db' }}>
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #162032', fontSize: '0.85rem', color: '#94a3b8' }}>
                   {i + 1}. {rule}
                 </div>
               ))}
@@ -1141,7 +1141,7 @@ const styles = `
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(2, 6, 23, 0.8);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1150,15 +1150,15 @@ const styles = `
   }
 
   .strategy-wizard {
-    background: linear-gradient(180deg, #111118 0%, #0d0d12 100%);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 1rem;
+    background: linear-gradient(180deg, #0b1220 0%, #020617 100%);
+    border: 1px solid #1e293b;
+    border-radius: 12px;
     width: 90%;
     max-width: 800px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 25px 50px rgba(2, 6, 23, 0.5);
   }
 
   .wizard-header {
@@ -1166,19 +1166,19 @@ const styles = `
     justify-content: space-between;
     align-items: center;
     padding: 1.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid #1e293b;
   }
 
   .wizard-header h2 {
     margin: 0;
     font-size: 1.25rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .close-btn {
     background: none;
     border: none;
-    color: #6b7280;
+    color: #64748b;
     font-size: 1.5rem;
     cursor: pointer;
     padding: 0.25rem 0.5rem;
@@ -1186,8 +1186,8 @@ const styles = `
   }
 
   .close-btn:hover {
-    color: #e5e5e5;
-    background: rgba(255, 255, 255, 0.05);
+    color: #e9edf6;
+    background: #111a2b;
   }
 
   .step-indicator {
@@ -1195,29 +1195,29 @@ const styles = `
     justify-content: center;
     gap: 2rem;
     padding: 1.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid #1e293b;
   }
 
   .step {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: #6b7280;
+    color: #64748b;
   }
 
   .step.active {
-    color: #10b981;
+    color: #f5a623;
   }
 
   .step.completed {
-    color: #10b981;
+    color: #f5a623;
   }
 
   .step-number {
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.05);
+    background: #111a2b;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1226,13 +1226,13 @@ const styles = `
   }
 
   .step.active .step-number {
-    background: #10b981;
-    color: white;
+    background: #f5a623;
+    color: #020617;
   }
 
   .step.completed .step-number {
-    background: rgba(16, 185, 129, 0.2);
-    color: #10b981;
+    background: rgba(245, 166, 35, 0.38);
+    color: #f5a623;
   }
 
   .step-label {
@@ -1249,11 +1249,11 @@ const styles = `
   .wizard-content h3 {
     margin: 0 0 0.5rem;
     font-size: 1.1rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .subtitle {
-    color: #6b7280;
+    color: #64748b;
     margin: 0 0 1.5rem;
     font-size: 0.9rem;
   }
@@ -1266,8 +1266,8 @@ const styles = `
   }
 
   .template-card {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.75rem;
     padding: 1.25rem;
     cursor: pointer;
@@ -1276,13 +1276,13 @@ const styles = `
   }
 
   .template-card:hover {
-    border-color: rgba(16, 185, 129, 0.3);
-    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(245, 166, 35, 0.38);
+    background: #162032;
   }
 
   .template-card.selected {
-    border-color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
+    border-color: #f5a623;
+    background: rgba(245, 166, 35, 0.12);
   }
 
   .template-icon {
@@ -1294,19 +1294,19 @@ const styles = `
   .template-card h4 {
     margin: 0 0 0.5rem;
     font-size: 1rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .template-card p {
     margin: 0;
     font-size: 0.8rem;
-    color: #9ca3af;
+    color: #94a3b8;
     line-height: 1.4;
   }
 
   .agent-suggestion {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: linear-gradient(135deg, rgba(245, 166, 35, 0.12) 0%, rgba(245, 166, 35, 0.12) 100%);
+    border: 1px solid rgba(245, 166, 35, 0.38);
     border-radius: 0.75rem;
     padding: 1rem;
     margin-top: 1rem;
@@ -1318,7 +1318,7 @@ const styles = `
     gap: 0.5rem;
     margin-bottom: 0.5rem;
     font-weight: 600;
-    color: #10b981;
+    color: #f5a623;
     font-size: 0.9rem;
   }
 
@@ -1328,7 +1328,7 @@ const styles = `
 
   .agent-suggestion p {
     margin: 0;
-    color: #9ca3af;
+    color: #94a3b8;
     font-size: 0.875rem;
     line-height: 1.5;
   }
@@ -1341,7 +1341,7 @@ const styles = `
     display: block;
     margin-bottom: 0.5rem;
     font-weight: 500;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
   }
 
@@ -1349,10 +1349,10 @@ const styles = `
   .form-group textarea {
     width: 100%;
     padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
     transition: border-color 0.15s ease;
   }
@@ -1360,14 +1360,14 @@ const styles = `
   .form-group input:focus,
   .form-group textarea:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   .form-hint {
     display: block;
     margin-top: 0.5rem;
     font-size: 0.8rem;
-    color: #6b7280;
+    color: #64748b;
   }
 
   .parameters-grid {
@@ -1383,7 +1383,7 @@ const styles = `
   .review-section h4 {
     margin: 0 0 0.75rem;
     font-size: 0.9rem;
-    color: #9ca3af;
+    color: #94a3b8;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -1393,7 +1393,7 @@ const styles = `
     align-items: center;
     gap: 0.5rem;
     font-size: 1rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .review-icon {
@@ -1405,11 +1405,11 @@ const styles = `
     flex-direction: column;
     gap: 0.5rem;
     font-size: 0.9rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .review-details strong {
-    color: #9ca3af;
+    color: #94a3b8;
     font-weight: 500;
   }
 
@@ -1426,13 +1426,13 @@ const styles = `
   }
 
   .param-key {
-    color: #9ca3af;
+    color: #94a3b8;
     font-size: 0.85rem;
     text-transform: capitalize;
   }
 
   .param-value {
-    color: #e5e5e5;
+    color: #e9edf6;
     font-weight: 500;
     font-size: 0.85rem;
     max-width: 60%;
@@ -1443,7 +1443,7 @@ const styles = `
   .param-definition {
     display: block;
     font-size: 0.75rem;
-    color: #6b7280;
+    color: #64748b;
     margin-top: 0.25rem;
     line-height: 1.4;
     font-style: italic;
@@ -1453,14 +1453,14 @@ const styles = `
     display: flex;
     flex-direction: column;
     padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
+    background: #111a2b;
     border-radius: 0.375rem;
   }
 
   .empty-params-hint {
     text-align: center;
     padding: 2rem;
-    color: #6b7280;
+    color: #64748b;
     font-size: 0.9rem;
   }
 
@@ -1471,21 +1471,21 @@ const styles = `
   .form-group select {
     width: 100%;
     padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #111a2b;
+    border: 1px solid #1e293b;
     border-radius: 0.5rem;
-    color: #e5e5e5;
+    color: #e9edf6;
     font-size: 0.9rem;
     transition: border-color 0.15s ease;
   }
 
   .form-group select:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #f5a623;
   }
 
   .next-steps {
-    background: rgba(255, 255, 255, 0.02);
+    background: #111a2b;
     border-radius: 0.75rem;
     padding: 1rem;
     margin-top: 1rem;
@@ -1494,7 +1494,7 @@ const styles = `
   .next-steps h4 {
     margin: 0 0 0.75rem;
     font-size: 0.9rem;
-    color: #e5e5e5;
+    color: #e9edf6;
   }
 
   .next-steps ul {
@@ -1505,7 +1505,7 @@ const styles = `
 
   .next-steps li {
     padding: 0.5rem 0;
-    color: #9ca3af;
+    color: #94a3b8;
     font-size: 0.875rem;
   }
 
@@ -1513,7 +1513,7 @@ const styles = `
     display: flex;
     justify-content: space-between;
     padding: 1.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid #1e293b;
   }
 
   .btn-secondary,
@@ -1528,24 +1528,24 @@ const styles = `
 
   .btn-secondary {
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #9ca3af;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
   }
 
   .btn-secondary:hover {
-    border-color: rgba(255, 255, 255, 0.3);
-    color: #e5e5e5;
+    border-color: #1e293b;
+    color: #e9edf6;
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #f5a623;
     border: none;
-    color: white;
+    color: #020617;
   }
 
   .btn-primary:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.38);
   }
 
   .btn-primary:disabled {
@@ -1554,8 +1554,8 @@ const styles = `
   }
 
   .btn-primary.create {
-    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+    background: #f5a623;
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.38);
   }
 
   .details-header-row {
@@ -1569,18 +1569,18 @@ const styles = `
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
     padding: 0.25rem 0.75rem;
     border-radius: 2rem;
-    color: #10b981;
+    color: #f5a623;
     font-size: 0.75rem;
     font-weight: 600;
   }
 
   .agent-transcript-section {
-    background: rgba(16, 185, 129, 0.05);
-    border: 1px solid rgba(16, 185, 129, 0.1);
+    background: rgba(245, 166, 35, 0.12);
+    border: 1px solid rgba(245, 166, 35, 0.38);
     border-radius: 0.75rem;
     padding: 1rem;
     margin-bottom: 1.5rem;
@@ -1590,7 +1590,7 @@ const styles = `
     display: block;
     margin-bottom: 0.75rem;
     font-weight: 600;
-    color: #10b981;
+    color: #f5a623;
     font-size: 0.9rem;
   }
 
@@ -1601,14 +1601,14 @@ const styles = `
   }
 
   .transcript-input-wrapper textarea {
-    background: rgba(0, 0, 0, 0.2);
-    border-color: rgba(16, 185, 129, 0.2);
+    background: #111a2b;
+    border-color: rgba(245, 166, 35, 0.38);
   }
 
   .btn-agent-action {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #f5a623;
     border: none;
-    color: white;
+    color: #020617;
     padding: 0.75rem;
     border-radius: 0.5rem;
     font-weight: 600;
@@ -1618,7 +1618,7 @@ const styles = `
 
   .btn-agent-action:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.38);
   }
 
   .btn-agent-action:disabled {

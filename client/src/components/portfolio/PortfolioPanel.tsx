@@ -1,8 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { analysisApi, marketApi } from '../../api';
-import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions, submitOptionOrder } from '../../api/alpaca';
+import { Sparkles } from 'lucide-react';
+import { analysisApi, marketApi, portfolioApi } from '../../api';
+import { getBrokerAccount, getBrokerClock, getOptionOrders, getOptionPositions } from '../../api/alpaca';
+import {
+  confirmManualIntent,
+  createManualIntent,
+  submitManualIntent,
+  type ManualIntent,
+} from '../../api/manualTrading';
 import type { DeskInsight } from '../../api/analysis';
+import type { PortfolioOperations, PortfolioRisk } from '../../api/portfolio';
 import type { WatchlistSnapshot } from '../../types/market';
+import {
+  ActionButton,
+  AlertBanner,
+  DangerousActionButton,
+  PnlValue,
+  RefreshButton,
+} from '../intelligence/ui';
+import { MarketDataDot } from '../intelligence/ui/LiveStatus';
+import { DonutChart } from '../intelligence/ui/charts/MicroCharts';
+import type { ChartDatum } from '../intelligence/ui/charts/Charts';
+import {
+  fmtSignedUsd,
+  fmtUsd,
+  fmtNum,
+  pnlTone,
+  toneText,
+  type Tone,
+} from '../../lib/intelligenceFormat';
+import { useCockpitLiveSubscription } from '../../hooks/useCockpitLiveSubscription';
+import { useLiveConnection } from '../../hooks/useLiveConnection';
+import { useNow } from '../../hooks/useNow';
+import { useLiveQuote } from '../../lib/liveMarketStore';
+import { finiteOrNull } from '../../lib/marketFormat';
+import { deriveMarketDataStatus } from '../../lib/marketDataStatus';
 
 type PositionView = {
   symbol: string;
@@ -35,6 +67,7 @@ const INSIGHT_TTL_MS = 60 * 60 * 1000;
 type Props = {
   aiEnabled?: boolean;
   sentimentEnabled?: boolean;
+  onOpenSystemOperations?: () => void;
 };
 
 function toNumber(value: string | number | null | undefined, fallback = 0) {
@@ -51,16 +84,64 @@ function formatOrderType(type?: string | null, limitPrice?: number | null) {
   if (!type) return 'Market';
   const normalized = type.toLowerCase();
   if (normalized === 'limit' && typeof limitPrice === 'number') {
-    return `Limit @ $${limitPrice.toFixed(2)}`;
+    return `Limit @ ${fmtUsd(limitPrice)}`;
   }
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
+/** Turn a raw broker status code (`PARTIALLY_FILLED`) into readable text (`Partially filled`). */
+function formatOrderStatus(status?: string | null) {
+  if (!status || status === '-') return '—';
+  const words = status.replace(/[_-]+/g, ' ').trim().toLowerCase();
+  if (!words) return '—';
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Tone for an order status cell: filled = pos, working = warn, dead = muted. */
+function orderStatusTone(status?: string | null): string {
+  const normalized = status?.toLowerCase() ?? '';
+  if (normalized === 'filled' || normalized === 'partially_filled') return 'text-intel-pos';
+  if (['canceled', 'cancelled', 'expired', 'rejected'].includes(normalized)) return 'text-intel-ink3';
+  return 'text-intel-warn';
+}
+
+/**
+ * Present the order source to an operator. Known source codes map to plain
+ * words; anything else (a raw broker client_order_id) is hidden behind a
+ * generic label — the raw value stays available in a title tooltip.
+ */
+function formatOrderSource(source?: string | null) {
+  if (!source) return '—';
+  const raw = source.trim();
+  // Known client_order_id prefixes are provenance: at2a-/auto- = automation
+  // engine, manual- = governed manual UI, mcp- = research tooling. A raw UUID
+  // means Alpaca generated the id (order placed outside this app).
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('at2a-') || lower.startsWith('auto-')) return 'AUTO';
+  if (lower.startsWith('manual-')) return 'MANUAL';
+  if (lower.startsWith('mcp-')) return 'RESEARCH';
+  const normalized = raw.toUpperCase().replace(/[_-]+/g, ' ');
+  if (normalized.includes('AUTOMATION')) return 'AUTO';
+  if (normalized.includes('MANUAL')) return 'MANUAL';
+  // Anything else long/opaque is not operator-facing.
+  if (/[0-9a-f]{8}/i.test(raw) || raw.length > 24) return 'BROKER';
+  return normalized;
+}
+
 function formatTimestamp(value?: string | null) {
-  if (!value) return '-';
+  if (!value) return 'Not recorded';
   const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return '-';
+  if (Number.isNaN(parsed)) return 'Not recorded';
   return new Date(parsed).toLocaleString();
+}
+
+/** Compact blotter timestamp: `Jul 18 14:32` (local). */
+function fmtWhen(value?: string | null) {
+  if (!value) return '—';
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return '—';
+  const d = new Date(parsed);
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`;
 }
 
 function getUnderlyingSymbol(symbol: string) {
@@ -70,10 +151,14 @@ function getUnderlyingSymbol(symbol: string) {
   return match?.[1] ?? normalized;
 }
 
-function resolveSentimentStyles(label?: string | null) {
-  if (label === 'bullish') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
-  if (label === 'bearish') return 'border-red-500/30 bg-red-500/10 text-red-200';
-  return 'border-gray-800 bg-gray-900/40 text-gray-300';
+function normalizePositionSymbol(symbol: string) {
+  return symbol.toUpperCase().replace(/^O:/, '');
+}
+
+function sentimentTone(label?: string | null): Tone {
+  if (label === 'bullish') return 'pos';
+  if (label === 'bearish') return 'neg';
+  return 'neutral';
 }
 
 function parseOptionContract(symbol: string) {
@@ -93,15 +178,6 @@ function parseOptionContract(symbol: string) {
     type: typeRaw === 'C' ? 'Call' : 'Put',
     strike
   };
-}
-
-function formatCurrency(value: number, digits = 2) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits
-  }).format(value);
 }
 
 function isAbortError(error: any): boolean {
@@ -126,34 +202,185 @@ function getTakeProfitOrder(orders: OrderView[], position: PositionView) {
   });
 }
 
-function getTakeProfitPnl(position: PositionView, limitPrice: number | null) {
-  if (limitPrice == null || !Number.isFinite(limitPrice)) return null;
-  const qty = Math.max(1, Math.abs(position.qty));
-  const direction = position.side === 'long' ? 1 : -1;
-  const delta = (limitPrice - position.avgCost) * direction;
-  const pnl = delta * qty * 100;
-  const pct = position.avgCost ? (delta / position.avgCost) * 100 : null;
-  return { pnl, pct };
+/**
+ * Map an Alpaca OSI option symbol (e.g. `SPY260724C00600000`) to the live-feed
+ * key (`O:SPY260724C00600000`). The Massive stream and the shared quote store
+ * key options with the `O:` prefix; the broker returns them without it.
+ */
+function toLiveOptionSymbol(symbol: string): string {
+  return `O:${symbol.toUpperCase().replace(/^O:/, '')}`;
 }
 
-function buildPositionInsight(position: PositionView) {
-  if (!Number.isFinite(position.avgCost) || !Number.isFinite(position.mark)) return null;
-  const qty = Math.max(1, Math.abs(position.qty));
-  const entryValue = position.avgCost * qty * 100;
-  const currentValue = position.mark * qty * 100;
-  const direction = position.side === 'short' ? -1 : 1;
-  const pnl = (position.mark - position.avgCost) * direction * qty * 100;
-  const pct = entryValue ? (pnl / entryValue) * 100 : null;
-  return {
-    entryValue,
-    currentValue,
-    pnl,
-    pct,
-    title: 'Avg cost × contracts × 100 vs current mark × contracts × 100. P&L is unrealized until you sell.'
-  };
+/** Roll up the per-session risk rows into a single book-level view. */
+function aggregateRisk(risk: PortfolioRisk[] | null | undefined) {
+  if (!risk || risk.length === 0) return null;
+  let dailyRealizedPnl = 0;
+  let consecutiveLossCount = 0;
+  let currentDrawdown = 0;
+  let maxDrawdown = 0;
+  let emergencyStop = false;
+  for (const row of risk) {
+    dailyRealizedPnl += Number(row.dailyRealizedPnl ?? 0);
+    consecutiveLossCount = Math.max(consecutiveLossCount, Number(row.consecutiveLossCount ?? 0));
+    currentDrawdown = Math.max(currentDrawdown, Number(row.currentDrawdown ?? 0));
+    maxDrawdown = Math.max(maxDrawdown, Number(row.maxDrawdown ?? 0));
+    emergencyStop = emergencyStop || Boolean(row.emergencyStop);
+  }
+  return { dailyRealizedPnl, consecutiveLossCount, currentDrawdown, maxDrawdown, emergencyStop };
 }
 
-export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Props) {
+const BLOTTER_LABEL = 'font-mono text-[10px] uppercase tracking-label text-intel-ink3';
+const TH = `py-2 pr-3 text-left ${BLOTTER_LABEL} font-normal`;
+const TH_R = `py-2 pr-3 text-right ${BLOTTER_LABEL} font-normal`;
+const TD = 'py-1.5 pr-3 whitespace-nowrap';
+const TD_R = 'py-1.5 pr-3 whitespace-nowrap text-right tabular-nums';
+
+/** One cell of the account summary strip: micro-label over a mono numeral. */
+function AccountStat({
+  label,
+  value,
+  tone = 'neutral' as Tone,
+  title,
+}: {
+  label: string;
+  value: string;
+  tone?: Tone;
+  title?: string;
+}) {
+  return (
+    <div className="min-w-0 px-4 py-1" title={title}>
+      <div className={BLOTTER_LABEL}>{label}</div>
+      <div className={`mt-1 truncate font-mono text-sm font-semibold tabular-nums ${toneText(tone)}`}>{value}</div>
+    </div>
+  );
+}
+
+/**
+ * One position row in the blotter, streamed live. Options ARE stream-entitled,
+ * so this subscribes the contract to the shared live feed and overlays the
+ * streamed NBBO mid on top of the REST snapshot (live ?? snapshot). The DATA
+ * cell tells the operator whether the marks are LIVE, SNAPSHOT (no tick yet),
+ * STALE, or DISCONNECTED — never a fake LIVE.
+ */
+function PositionBlotterRow({
+  pos,
+  source,
+  spot,
+  spotLoading,
+  sentimentLabel,
+  sentimentLoading,
+  takeProfitPrice,
+  closing,
+  closeDisabled,
+  onClose,
+}: {
+  pos: PositionView;
+  source: 'AUTO' | 'MANUAL';
+  spot: number | null;
+  spotLoading: boolean;
+  sentimentLabel: string | null;
+  sentimentLoading: boolean;
+  takeProfitPrice: number | null;
+  closing: boolean;
+  closeDisabled: boolean;
+  onClose: () => void;
+}) {
+  const liveSymbol = toLiveOptionSymbol(pos.symbol);
+  useCockpitLiveSubscription(liveSymbol);
+  const liveQuote = useLiveQuote(liveSymbol);
+  const { connected } = useLiveConnection();
+  const now = useNow(1000);
+
+  const liveBid = finiteOrNull(liveQuote?.bidPrice);
+  const liveAsk = finiteOrNull(liveQuote?.askPrice);
+  const liveMid =
+    finiteOrNull(liveQuote?.midpoint) ??
+    (liveBid !== null && liveAsk !== null ? (liveBid + liveAsk) / 2 : null);
+
+  const snapshotMark = finiteOrNull(pos.mark);
+  const mark = liveMid ?? snapshotMark;
+  const qty = Math.max(1, Math.abs(pos.qty));
+  const direction = pos.side === 'short' ? -1 : 1;
+  const entry = finiteOrNull(pos.avgCost);
+  const value = mark !== null ? mark * qty * 100 : finiteOrNull(pos.marketValue);
+  const pnl =
+    mark !== null && entry !== null
+      ? (mark - entry) * direction * qty * 100
+      : finiteOrNull(pos.unrealizedPnl);
+  const entryValue = entry !== null ? entry * qty * 100 : null;
+  const pnlPct = pnl !== null && entryValue ? (pnl / entryValue) * 100 : null;
+
+  const liveTs = finiteOrNull(liveQuote?.timestamp);
+  const ageMs = liveTs !== null ? now - liveTs : null;
+  const { status } = deriveMarketDataStatus({
+    source: liveQuote ? 'stream' : snapshotMark !== null ? 'rest' : null,
+    ageMs,
+    connected,
+  });
+
+  const contract = parseOptionContract(pos.symbol);
+  const breakeven =
+    contract && entry !== null
+      ? contract.type === 'Call'
+        ? contract.strike + entry
+        : contract.strike - entry
+      : entry;
+
+  return (
+    <tr className="border-b border-intel-lineSoft font-mono text-xs text-intel-ink2 transition-colors hover:bg-intel-panel2">
+      <td className={`${TD} font-semibold text-intel-ink`}>{pos.symbol}</td>
+      <td className={TD}>
+        <span className={source === 'AUTO' ? 'text-intel-accent' : 'text-intel-ink2'}>{source}</span>
+      </td>
+      <td className={TD}>
+        <span className={pos.side === 'long' ? 'text-intel-pos' : 'text-intel-neg'}>{pos.side.toUpperCase()}</span>
+      </td>
+      <td className={TD_R}>{Math.abs(pos.qty)}</td>
+      <td className={TD}>{contract ? (contract.type === 'Call' ? 'C' : 'P') : '—'}</td>
+      <td className={TD_R}>{contract ? fmtNum(contract.strike, 2) : '—'}</td>
+      <td className={TD}>{contract?.expiry ?? '—'}</td>
+      <td className={TD_R}>{spot != null ? fmtUsd(spot) : spotLoading ? '…' : '—'}</td>
+      <td className={TD_R}>{fmtUsd(pos.avgCost)}</td>
+      <td
+        className={`${TD_R} text-intel-ink`}
+        title={liveBid !== null || liveAsk !== null ? `BID ${fmtUsd(liveBid)} · ASK ${fmtUsd(liveAsk)}` : undefined}
+      >
+        {fmtUsd(mark)}
+      </td>
+      <td className={`${TD_R} text-intel-ink`}>{fmtUsd(value)}</td>
+      <td className={TD_R}>
+        <PnlValue value={pnl} pct={pnlPct} />
+      </td>
+      <td className={TD_R} title="Underlying price you need to break even at expiration.">
+        {breakeven != null ? fmtUsd(breakeven) : '—'}
+      </td>
+      <td className={TD_R} title="Your open limit order price for taking profit.">
+        {takeProfitPrice != null ? fmtUsd(takeProfitPrice) : '—'}
+      </td>
+      <td className={TD}>
+        <span className={toneText(sentimentTone(sentimentLabel))}>
+          {sentimentLoading ? '…' : sentimentLabel === 'bullish' ? 'BULL' : sentimentLabel === 'bearish' ? 'BEAR' : 'NEUT'}
+        </span>
+      </td>
+      <td className={TD}>
+        <MarketDataDot status={status} ageMs={ageMs} />
+      </td>
+      <td className="py-1 pr-2 text-right">
+        <button
+          type="button"
+          aria-label={`Close position ${pos.symbol}`}
+          onClick={onClose}
+          disabled={closing || closeDisabled}
+          className="rounded border border-intel-neg/40 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-intel-neg transition hover:bg-intel-neg/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {closing ? '…' : 'Close'}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOpenSystemOperations }: Props) {
   const [positions, setPositions] = useState<PositionView[]>([]);
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [accountSummary, setAccountSummary] = useState<{ buyingPower: number; equity: number; cash: number }>({
@@ -164,6 +391,11 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const [loading, setLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+  const [closeDialogPosition, setCloseDialogPosition] = useState<PositionView | null>(null);
+  const [closeIntent, setCloseIntent] = useState<ManualIntent | null>(null);
+  const [closeCreating, setCloseCreating] = useState(false);
+  const [closeSubmitting, setCloseSubmitting] = useState(false);
+  const [closeDialogError, setCloseDialogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -173,11 +405,17 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const positionInsightCacheRef = useRef<Map<string, { insight: DeskInsight; fetchedAt: number }>>(new Map());
+  const closeCreatingRef = useRef(false);
+  const closeSubmittingRef = useRef(false);
   const [insightsRefreshId, setInsightsRefreshId] = useState(0);
   const lastInsightsRefreshRef = useRef(0);
   const [insightsUpdatedAt, setInsightsUpdatedAt] = useState<number | null>(null);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  // Per-contract greeks for open positions (Massive contract snapshots via the
+  // watchlist endpoint, which returns delta/gamma/theta/vega for O: symbols).
+  const [contractGreeks, setContractGreeks] = useState<Record<string, { delta: number | null; gamma: number | null; theta: number | null; vega: number | null }>>({});
+  const [portfolioOperations, setPortfolioOperations] = useState<PortfolioOperations | null>(null);
   const insightsAllowed = aiEnabled && sentimentEnabled;
 
   const loadPortfolio = useCallback(async () => {
@@ -186,11 +424,12 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
     setError(null);
     setOrdersError(null);
     try {
-      const [account, positionResponse, ordersResponse, clockResponse] = await Promise.all([
+      const [account, positionResponse, ordersResponse, clockResponse, operationsResponse] = await Promise.all([
         getBrokerAccount(),
         getOptionPositions(),
         getOptionOrders({ status: 'all', limit: 20 }),
-        getBrokerClock()
+        getBrokerClock(),
+        portfolioApi.getOperations().catch(() => null)
       ]);
       const normalizedPositions: PositionView[] =
         positionResponse.positions?.map(pos => ({
@@ -202,19 +441,6 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           marketValue: Number(pos.market_value ?? 0),
           unrealizedPnl: Number(pos.unrealized_pl ?? 0)
         })) ?? [];
-      const warmTargets = Array.from(
-        new Set(
-          normalizedPositions.flatMap(position => [
-            position.symbol.toUpperCase(),
-            getUnderlyingSymbol(position.symbol)
-          ])
-        )
-      ).filter(Boolean);
-      if (warmTargets.length) {
-        marketApi.warmAggregates(warmTargets).catch(error => {
-          console.warn('Failed to warm aggregate cache', error);
-        });
-      }
       setPositions(normalizedPositions);
       setAccountSummary({
         buyingPower: Number(account.buying_power ?? 0),
@@ -243,6 +469,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           };
         }) ?? [];
       setOrders(normalizedOrders);
+      setPortfolioOperations(operationsResponse);
       setIsMarketOpen(Boolean(clockResponse?.is_open));
       setNextOpen(clockResponse?.next_open ?? null);
       setLastUpdated(new Date().toLocaleTimeString());
@@ -321,7 +548,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
           return [symbol, insight] as const;
         } catch (error) {
           if (isAbortError(error)) return null;
-          if (error?.response?.status === 429) {
+          if ((error as { response?: { status?: number } })?.response?.status === 429) {
             rateLimited = true;
             return null;
           }
@@ -390,304 +617,555 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true }: Pr
     };
   }, [positions]);
 
+  // Fetch contract-level greeks for the open book. Batched through the same
+  // snapshot endpoint (≤25 symbols) and refreshed when positions change.
+  useEffect(() => {
+    const contracts = positions.map(position => toLiveOptionSymbol(position.symbol));
+    if (!contracts.length) {
+      setContractGreeks({});
+      return;
+    }
+    let cancelled = false;
+    marketApi
+      .getWatchlistSnapshots(contracts.slice(0, 25))
+      .then(payload => {
+        if (cancelled) return;
+        const next: Record<string, { delta: number | null; gamma: number | null; theta: number | null; vega: number | null }> = {};
+        payload.entries?.forEach(entry => {
+          if (entry?.entryType !== 'contract') return;
+          const key = normalizePositionSymbol(entry.contract ?? entry.ticker ?? '');
+          if (!key) return;
+          const greeks = (entry as { greeks?: Record<string, number | null> }).greeks ?? {};
+          next[key] = {
+            delta: typeof greeks.delta === 'number' ? greeks.delta : null,
+            gamma: typeof greeks.gamma === 'number' ? greeks.gamma : null,
+            theta: typeof greeks.theta === 'number' ? greeks.theta : null,
+            vega: typeof greeks.vega === 'number' ? greeks.vega : null,
+          };
+        });
+        setContractGreeks(next);
+      })
+      .catch(() => {
+        if (!cancelled) setContractGreeks({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [positions]);
+
   const handleClosePosition = useCallback(
-    async (position: PositionView) => {
+    (position: PositionView) => {
       if (closingSymbol) return;
       if (isMarketOpen === false) {
         setError('Options market orders are only allowed during market hours.');
         return;
       }
-      setClosingSymbol(position.symbol);
       setError(null);
-      try {
-        const qty = Math.max(1, Math.abs(position.qty));
-        const side = position.side === 'long' ? 'sell' : 'buy';
-        const intent = position.side === 'long' ? 'sell_to_close' : 'buy_to_close';
-        await submitOptionOrder({
-          order_type: 'market',
-          legs: [
-            {
-              symbol: position.symbol,
-              qty,
-              side,
-              position_intent: intent
-            }
-          ]
-        });
-        await loadPortfolio();
-      } catch (err: any) {
-        const payloadMessage = err?.response?.data?.message;
-        const message =
-          payloadMessage === 'options market orders are only allowed during market hours'
-            ? 'Options market orders are only allowed during market hours.'
-            : err?.response?.data?.error ?? err?.message ?? 'Failed to close position';
-        setError(message);
-      } finally {
-        setClosingSymbol(null);
-      }
+      setCloseDialogError(null);
+      setCloseIntent(null);
+      setCloseDialogPosition(position);
     },
-    [closingSymbol, isMarketOpen, loadPortfolio]
+    [closingSymbol, isMarketOpen]
   );
 
+  const handleCancelCloseDialog = useCallback(() => {
+    if (closeCreating || closeSubmitting) return;
+    setCloseDialogPosition(null);
+    setCloseIntent(null);
+    setCloseDialogError(null);
+  }, [closeCreating, closeSubmitting]);
+
+  const handleCreateCloseIntent = useCallback(async () => {
+    const position = closeDialogPosition;
+    if (!position || closeIntent || closeCreatingRef.current) return;
+    closeCreatingRef.current = true;
+    setCloseCreating(true);
+    setClosingSymbol(position.symbol);
+    setCloseDialogError(null);
+    try {
+      const qty = Math.max(1, Math.abs(position.qty));
+      const side = position.side === 'long' ? 'sell' : 'buy';
+      const positionIntent = position.side === 'long' ? 'sell_to_close' : 'buy_to_close';
+      const intent = await createManualIntent({
+        executionMode: 'MANUAL',
+        orderSource: 'MANUAL_UI',
+        action: 'CLOSE_POSITION',
+        optionSymbol: position.symbol,
+        side,
+        quantity: qty,
+        brokerPositionQuantity: qty,
+        orderType: 'market',
+        timeInForce: 'day',
+        positionIntent,
+        marketDataSource: 'alpaca-paper-position'
+      });
+      setCloseIntent(intent);
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.response?.data?.error ?? err?.message ?? 'Failed to create close intent';
+      setCloseDialogError(message);
+    } finally {
+      closeCreatingRef.current = false;
+      setCloseCreating(false);
+      setClosingSymbol(null);
+    }
+  }, [closeDialogPosition, closeIntent]);
+
+  const handleConfirmCloseIntent = useCallback(async () => {
+    const position = closeDialogPosition;
+    const intent = closeIntent;
+    if (!position || !intent || closeSubmittingRef.current) return;
+    closeSubmittingRef.current = true;
+    setCloseSubmitting(true);
+    setClosingSymbol(position.symbol);
+    setCloseDialogError(null);
+    try {
+      await confirmManualIntent(intent.id);
+      const result = await submitManualIntent(intent.id);
+      if (result.outcome !== 'SUBMITTED' && result.outcome !== 'ALREADY_SUBMITTED') {
+        setCloseDialogError(result.reason ?? 'Manual close was blocked by the execution gateway.');
+        setCloseIntent(result.intent ?? intent);
+        return;
+      }
+      await loadPortfolio();
+      setCloseDialogPosition(null);
+      setCloseIntent(null);
+    } catch (err: any) {
+      const payloadMessage = err?.response?.data?.message ?? err?.response?.data?.reason;
+      const message =
+        err?.response?.status === 410
+          ? 'This submission path is disabled. Use the governed order ticket.'
+          : payloadMessage === 'options market orders are only allowed during market hours'
+            ? 'Options market orders are only allowed during market hours.'
+            : err?.response?.data?.error ?? payloadMessage ?? err?.message ?? 'Failed to close position';
+      setCloseDialogError(message);
+    } finally {
+      closeSubmittingRef.current = false;
+      setCloseSubmitting(false);
+      setClosingSymbol(null);
+    }
+  }, [closeDialogPosition, closeIntent, loadPortfolio]);
+
   const totalPnl = useMemo(() => positions.reduce((sum, row) => sum + row.unrealizedPnl, 0), [positions]);
+  const totalMarketValue = useMemo(
+    () => positions.reduce((sum, row) => sum + Math.abs(row.marketValue), 0),
+    [positions]
+  );
+  const risk = useMemo(() => aggregateRisk(portfolioOperations?.risk), [portfolioOperations]);
+
+  const automationPositionSymbols = useMemo(() => {
+    const rows = portfolioOperations?.automationContext?.positionsBySymbol ?? [];
+    return new Set(
+      rows
+        .filter(row => row.source === 'AUTOMATION')
+        .map(row => normalizePositionSymbol(row.symbol))
+    );
+  }, [portfolioOperations]);
+  const automationPositions = useMemo(
+    () => positions.filter(position => automationPositionSymbols.has(normalizePositionSymbol(position.symbol))),
+    [positions, automationPositionSymbols]
+  );
+  const manualPositions = useMemo(
+    () => positions.filter(position => !automationPositionSymbols.has(normalizePositionSymbol(position.symbol))),
+    [positions, automationPositionSymbols]
+  );
+  // Blotter order: automation book first, then manual.
+  const blotterRows = useMemo(
+    () => [
+      ...automationPositions.map(pos => ({ pos, source: 'AUTO' as const })),
+      ...manualPositions.map(pos => ({ pos, source: 'MANUAL' as const })),
+    ],
+    [automationPositions, manualPositions]
+  );
+
+  // Book greeks exposure: Σ greek × signed contracts × 100. Null (shown as em
+  // dash) when any open position is missing that greek — a partial sum would
+  // misstate the book.
+  const bookGreeks = useMemo(() => {
+    if (!positions.length) return null;
+    const sums = { delta: 0, gamma: 0, theta: 0, vega: 0 };
+    const complete = { delta: true, gamma: true, theta: true, vega: true };
+    for (const pos of positions) {
+      const greeks = contractGreeks[normalizePositionSymbol(pos.symbol)];
+      const signedContracts = (pos.side === 'short' ? -1 : 1) * Math.max(1, Math.abs(pos.qty));
+      (['delta', 'gamma', 'theta', 'vega'] as const).forEach(key => {
+        const value = greeks?.[key];
+        if (value == null) {
+          complete[key] = false;
+        } else {
+          sums[key] += value * signedContracts * 100;
+        }
+      });
+    }
+    return {
+      delta: complete.delta ? sums.delta : null,
+      gamma: complete.gamma ? sums.gamma : null,
+      theta: complete.theta ? sums.theta : null,
+      vega: complete.vega ? sums.vega : null,
+    };
+  }, [positions, contractGreeks]);
+
+  // Allocation donut — positions by absolute market value.
+  const allocationData = useMemo<ChartDatum[]>(
+    () =>
+      positions
+        .map(pos => ({ label: getUnderlyingSymbol(pos.symbol), value: Math.abs(pos.marketValue) }))
+        .filter(datum => datum.value > 0),
+    [positions]
+  );
+
+  // Exposure split — automation vs manual, long vs short.
+  const exposure = useMemo(() => {
+    const sumValue = (rows: PositionView[]) => rows.reduce((sum, r) => sum + Math.abs(r.marketValue), 0);
+    const longRows = positions.filter(p => p.side === 'long');
+    const shortRows = positions.filter(p => p.side === 'short');
+    return {
+      automation: { count: automationPositions.length, value: sumValue(automationPositions) },
+      manual: { count: manualPositions.length, value: sumValue(manualPositions) },
+      long: { count: longRows.length, value: sumValue(longRows) },
+      short: { count: shortRows.length, value: sumValue(shortRows) },
+    };
+  }, [positions, automationPositions, manualPositions]);
+
+  const closeDialogQuantity = closeDialogPosition ? Math.max(1, Math.abs(closeDialogPosition.qty)) : 0;
+  const closeDialogAction =
+    closeDialogPosition?.side === 'short' ? 'Buy to close' : 'Sell to close';
+  const closeDialogActionLower =
+    closeDialogPosition?.side === 'short' ? 'buy to close' : 'sell to close';
 
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6 space-y-4">
-      <header className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Portfolio Risk</p>
-            <h2 className="text-2xl font-semibold">Current Book Overview</h2>
-            <p className="text-sm text-gray-400">Live view of Alpaca paper positions & buying power.</p>
-          </div>
-          <div className="text-right">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => loadPortfolio()}
-                className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:bg-gray-900"
-                disabled={loading || ordersLoading}
-              >
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={handleRefreshInsights}
-                className="px-3 py-1.5 text-xs rounded-full border border-gray-800 text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
-                disabled={insightsLoading || !insightsAllowed}
-              >
-                Refresh sentiment
-              </button>
-            </div>
-            {lastUpdated && <p className="text-[11px] text-gray-500 mt-1">Last refresh {lastUpdated}</p>}
-            {insightsUpdatedAt && (
-              <p className="text-[11px] text-gray-500">Sentiment updated {new Date(insightsUpdatedAt).toLocaleTimeString()}</p>
-            )}
-            {!insightsAllowed && <p className="text-[11px] text-gray-500">AI sentiment disabled in Settings.</p>}
-            {insightsError && <p className="text-[11px] text-amber-200">{insightsError}</p>}
-          </div>
-        </div>
-      </header>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <StatCard label="Buying Power" value={accountSummary.buyingPower} />
-        <StatCard label="Equity" value={accountSummary.equity} />
-        <StatCard label="Cash" value={accountSummary.cash} />
-      </div>
-      <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
-        <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Net Unrealized P&L</p>
-        <p className={`text-3xl font-semibold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-          {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
-        </p>
-      </div>
-      {error && <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2">{error}</div>}
-      {loading && <p className="text-sm text-gray-400">Loading Alpaca account…</p>}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Active Positions</p>
-        </div>
-        {isMarketOpen === false && (
-          <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
-            Options market orders pause outside market hours. Next open: {nextOpen ? formatTimestamp(nextOpen) : 'TBD'}.
-          </div>
-        )}
-        {positions.map(pos => {
-          const underlyingSymbol = getUnderlyingSymbol(pos.symbol);
-          const insight = positionInsights[underlyingSymbol];
-          const sentimentLabel = insight?.sentiment?.label ?? null;
-          const shortInterestElevated =
-            insight?.shortBias?.reasons?.some(reason => reason.toLowerCase().includes('short interest')) ?? false;
-          const takeProfitOrder = getTakeProfitOrder(orders, pos);
-          const takeProfitPnl = getTakeProfitPnl(pos, takeProfitOrder?.limitPrice ?? null);
-          const contract = parseOptionContract(pos.symbol);
-          const snapshot = positionSnapshots[underlyingSymbol];
-          const underlyingSpot =
-            snapshot && snapshot.entryType === 'underlying' ? snapshot.price : null;
-          const insightLine = buildPositionInsight(pos);
-          const breakevenPrice =
-            contract && typeof pos.avgCost === 'number'
-              ? contract.type === 'Call'
-                ? contract.strike + pos.avgCost
-                : contract.strike - pos.avgCost
-              : pos.avgCost;
-          return (
-            <div key={pos.symbol} className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-lg font-semibold">{pos.symbol}</p>
-                <p className={`text-xs mt-1 ${pos.side === 'long' ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {pos.side.toUpperCase()} {Math.abs(pos.qty)}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
-                  <span className="text-gray-500 uppercase tracking-widest">Contract:</span>
-                  <span className="text-gray-200">{pos.symbol}</span>
-                  <span className="text-gray-500 uppercase tracking-widest">Expiration:</span>
-                  <span className="text-gray-200">{contract?.expiry ?? '—'}</span>
-                  <span className="text-gray-500 uppercase tracking-widest">Underlying:</span>
-                  <span className="text-gray-200">{contract?.underlying ?? underlyingSymbol}</span>
-                  <span className="text-gray-500 uppercase tracking-widest">Strike:</span>
-                  <span className="text-gray-200">{contract?.strike != null ? contract.strike.toFixed(2) : '—'}</span>
-                  <span className="text-gray-500 uppercase tracking-widest">Underlying Price:</span>
-                  <span className="text-gray-200">
-                    {underlyingSpot != null ? `$${underlyingSpot.toFixed(2)}` : snapshotsLoading ? '…' : '—'}
-                  </span>
-                  <span className="text-gray-500 uppercase tracking-widest">Type:</span>
-                  <span className="text-gray-200">{contract?.type?.toLowerCase() ?? '—'}</span>
+    <div className="flex flex-col gap-3">
+      {closeDialogPosition && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-panel border border-intel-line bg-intel-panel p-5 shadow-xl">
+            <div className="space-y-2">
+              <p className="font-mono text-[10px] uppercase tracking-eyebrow text-intel-ink3">Governed Close</p>
+              <h3 className="text-xl font-semibold text-intel-ink">Close {closeDialogPosition.symbol}</h3>
+              <div className="rounded-lg border border-intel-line bg-intel-panel2 p-3 text-sm text-intel-ink2">
+                <p>{closeDialogAction}: {closeDialogQuantity} contract{closeDialogQuantity === 1 ? '' : 's'}</p>
+                <p>Account: Alpaca Paper</p>
+              </div>
+              {closeIntent ? (
+                <div className="rounded-lg border border-intel-pos/30 bg-intel-pos/10 p-3 text-xs text-intel-pos">
+                  <p>Manual close intent created.</p>
+                  <p className="mt-1 break-all">Authorization: {closeIntent.authorizationId}</p>
+                  <p className="mt-1 break-all">Idempotency: {closeIntent.idempotencyKey}</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
-                  <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 ${resolveSentimentStyles(sentimentLabel)}`}>
-                    {insightsLoading ? 'Sentiment…' : `Sentiment: ${sentimentLabel ?? 'neutral'}`}
-                  </span>
-                  {shortInterestElevated && (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-200">
-                      Short interest high
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleClosePosition(pos)}
-                className="px-3 py-1.5 text-xs rounded-full border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-40"
-                disabled={closingSymbol === pos.symbol || isMarketOpen === false}
-              >
-                {closingSymbol === pos.symbol ? 'Closing…' : 'Close Position'}
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-sm text-gray-400">
-              <div>
-                <p
-                  className="text-xs uppercase tracking-widest"
-                  title="What you paid per share. 1 contract = 100 shares."
-                >
-                  Avg cost
+              ) : (
+                <p className="text-sm text-intel-ink2">
+                  This creates a MANUAL close intent first. No broker order is submitted until you confirm it.
                 </p>
-                <p className="text-base text-white">${pos.avgCost.toFixed(2)}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest" title="Current option price (what you could sell for now).">
-                  Mark
-                </p>
-                <p className="text-base text-white">${pos.mark.toFixed(2)}</p>
-              </div>
-              <div>
-                <p
-                  className="text-xs uppercase tracking-widest"
-                  title="Current total value = mark × contracts × 100."
-                >
-                  Value
-                </p>
-                <p className="text-base text-white">${pos.marketValue.toFixed(2)}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest" title="Unrealized gain/loss so far.">
-                  P&amp;L
-                </p>
-                <p className={`text-base font-semibold ${pos.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
-                </p>
-              </div>
-            </div>
-            {insightLine && (
-              <p
-                className="mt-2 inline-flex flex-wrap items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300"
-                title={insightLine.title}
-              >
-                <span>Paid {formatCurrency(insightLine.entryValue)}</span>
-                <span className="text-emerald-200">,</span>
-                <span>Now worth {formatCurrency(insightLine.currentValue)}</span>
-                <span className="text-emerald-200">→</span>
-                <span className={insightLine.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>
-                  {insightLine.pnl >= 0 ? '+' : ''}
-                  {formatCurrency(insightLine.pnl)}
-                  {typeof insightLine.pct === 'number' ? ` (${insightLine.pct.toFixed(2)}%)` : ''}
-                </span>
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-              <span title="Underlying price you need to break even at expiration.">
-                Breakeven {breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : `$${pos.avgCost.toFixed(2)}`}
-              </span>
-              <span title="Your open limit order price for taking profit.">
-                TP {takeProfitOrder?.limitPrice != null ? `$${takeProfitOrder.limitPrice.toFixed(2)}` : '—'}
-              </span>
-              {takeProfitPnl && (
-                <span className={takeProfitPnl.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>
-                  {takeProfitPnl.pnl >= 0 ? '+' : ''}${takeProfitPnl.pnl.toFixed(2)}
-                  {typeof takeProfitPnl.pct === 'number' ? ` (${takeProfitPnl.pct.toFixed(2)}%)` : ''}
-                </span>
               )}
-              <span className="text-[10px] text-gray-500">{takeProfitOrder ? 'Limit set' : 'No limit'}</span>
+              {closeDialogError && (
+                <div className="rounded-lg border border-intel-neg/40 bg-intel-neg/10 px-3 py-2 text-sm text-intel-neg">
+                  {closeDialogError}
+                </div>
+              )}
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <ActionButton
+                onClick={handleCancelCloseDialog}
+                disabled={closeCreating || closeSubmitting}
+              >
+                Cancel
+              </ActionButton>
+              {!closeIntent ? (
+                <ActionButton
+                  variant="primary"
+                  onClick={handleCreateCloseIntent}
+                  disabled={closeCreating}
+                >
+                  {closeCreating ? 'Creating intent…' : 'Create close intent'}
+                </ActionButton>
+              ) : (
+                <DangerousActionButton
+                  onClick={handleConfirmCloseIntent}
+                  disabled={closeSubmitting}
+                >
+                  {closeSubmitting ? 'Submitting close…' : `Confirm ${closeDialogActionLower}`}
+                </DangerousActionButton>
+              )}
             </div>
           </div>
-          );
-        })}
-        {!positions.length && !loading && <p className="text-sm text-gray-500">No option positions in Alpaca paper account.</p>}
-      </div>
-      <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Recent Orders</p>
         </div>
-        {ordersError && (
-          <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2 mb-3">
-            {ordersError}
+      )}
+
+      {/* WORKSPACE TOOLBAR — status left, actions right. No hero, no copy. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-intel-ink">Positions</span>
+          <span className={BLOTTER_LABEL}>Alpaca Paper</span>
+          {isMarketOpen != null && (
+            <span
+              className={`font-mono text-[10px] uppercase tracking-label ${isMarketOpen ? 'text-intel-pos' : 'text-intel-warn'}`}
+              title={!isMarketOpen && nextOpen ? `Next open: ${formatTimestamp(nextOpen)}` : undefined}
+            >
+              Market {isMarketOpen ? 'Open' : 'Closed'}
+            </span>
+          )}
+          {risk?.emergencyStop ? (
+            <span className="font-mono text-[10px] uppercase tracking-label text-intel-neg">Emergency stop engaged</span>
+          ) : risk ? (
+            <span className="font-mono text-[10px] uppercase tracking-label text-intel-pos">Risk nominal</span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          {lastUpdated && (
+            <span className="font-mono text-[11px] text-intel-ink3">Refreshed {lastUpdated}</span>
+          )}
+          <ActionButton
+            onClick={handleRefreshInsights}
+            disabled={insightsLoading || !insightsAllowed}
+            className="h-8"
+          >
+            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            Sentiment
+          </ActionButton>
+          <RefreshButton onClick={() => loadPortfolio()} busy={loading || ordersLoading} />
+        </div>
+      </div>
+
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
+      {insightsError && <AlertBanner tone="warn">{insightsError}</AlertBanner>}
+
+      {/* ACCOUNT SUMMARY STRIP — the numbers a trader checks first, one row. */}
+      <div className="rounded-panel bg-intel-panel py-2">
+        <div className="grid grid-cols-2 gap-y-2 divide-intel-divider sm:grid-cols-5 sm:divide-x xl:grid-cols-10">
+          <AccountStat label="Equity" value={fmtUsd(accountSummary.equity)} />
+          <AccountStat label="Cash" value={fmtUsd(accountSummary.cash)} tone={accountSummary.cash < 0 ? 'neg' : 'neutral'} />
+          <AccountStat label="Buying Power" value={fmtUsd(accountSummary.buyingPower)} />
+          <AccountStat
+            label="Day Realized"
+            value={risk ? fmtSignedUsd(risk.dailyRealizedPnl) : '—'}
+            tone={risk ? pnlTone(risk.dailyRealizedPnl) : 'neutral'}
+          />
+          <AccountStat label="Open P/L" value={fmtSignedUsd(totalPnl)} tone={pnlTone(totalPnl)} />
+          <AccountStat label="Exposure" value={fmtUsd(totalMarketValue)} title="Total absolute market value of open option positions." />
+          <AccountStat label="Positions" value={fmtNum(positions.length)} />
+          <AccountStat label="Drawdown" value={risk ? fmtUsd(risk.currentDrawdown) : '—'} />
+          <AccountStat label="Max DD" value={risk ? fmtUsd(risk.maxDrawdown) : '—'} />
+          <AccountStat
+            label="Loss Streak"
+            value={risk ? fmtNum(risk.consecutiveLossCount) : '—'}
+            tone={risk && risk.consecutiveLossCount >= 3 ? 'neg' : risk && risk.consecutiveLossCount > 0 ? 'warn' : 'neutral'}
+          />
+        </div>
+        {/* Book greeks — net portfolio exposure per unit move / day / vol pt. */}
+        {bookGreeks && (
+          <div className="mt-2 grid grid-cols-2 gap-y-2 divide-intel-divider border-t border-intel-divider pt-2 sm:grid-cols-4 sm:divide-x">
+            <AccountStat
+              label="Net Δ Delta"
+              value={bookGreeks.delta != null ? fmtNum(bookGreeks.delta, 1) : '—'}
+              tone={bookGreeks.delta != null ? pnlTone(bookGreeks.delta) : 'neutral'}
+              title="Share-equivalent directional exposure: Σ delta × contracts × 100. Positive = long the underlying."
+            />
+            <AccountStat
+              label="Net Γ Gamma"
+              value={bookGreeks.gamma != null ? fmtNum(bookGreeks.gamma, 1) : '—'}
+              title="Delta change per $1 underlying move: Σ gamma × contracts × 100."
+            />
+            <AccountStat
+              label="Net Θ Theta"
+              value={bookGreeks.theta != null ? fmtSignedUsd(bookGreeks.theta) : '—'}
+              tone={bookGreeks.theta != null ? pnlTone(bookGreeks.theta) : 'neutral'}
+              title="Time decay per day at current marks: Σ theta × contracts × 100."
+            />
+            <AccountStat
+              label="Net V Vega"
+              value={bookGreeks.vega != null ? fmtSignedUsd(bookGreeks.vega) : '—'}
+              tone={bookGreeks.vega != null ? pnlTone(bookGreeks.vega) : 'neutral'}
+              title="P/L per 1-point implied-vol move: Σ vega × contracts × 100."
+            />
           </div>
         )}
-        {ordersLoading ? (
-          <p className="text-sm text-gray-400">Loading recent orders…</p>
-        ) : orders.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-gray-300">
-              <thead className="text-xs uppercase tracking-widest text-gray-500">
+      </div>
+
+      {/* POSITIONS BLOTTER */}
+      <section className="rounded-panel bg-intel-panel">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-intel-divider px-4 py-2.5">
+          <div className="flex items-center gap-3">
+            <span className={BLOTTER_LABEL}>Open Positions</span>
+            <span className="font-mono text-[11px] tabular-nums text-intel-ink2">{positions.length}</span>
+            {automationPositions.length > 0 && (
+              <span className="font-mono text-[10px] text-intel-ink3">
+                <span className="text-intel-accent">{automationPositions.length} auto</span>
+                {' · '}
+                {manualPositions.length} manual
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {isMarketOpen === false && (
+              <span className="font-mono text-[10px] uppercase tracking-label text-intel-warn">
+                Market orders pause until open{nextOpen ? ` · ${fmtWhen(nextOpen)}` : ''}
+              </span>
+            )}
+            {insightsUpdatedAt ? (
+              <span className="font-mono text-[10px] text-intel-ink3">
+                Sentiment {new Date(insightsUpdatedAt).toLocaleTimeString()}
+              </span>
+            ) : !insightsAllowed ? (
+              <span className="font-mono text-[10px] text-intel-ink3">Sentiment disabled</span>
+            ) : null}
+          </div>
+        </div>
+        <div className="overflow-x-auto px-4 pb-2">
+          <table className="w-full min-w-[1180px]">
+            <thead>
+              <tr className="border-b border-intel-line">
+                <th className={TH}>Contract</th>
+                <th className={TH}>Src</th>
+                <th className={TH}>Side</th>
+                <th className={TH_R}>Qty</th>
+                <th className={TH}>C/P</th>
+                <th className={TH_R}>Strike</th>
+                <th className={TH}>Exp</th>
+                <th className={TH_R}>Spot</th>
+                <th className={TH_R}>Avg Cost</th>
+                <th className={TH_R}>Mark</th>
+                <th className={TH_R}>Value</th>
+                <th className={TH_R}>Open P/L</th>
+                <th className={TH_R}>B/E</th>
+                <th className={TH_R}>TP</th>
+                <th className={TH}>Sent</th>
+                <th className={TH}>Data</th>
+                <th className="py-2 pr-2" aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {blotterRows.map(({ pos, source }) => {
+                const underlyingSymbol = getUnderlyingSymbol(pos.symbol);
+                const insight = positionInsights[underlyingSymbol];
+                const snapshot = positionSnapshots[underlyingSymbol];
+                const spot = snapshot && snapshot.entryType === 'underlying' ? snapshot.price : null;
+                const takeProfitOrder = getTakeProfitOrder(orders, pos);
+                return (
+                  <PositionBlotterRow
+                    key={pos.symbol}
+                    pos={pos}
+                    source={source}
+                    spot={spot ?? null}
+                    spotLoading={snapshotsLoading}
+                    sentimentLabel={insight?.sentiment?.label ?? null}
+                    sentimentLoading={insightsLoading}
+                    takeProfitPrice={takeProfitOrder?.limitPrice ?? null}
+                    closing={closingSymbol === pos.symbol}
+                    closeDisabled={isMarketOpen === false}
+                    onClose={() => handleClosePosition(pos)}
+                  />
+                );
+              })}
+              {!blotterRows.length && (
                 <tr>
-                  <th className="text-left py-2">Asset</th>
-                  <th className="text-left py-2">Order Type</th>
-                  <th className="text-left py-2">Side</th>
-                  <th className="text-right py-2">Qty</th>
-                  <th className="text-right py-2">Filled</th>
-                  <th className="text-right py-2">Avg Fill</th>
-                  <th className="text-left py-2">Status</th>
-                  <th className="text-left py-2">Source</th>
-                  <th className="text-left py-2">Submitted</th>
-                  <th className="text-left py-2">Filled At</th>
-                  <th className="text-left py-2">Expires</th>
+                  <td colSpan={17} className="py-6 text-center font-mono text-xs text-intel-ink3">
+                    {loading ? 'Loading broker positions…' : 'No open option positions — rows appear when automation or a manual trade opens one.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ORDERS BLOTTER + EXPOSURE */}
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <section className="rounded-panel bg-intel-panel">
+          <div className="flex items-center justify-between border-b border-intel-divider px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <span className={BLOTTER_LABEL}>Orders</span>
+              <span className="font-mono text-[11px] tabular-nums text-intel-ink2">{orders.length}</span>
+            </div>
+            {ordersLoading && <span className="font-mono text-[10px] text-intel-ink3">Loading…</span>}
+          </div>
+          {ordersError && (
+            <div className="px-4 pt-3">
+              <AlertBanner tone="error">{ordersError}</AlertBanner>
+            </div>
+          )}
+          <div className="overflow-x-auto px-4 pb-2">
+            <table className="w-full min-w-[760px]">
+              <thead>
+                <tr className="border-b border-intel-line">
+                  <th className={TH}>Contract</th>
+                  <th className={TH}>Type</th>
+                  <th className={TH}>Side</th>
+                  <th className={TH_R}>Qty</th>
+                  <th className={TH_R}>Filled</th>
+                  <th className={TH_R}>Avg Fill</th>
+                  <th className={TH}>Status</th>
+                  <th className={TH}>Src</th>
+                  <th className={TH}>Submitted</th>
+                  <th className={TH}>Filled At</th>
                 </tr>
               </thead>
               <tbody>
                 {orders.map(order => (
-                  <tr key={order.id} className="border-t border-gray-900/60">
-                    <td className="py-2 pr-4 font-medium text-white">{order.symbol}</td>
-                    <td className="py-2 pr-4">{order.orderType}</td>
-                    <td className="py-2 pr-4">{order.side}</td>
-                    <td className="py-2 pr-4 text-right">{order.qty.toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-right">{order.filledQty.toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-right">
-                      {order.avgFillPrice != null ? `$${order.avgFillPrice.toFixed(2)}` : '-'}
+                  <tr key={order.id} className="border-b border-intel-lineSoft font-mono text-xs text-intel-ink2">
+                    <td className={`${TD} font-semibold text-intel-ink`}>{order.symbol}</td>
+                    <td className={TD}>{order.orderType}</td>
+                    <td className={TD}>
+                      <span className={order.side.toLowerCase().startsWith('buy') ? 'text-intel-pos' : 'text-intel-neg'}>
+                        {order.side.toUpperCase()}
+                      </span>
                     </td>
-                    <td className="py-2 pr-4">{order.status}</td>
-                    <td className="py-2 pr-4">{order.source ?? '-'}</td>
-                    <td className="py-2 pr-4">{formatTimestamp(order.submittedAt)}</td>
-                    <td className="py-2 pr-4">{formatTimestamp(order.filledAt)}</td>
-                    <td className="py-2 pr-4">{formatTimestamp(order.expiresAt)}</td>
+                    <td className={TD_R}>{fmtNum(order.qty, 0)}</td>
+                    <td className={TD_R}>{fmtNum(order.filledQty, 0)}</td>
+                    <td className={TD_R}>{order.avgFillPrice != null ? fmtUsd(order.avgFillPrice) : '—'}</td>
+                    <td className={`${TD} ${orderStatusTone(order.status)}`}>{formatOrderStatus(order.status)}</td>
+                    <td className={TD} title={order.source ?? undefined}>{formatOrderSource(order.source)}</td>
+                    <td className={TD} title={formatTimestamp(order.submittedAt)}>{fmtWhen(order.submittedAt)}</td>
+                    <td className={TD} title={formatTimestamp(order.filledAt)}>{fmtWhen(order.filledAt)}</td>
                   </tr>
                 ))}
+                {!orders.length && !ordersLoading && (
+                  <tr>
+                    <td colSpan={10} className="py-6 text-center font-mono text-xs text-intel-ink3">
+                      No recent option orders.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-        ) : (
-          <p className="text-sm text-gray-500">No recent option orders.</p>
-        )}
+        </section>
+
+        <section className="flex flex-col rounded-panel bg-intel-panel">
+          <div className="flex items-center justify-between border-b border-intel-divider px-4 py-2.5">
+            <span className={BLOTTER_LABEL}>Exposure & Allocation</span>
+            <span className="font-mono text-[11px] tabular-nums text-intel-ink2">{fmtUsd(totalMarketValue)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-px border-b border-intel-divider bg-intel-divider">
+            {[
+              { label: 'Automation', row: exposure.automation, cls: 'text-intel-accent' },
+              { label: 'Manual', row: exposure.manual, cls: 'text-intel-ink' },
+              { label: 'Long', row: exposure.long, cls: 'text-intel-pos' },
+              { label: 'Short', row: exposure.short, cls: exposure.short.count ? 'text-intel-neg' : 'text-intel-ink' },
+            ].map(({ label, row, cls }) => (
+              <div key={label} className="bg-intel-panel px-4 py-2.5">
+                <div className={BLOTTER_LABEL}>{label}</div>
+                <div className={`mt-1 font-mono text-sm font-semibold tabular-nums ${cls}`}>
+                  {fmtNum(row.count)} <span className="text-intel-ink3">·</span> {fmtUsd(row.value)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-1 flex-col justify-between px-4 py-3">
+            {allocationData.length ? (
+              <DonutChart data={allocationData} height={150} valueFormatter={fmtUsd} />
+            ) : (
+              <p className="py-6 text-center font-mono text-xs text-intel-ink3">No open positions to allocate.</p>
+            )}
+            {onOpenSystemOperations && (
+              <button
+                type="button"
+                onClick={onOpenSystemOperations}
+                className="mt-2 self-end font-mono text-[11px] uppercase tracking-label text-intel-ink3 transition hover:text-intel-accent"
+              >
+                System Operations →
+              </button>
+            )}
+          </div>
+        </section>
       </div>
-    </section>
-  );
-}
-
-type StatProps = { label: string; value: number };
-
-function StatCard({ label, value }: StatProps) {
-  return (
-    <div className="rounded-2xl border border-gray-900 bg-gray-950 p-4">
-      <p className="text-xs uppercase tracking-[0.3em] text-gray-500">{label}</p>
-      <p className="text-2xl font-semibold text-white">{formatCurrency(value, 2)}</p>
     </div>
   );
 }

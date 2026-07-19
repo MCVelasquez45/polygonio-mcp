@@ -36,7 +36,7 @@ from core.algo import MarketLeaderboard
 
 load_dotenv()
 
-POLYGON_BASE_URL = "https://api.polygon.io"
+POLYGON_BASE_URL = os.getenv("MASSIVE_BASE_URL") or os.getenv("POLYGON_BASE_URL") or "https://api.polygon.io"
 CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
 CAPITOL_TRADES_BFF_URL = "https://bff.capitoltrades.com"
 QUANDL_BASE_URL = "https://data.nasdaq.com/api/v3"
@@ -1531,7 +1531,7 @@ async def get_polygon_4h_bars(
     # Fetch minute data for the date range (need more data for 4H aggregation)
     # Limit to 5000 minutes (~8 trading days worth) to ensure we get enough bars
     url = (
-        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/"
+        f"{POLYGON_BASE_URL}/v2/aggs/ticker/{ticker}/range/1/minute/"
         f"{start_date}/{end_date}?adjusted=true&sort=asc&limit=5000&apiKey={api_key}"
     )
     

@@ -5,3 +5,5 @@ export * as analysisApi from './analysis';
 export * as alpacaApi from './alpaca';
 export * as futuresApi from './futures';
 export * as agentApi from './agent';
+export * as portfolioApi from './portfolio';
+export * as intelligenceApi from './intelligence';

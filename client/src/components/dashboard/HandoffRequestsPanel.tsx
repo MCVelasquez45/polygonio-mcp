@@ -60,11 +60,11 @@ function formatCurrency(value: number): string {
 
 function getStatusColor(status: string): string {
   switch (status) {
-    case 'pending': return '#f59e0b';
-    case 'approved': return '#10b981';
-    case 'rejected': return '#ef4444';
-    case 'deployed': return '#3b82f6';
-    default: return '#9ca3af';
+    case 'pending': return '#fbbf24';   // intel-warn
+    case 'approved': return '#35d29a';  // intel-pos
+    case 'rejected': return '#f87171';  // intel-neg
+    case 'deployed': return '#6aa5f5';  // intel-info
+    default: return '#94a3b8';          // intel-ink2
   }
 }
 
@@ -242,9 +242,9 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
 
       <style>{`
         .handoff-panel {
-          background: #111118;
-          border-radius: 1rem;
-          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: #0b1220;
+          border-radius: 12px;
+          border: 1px solid #1e293b;
           overflow: hidden;
         }
 
@@ -253,19 +253,20 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
           justify-content: space-between;
           align-items: flex-start;
           padding: 1.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          border-bottom: 1px solid #1e293b;
         }
 
         .header-title h2 {
           margin: 0 0 0.25rem;
           font-size: 1.25rem;
           font-weight: 600;
+          color: #e9edf6;
         }
 
         .header-subtitle {
           margin: 0;
           font-size: 0.85rem;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .header-stats {
@@ -282,22 +283,24 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
         .stat-value {
           font-size: 1.5rem;
           font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          color: #e9edf6;
         }
 
         .stat-label {
           font-size: 0.75rem;
-          color: #9ca3af;
+          color: #64748b;
           text-transform: uppercase;
         }
 
         .pending-alert .stat-value {
-          color: #f59e0b;
+          color: #fbbf24;
         }
 
         .error-banner {
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.3);
-          color: #fca5a5;
+          background: rgba(248, 113, 113, 0.1);
+          border: 1px solid rgba(248, 113, 113, 0.4);
+          color: #f87171;
           padding: 0.75rem 1rem;
           margin: 1rem;
           border-radius: 0.5rem;
@@ -307,7 +310,7 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
         .loading-state, .empty-state {
           padding: 3rem;
           text-align: center;
-          color: #9ca3af;
+          color: #94a3b8;
         }
 
         .empty-icon {
@@ -318,7 +321,7 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
 
         .empty-hint {
           font-size: 0.8rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .requests-list {
@@ -329,14 +332,14 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
         }
 
         .request-card {
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 0.75rem;
+          background: #111a2b;
+          border: 1px solid #1e293b;
+          border-radius: 12px;
           padding: 1rem;
         }
 
         .request-card.pending {
-          border-color: rgba(245, 158, 11, 0.3);
+          border-color: rgba(251, 191, 36, 0.4);
         }
 
         .request-header {
@@ -355,12 +358,13 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
         .strategy-name {
           font-size: 1.05rem;
           font-weight: 600;
+          color: #e9edf6;
         }
 
         .request-type {
           font-size: 0.75rem;
-          color: #9ca3af;
-          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
+          background: #020617;
           padding: 0.2rem 0.5rem;
           border-radius: 0.25rem;
         }
@@ -379,7 +383,7 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
           gap: 1rem;
           margin-bottom: 1rem;
           padding: 0.75rem;
-          background: rgba(0, 0, 0, 0.2);
+          background: #020617;
           border-radius: 0.5rem;
         }
 
@@ -391,7 +395,7 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
 
         .detail-label {
           font-size: 0.7rem;
-          color: #6b7280;
+          color: #64748b;
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
@@ -401,10 +405,12 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
           flex-direction: column;
           gap: 0.2rem;
           font-size: 0.85rem;
+          color: #94a3b8;
+          font-variant-numeric: tabular-nums;
         }
 
         .proof-item strong {
-          color: #10b981;
+          color: #f5a623;
         }
 
         .request-footer {
@@ -412,17 +418,17 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
           justify-content: space-between;
           align-items: center;
           padding-top: 0.75rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          border-top: 1px solid #1e293b;
         }
 
         .request-meta {
           font-size: 0.75rem;
-          color: #6b7280;
+          color: #64748b;
         }
 
         .approval-info {
           font-size: 0.75rem;
-          color: #10b981;
+          color: #35d29a;
         }
 
         .request-actions {
@@ -432,17 +438,17 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
 
         .action-btn {
           padding: 0.5rem 1rem;
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          border: 1px solid #1e293b;
           border-radius: 0.5rem;
           background: transparent;
-          color: #e5e5e5;
+          color: #94a3b8;
           font-size: 0.8rem;
           cursor: pointer;
           transition: all 0.15s ease;
         }
 
         .action-btn:hover:not(:disabled) {
-          background: rgba(255, 255, 255, 0.05);
+          background: #111a2b;
         }
 
         .action-btn:disabled {
@@ -451,13 +457,13 @@ export function HandoffRequestsPanel({ apiBase = getApiBaseUrl(), refreshInterva
         }
 
         .approve-btn:hover:not(:disabled) {
-          border-color: rgba(16, 185, 129, 0.4);
-          color: #10b981;
+          border-color: rgba(245, 166, 35, 0.38);
+          color: #f5a623;
         }
 
         .reject-btn:hover:not(:disabled) {
-          border-color: rgba(239, 68, 68, 0.4);
-          color: #ef4444;
+          border-color: rgba(248, 113, 113, 0.4);
+          color: #f87171;
         }
       `}</style>
     </div>

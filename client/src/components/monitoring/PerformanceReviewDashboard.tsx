@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
+import { DemoDataBadge } from '../shared/DemoDataBadge';
 
 export function PerformanceReviewDashboard() {
   const [selectedPeriod, setSelectedPeriod] = useState('YTD');
@@ -13,7 +14,9 @@ export function PerformanceReviewDashboard() {
   return (
     <div className="performance-dashboard">
       <div className="dashboard-header">
-        <h2>📊 PERFORMANCE REVIEW</h2>
+        <h2>
+          📊 PERFORMANCE REVIEW <DemoDataBadge note="Sharpe, returns, and strategy contributions shown here are illustrative — not live portfolio results." />
+        </h2>
         <div className="period-selector">
           {['1M', '3M', '6M', 'YTD', '1Y', 'ALL'].map(period => (
             <button

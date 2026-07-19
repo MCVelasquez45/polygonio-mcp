@@ -124,24 +124,42 @@ export const http = axios.create({
   baseURL: API_BASE_URL,
 });
 
+// Verbose request/response logging is opt-in: it floods the console (and leaks
+// payloads) under live market traffic. Enable with VITE_DEBUG_HTTP=true.
+const HTTP_DEBUG = import.meta.env.VITE_DEBUG_HTTP === 'true';
+
+function isCancellation(error: any): boolean {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
+}
+
+function isLegacyBrokerSubmissionDisabled(error: any): boolean {
+  return (
+    error?.response?.status === 410 &&
+    error?.response?.data?.error === 'DIRECT_BROKER_SUBMISSION_DISABLED' &&
+    String(error?.config?.url ?? '').includes('/api/broker/alpaca/options/orders')
+  );
+}
+
 http.interceptors.request.use(config => {
   config.baseURL = getActiveBaseUrl();
-  console.log('[CLIENT] HTTP request', {
-    method: config.method,
-    url: config.url,
-    data: config.data,
-    baseURL: config.baseURL
-  });
+  if (HTTP_DEBUG) {
+    console.log('[CLIENT] HTTP request', {
+      method: config.method,
+      url: config.url,
+      baseURL: config.baseURL
+    });
+  }
   return config;
 });
 
 http.interceptors.response.use(
   response => {
-    console.log('[CLIENT] HTTP response', {
-      url: response.config.url,
-      status: response.status,
-      data: response.data,
-    });
+    if (HTTP_DEBUG) {
+      console.log('[CLIENT] HTTP response', {
+        url: response.config.url,
+        status: response.status,
+      });
+    }
     return response;
   },
   async error => {
@@ -155,13 +173,29 @@ http.interceptors.response.use(
         return http.request(config);
       }
     }
+    if (isCancellation(error)) {
+      if (HTTP_DEBUG) {
+        console.debug('[CLIENT] HTTP canceled', {
+          url: error?.config?.url,
+          method: error?.config?.method,
+        });
+      }
+      return Promise.reject(error);
+    }
+    if (isLegacyBrokerSubmissionDisabled(error)) {
+      console.warn('[CLIENT] Direct broker submission disabled', {
+        url: error?.config?.url,
+        method: error?.config?.method,
+        message: 'This submission path is disabled. Use the governed order ticket.',
+      });
+      return Promise.reject(error);
+    }
     console.error('[CLIENT] HTTP error', {
       message: error?.message,
       status: error?.response?.status,
       url: error?.config?.url,
       baseURL: error?.config?.baseURL,
       method: error?.config?.method,
-      data: error?.response?.data
     });
     return Promise.reject(error);
   }

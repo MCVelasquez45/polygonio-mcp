@@ -22,6 +22,8 @@ import {
   listOptionConditions,
   getMassiveStockSnapshot,
 } from '../../shared/data/massive';
+import { REQUEST_PRIORITY } from '../../shared/data/massive';
+import { getOptionChainWindow } from '../marketData/optionsMarketDataOrchestrator.service';
 import { fetchWithCache } from './services/marketCache';
 import { getLatestSelection, saveSelection } from '../options/services/selectionStore';
 import { getCachedChainSnapshot, saveChainSnapshot } from '../options/services/optionsChainStore';
@@ -205,32 +207,16 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
       { ticker, limit, expiration: expirationFilter },
       120_000,
       async () => {
-        if (ticker.startsWith('O:')) {
-          const detail =
-            resolvedContractDetail ??
-            (await getMassiveOptionContract(ticker));
-          if (!detail?.underlying) {
-            const err: any = new Error('Contract not found or missing underlying');
-            err.status = 404;
-            throw err;
-          }
-          const contractLimit = expirationFilter ? Math.max(limit, 5000) : limit;
-          const chain = await getMassiveOptionsChain(detail.underlying, contractLimit, 'asc', 'ticker', {
-            expiration: expirationFilter
-          });
-          if (
-            expirationFilter &&
-            (!Array.isArray(chain?.expirations) ||
-              !chain.expirations.some(group => group?.expiration === expirationFilter))
-          ) {
-            const err: any = new Error('No contracts for selected expiration');
-            err.status = 404;
-            throw err;
-          }
-          return chain;
-        }
-        const chain = await getMassiveOptionsChain(ticker, desiredLimit, 'asc', 'ticker', {
-          expiration: expirationFilter
+        // All chain fetches flow through the shared Options Market Data
+        // Orchestrator (request coalescing + session-aware caching +
+        // completeness metadata). The UI is a VISIBLE_UI priority consumer.
+        const chainUnderlying = ticker.startsWith('O:') ? underlyingSymbol : ticker;
+        const contractLimit = ticker.startsWith('O:') && expirationFilter ? Math.max(limit, 5000) : desiredLimit;
+        const chain = await getOptionChainWindow({
+          underlying: chainUnderlying,
+          expiration: expirationFilter,
+          limit: clampChainLimit(contractLimit),
+          priority: REQUEST_PRIORITY.VISIBLE_UI
         });
         if (
           expirationFilter &&
@@ -241,11 +227,12 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
           err.status = 404;
           throw err;
         }
-        console.log('[MARKET] options chain payload', {
+        console.log('[MARKET] options chain resolved', {
           ticker,
           limit,
           expirations: Array.isArray(chain?.expirations) ? chain.expirations.length : 0,
-          sample: chain?.expirations?.[0]
+          complete: chain.completeness?.complete ?? null,
+          cacheStatus: chain.cacheStatus
         });
         return chain;
       },
@@ -489,7 +476,16 @@ router.get('/watchlist', async (req, res, next) => {
             type,
             { ticker: symbol },
             30_000,
-            () => (isOptionContract ? getMassiveOptionContractSnapshot(symbol) : getMassiveStockSnapshot(symbol)),
+            () =>
+              isOptionContract
+                ? getMassiveOptionContractSnapshot(symbol, {
+                    priority: REQUEST_PRIORITY.WATCHLIST,
+                    cacheTtlMs: 60_000,
+                  })
+                : getMassiveStockSnapshot(symbol, {
+                    priority: REQUEST_PRIORITY.WATCHLIST,
+                    cacheTtlMs: 60_000,
+                  }),
             { ticker: symbol }
           );
           return {

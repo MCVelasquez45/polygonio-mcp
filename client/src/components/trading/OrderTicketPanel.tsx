@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import type { QuoteSnapshot, TradePrint, OptionContractDetail } from '../../types/market';
-import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { getBrokerAccount, submitOptionOrder, type SubmitOptionsOrderPayload } from '../../api/alpaca';
+import { memo, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import type { QuoteSnapshot, OptionContractDetail } from '../../types/market';
+import { AlertTriangle, Loader2, Minus, Plus } from 'lucide-react';
+import { getBrokerAccount } from '../../api/alpaca';
+import { submitManualPaperOrder } from '../../api/manualTrading';
+import { useLiveQuote } from '../../lib/liveMarketStore';
+import { computeExpirationDte } from '../../utils/expirations';
+import { probOfProfitLong } from '../../lib/optionsMath';
 
 type Props = {
   contract?: OptionContractDetail | null;
-  quote?: QuoteSnapshot | null;
-  trades: TradePrint[];
   isLoading: boolean;
   label?: string;
   spotPrice?: number | null;
   marketClosed?: boolean;
   afterHours?: boolean;
   nextOpen?: string | null;
-  autoSubmit?: boolean;
   onOrderSubmitted?: (ticker: string, side: string, qty: number, price: number) => void;
 };
 
@@ -81,19 +82,20 @@ function resolveDefaultLegPrice(
   return null;
 }
 
-export function OrderTicketPanel({
+// memo: the ticket subscribes to its own contract's live quote via the store —
+// unrelated app renders should not re-render the order form.
+export const OrderTicketPanel = memo(function OrderTicketPanel({
   contract,
-  quote,
-  trades,
   isLoading,
   label,
   spotPrice,
   marketClosed,
   afterHours,
   nextOpen,
-  autoSubmit = false,
   onOrderSubmitted
 }: Props) {
+  // Live + REST-fallback quotes both land in the shared store.
+  const quote: QuoteSnapshot | null = useLiveQuote(contract?.ticker ?? null);
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<OrderType>('limit');
   const [timeInForce, setTimeInForce] = useState<'day' | 'gtc'>('day');
@@ -106,11 +108,9 @@ export function OrderTicketPanel({
   const [submitting, setSubmitting] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [riskOpen, setRiskOpen] = useState(false);
-  const [tipsOpen, setTipsOpen] = useState(true);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
-  const autoSubmitAttemptedRef = useRef<string | null>(null);
+  const [riskBudget, setRiskBudget] = useState('');
 
   useEffect(() => {
     setQuantity(1);
@@ -194,6 +194,54 @@ export function OrderTicketPanel({
   const costBasis = estimatedCost;
   const maxLoss =
     side === 'buy' && estimatedCost != null ? estimatedCost : null;
+
+  // ── Position analytics (display only) ─────────────────────────────────
+  // Single-leg risk shape from side × type. "Unlimited" is stated, never a
+  // fabricated number; short-put risk is the assignment value below breakeven.
+  const contractSide: 'call' | 'put' = contract?.type?.toLowerCase() === 'put' ? 'put' : 'call';
+  const dte = contract?.expiration ? computeExpirationDte(contract.expiration) : null;
+  const contractIv =
+    typeof contract?.impliedVolatility === 'number' && Number.isFinite(contract.impliedVolatility)
+      ? contract.impliedVolatility
+      : null;
+  const premiumForAnalytics = estimatePrice ?? markPrice ?? null;
+  const maxGain: number | 'unlimited' | null = (() => {
+    if (premiumForAnalytics == null || quantity <= 0 || !contract?.ticker) return null;
+    if (side === 'buy') {
+      if (contractSide === 'call') return 'unlimited';
+      return contract?.strike != null
+        ? Math.max(0, contract.strike - premiumForAnalytics) * quantity * multiplier
+        : null;
+    }
+    return premiumForAnalytics * quantity * multiplier;
+  })();
+  const maxLossDisplay: number | 'unlimited' | null = (() => {
+    if (premiumForAnalytics == null || quantity <= 0 || !contract?.ticker) return maxLoss;
+    if (side === 'buy') return premiumForAnalytics * quantity * multiplier;
+    if (contractSide === 'call') return 'unlimited';
+    return contract?.strike != null
+      ? Math.max(0, contract.strike - premiumForAnalytics) * quantity * multiplier
+      : null;
+  })();
+  // Probability of profit at expiration (Black-Scholes, breakeven as strike).
+  // A short position profits when the long side doesn't: POP_short = 1 − POP_long.
+  const popLong = probOfProfitLong(
+    contractSide,
+    spotPrice ?? null,
+    contract?.strike ?? null,
+    premiumForAnalytics,
+    contractIv,
+    dte
+  );
+  const probProfit = popLong == null ? null : side === 'buy' ? popLong : 1 - popLong;
+  const formatRiskAmount = (value: number | 'unlimited' | null) =>
+    value === 'unlimited' ? 'Unlimited' : value != null ? `$${value.toFixed(2)}` : '—';
+  // Contracts a dollar risk budget buys at the working price (long debit).
+  const riskBudgetValue = Number(riskBudget);
+  const riskSizedQty =
+    Number.isFinite(riskBudgetValue) && riskBudgetValue > 0 && premiumForAnalytics != null && premiumForAnalytics > 0
+      ? Math.floor(riskBudgetValue / (premiumForAnalytics * multiplier)) || null
+      : null;
   const orderTypeLabels: Record<OrderType, string> = {
     market: 'Market',
     limit: 'Limit',
@@ -206,6 +254,30 @@ export function OrderTicketPanel({
     qtyMode === 'dollars' ? 'Dollars' : assetType === 'option' ? 'Contracts' : 'Shares';
   const symbolDisplay = contract?.ticker ?? label ?? '—';
   const marketPriceDisplay = markPrice != null ? `$${markPrice.toFixed(2)}` : '—';
+
+  // Live top-of-book for the price ladder — prefer the streaming quote, fall
+  // back to the contract's last quote. The ladder is the institutional
+  // signature: click bid/mid/ask to arm a limit at that price.
+  const lastQuoteBid = contract?.lastQuote && typeof contract.lastQuote.bid === 'number' ? (contract.lastQuote.bid as number) : null;
+  const lastQuoteAsk = contract?.lastQuote && typeof contract.lastQuote.ask === 'number' ? (contract.lastQuote.ask as number) : null;
+  const bidPx = quote?.bidPrice ?? lastQuoteBid;
+  const askPx = quote?.askPrice ?? lastQuoteAsk;
+  const midPx = markPrice;
+  const spreadPx = quote?.spread ?? (bidPx != null && askPx != null ? askPx - bidPx : null);
+  const bidSize = quote?.bidSize ?? null;
+  const askSize = quote?.askSize ?? null;
+  // Price step: nickels above $3 (option convention), pennies below.
+  const priceTick = midPx != null && midPx >= 3 ? 0.05 : 0.01;
+  const armLimitAt = (value: number | null) => {
+    if (value == null || !Number.isFinite(value)) return;
+    setOrderType(prev => (prev === 'limit' || prev === 'stop_limit' ? prev : 'limit'));
+    setLimitPrice(value.toFixed(2));
+  };
+  const bumpLimit = (dir: 1 | -1) => {
+    const base = limitValue ?? midPx ?? 0;
+    setLimitPrice(Math.max(0, base + dir * priceTick).toFixed(2));
+  };
+  const QTY_CHIPS = assetType === 'option' ? [1, 2, 5, 10] : [10, 25, 50, 100];
   const canSubmit =
     Boolean(contract?.ticker) &&
     quantity > 0 &&
@@ -246,396 +318,417 @@ export function OrderTicketPanel({
     };
   }
 
-  function mapOrderDraftToPayload(draft: OrderDraft): SubmitOptionsOrderPayload {
-    const trail = draft.prices.trail;
-    const orderClass: SubmitOptionsOrderPayload['order_class'] =
-      draft.orderClass === 'mleg' ? 'multi-leg' : 'simple';
-    return {
-      legs: draft.legs ?? [
-        {
-          symbol: draft.instrument,
-          qty: 1,
-          side: draft.side,
-          position_intent: draft.intent
-        }
-      ],
-      quantity: draft.qty,
-      time_in_force: draft.timeInForce,
-      order_type: draft.orderType,
-      order_class: orderClass,
-      limit_price: draft.prices.limit != null ? Number(draft.prices.limit.toFixed(2)) : undefined,
-      stop_price: draft.prices.stop != null ? Number(draft.prices.stop.toFixed(2)) : undefined,
-      trail_price:
-        trail && trail.type === 'amount' ? Number(trail.value.toFixed(2)) : undefined,
-      trail_percent:
-        trail && trail.type === 'percent' ? Number(trail.value.toFixed(2)) : undefined,
-      client_order_id: `mcp-${Date.now()}`
-    };
-  }
-
-  async function handleSubmit() {
+  // Explicit MANUAL submission ONLY. Never called from an effect, mount, quote
+  // update, or selection — solely from the confirmation dialog's dedicated
+  // button. Routes through the governed manual lifecycle (create → confirm →
+  // submit) behind the server-side execution gateway; the browser never holds
+  // execution authority and never calls the broker directly.
+  async function handleConfirmManualOrder() {
     const draft = buildOrderDraft();
     if (!draft) return;
     setSubmitting(true);
     setSubmissionResult(null);
     try {
-      const payload = mapOrderDraftToPayload(draft);
-      console.log('[CLIENT] submitting Alpaca options order', payload);
-      const result = await submitOptionOrder(payload);
-      setSubmissionResult({ status: 'success', message: 'Order submitted to Alpaca paper trading.' });
-      if (onOrderSubmitted && draft.instrument) {
-        onOrderSubmitted(draft.instrument, draft.side, draft.qty, draft.prices.limit || markPrice || 0);
+      const result = await submitManualPaperOrder({
+        optionSymbol: draft.instrument,
+        side: draft.side,
+        quantity: draft.qty,
+        orderType: draft.orderType,
+        limitPrice: draft.prices.limit != null ? Number(draft.prices.limit.toFixed(2)) : null,
+        timeInForce: draft.timeInForce,
+        positionIntent: draft.intent,
+        marketDataSource: 'massive'
+      });
+      if (result.outcome === 'SUBMITTED' || result.outcome === 'ALREADY_SUBMITTED') {
+        setSubmissionResult({ status: 'success', message: 'Manual paper order submitted to Alpaca paper trading.' });
+        if (onOrderSubmitted && draft.instrument) {
+          onOrderSubmitted(draft.instrument, draft.side, draft.qty, draft.prices.limit || markPrice || 0);
+        }
+      } else {
+        setSubmissionResult({ status: 'error', message: result.reason ?? 'Manual order was blocked by the execution gateway.' });
       }
       return result;
     } catch (error: any) {
-      const message = error?.response?.data?.message ?? error?.message ?? 'Failed to submit order';
+      const message = error?.response?.data?.message ?? error?.response?.data?.reason ?? error?.message ?? 'Failed to submit order';
       setSubmissionResult({ status: 'error', message });
     } finally {
       setSubmitting(false);
     }
   }
 
-  // Auto-submit logic
-  useEffect(() => {
-    if (!autoSubmit || !contract?.ticker || submitting || submissionResult) return;
-    if (autoSubmitAttemptedRef.current === contract.ticker) return;
-
-    // Check if we have everything we need to submit
-    if (canSubmit) {
-      console.log('[CLIENT] Auto-submitting order for', contract.ticker);
-      autoSubmitAttemptedRef.current = contract.ticker;
-      handleSubmit();
-    }
-  }, [autoSubmit, contract?.ticker, canSubmit, submitting, submissionResult]);
-
-  useEffect(() => {
-    if (contract?.ticker !== autoSubmitAttemptedRef.current) {
-      autoSubmitAttemptedRef.current = null;
-    }
-  }, [contract?.ticker]);
-
   return (
-    <section className="bg-gray-950 border border-gray-900 rounded-2xl h-full flex flex-col">
-      <header className="p-4 border-b border-gray-900">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Order Ticket</p>
-            <p className="text-lg font-semibold text-gray-100">{label ?? contract?.ticker ?? 'Select a contract'}</p>
-          </div>
+    <section className="bg-intel-panel border border-intel-line rounded-panel h-full flex flex-col">
+      <header className="flex items-center justify-between gap-3 border-b border-intel-line px-3 py-2.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-eyebrow text-intel-ink3">Ticket</span>
+          <span className="truncate font-mono text-[15px] font-semibold tracking-wide text-intel-ink">
+            {symbolDisplay}
+          </span>
         </div>
+        <span className="shrink-0 rounded-sm bg-intel-raised px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ink2">
+          {assetType === 'option' ? 'Option' : 'Equity'}
+        </span>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {(marketClosed || afterHours) && (
           <div
-            className={`rounded-xl border px-3 py-2 text-xs ${marketClosed
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+            className={`flex items-center gap-2 border-l-2 px-2.5 py-1.5 text-[11px] ${marketClosed
+              ? 'border-intel-warn bg-intel-warn/10 text-intel-warn'
+              : 'border-intel-info bg-intel-info/10 text-intel-info'
               }`}
           >
-            <p className="flex items-center gap-2 font-semibold">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              {marketClosed ? 'Market closed — orders queue until open.' : 'After-hours session — liquidity is thin.'}
-            </p>
-            {nextOpen && (
-              <p className="mt-1">
-                Next open {formatCountdown(nextOpen) ?? `on ${new Date(nextOpen).toLocaleString()}`}.
-              </p>
-            )}
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium">
+              {marketClosed ? 'Market closed — orders queue until open.' : 'After-hours — thin liquidity.'}
+              {nextOpen && marketClosed ? ` Opens ${formatCountdown(nextOpen) ?? new Date(nextOpen).toLocaleString()}.` : ''}
+            </span>
           </div>
         )}
 
-        <div className="rounded-xl border border-gray-900 bg-gray-950/60 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setTipsOpen((open: boolean) => !open)}
-            className="w-full flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500"
-          >
-            <span>Beginner Tips</span>
-            {tipsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          </button>
-          {tipsOpen && (
-            <ul className="mt-2 space-y-1 text-xs text-gray-400">
-              <li>Buy opens a new position. Sell closes it.</li>
-              <li>Market fills fast. Limit waits for your price.</li>
-              <li>Options trade in contracts (1 contract = 100 shares).</li>
-              <li>DAY expires today. GTC stays active until you cancel.</li>
-            </ul>
-          )}
+        {/* ── Price ladder: click BID/MID/ASK to arm a limit ─────────────── */}
+        <div className="grid grid-cols-3 overflow-hidden rounded-panel border border-intel-line">
+          {([
+            ['Bid', bidPx, bidSize, 'pos', () => armLimitAt(bidPx)],
+            ['Mid', midPx, null, 'ink', () => armLimitAt(midPx)],
+            ['Ask', askPx, askSize, 'neg', () => armLimitAt(askPx)],
+          ] as const).map(([lbl, px, sz, tone, onClick], i) => {
+            const armed = requiresLimit && px != null && limitValue != null && Math.abs(limitValue - px) < 1e-6;
+            const toneText = tone === 'pos' ? 'text-intel-pos' : tone === 'neg' ? 'text-intel-neg' : 'text-intel-ink';
+            return (
+              <button
+                key={lbl}
+                type="button"
+                onClick={onClick}
+                disabled={px == null}
+                className={`flex flex-col items-center gap-0.5 px-1.5 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  i < 2 ? 'border-r border-intel-line' : ''
+                } ${armed ? 'bg-intel-info/15' : 'hover:bg-intel-panel2'}`}
+              >
+                <span className="font-mono text-[8.5px] uppercase tracking-label text-intel-ink3">{lbl}</span>
+                <span className={`font-mono tabular-nums text-[13px] font-semibold leading-none ${toneText}`}>
+                  {px != null ? px.toFixed(2) : '—'}
+                </span>
+                <span className="font-mono text-[9px] tabular-nums leading-none text-intel-ink3">
+                  {sz != null ? `×${sz}` : ' '}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-between px-0.5 font-mono text-[10px] tabular-nums text-intel-ink3">
+          <span>SPREAD {spreadPx != null ? spreadPx.toFixed(2) : '—'}</span>
+          <span>LAST {marketPriceDisplay}</span>
         </div>
 
-        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-          <span>Side</span>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
+        {/* ── Side: hard split toggle ────────────────────────────────────── */}
+        <div className="grid grid-cols-2 overflow-hidden rounded-panel border border-intel-line font-mono text-[13px] font-semibold uppercase tracking-label">
           <button
             type="button"
-            className={`rounded-xl px-3 py-2 border ${side === 'buy' ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-gray-800 text-gray-400'
-              }`}
+            className={`py-2 transition-colors ${side === 'buy' ? 'bg-intel-pos text-intel-bg' : 'text-intel-ink3 hover:bg-intel-panel2'}`}
             onClick={() => setSide('buy')}
           >
             Buy
           </button>
           <button
             type="button"
-            className={`rounded-xl px-3 py-2 border ${side === 'sell' ? 'border-red-500/60 bg-red-500/10 text-white' : 'border-gray-800 text-gray-400'
-              }`}
+            className={`py-2 transition-colors ${side === 'sell' ? 'bg-intel-neg text-intel-bg' : 'text-intel-ink3 hover:bg-intel-panel2'}`}
             onClick={() => setSide('sell')}
           >
             Sell
           </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Symbol</p>
-            <p className="text-sm text-white break-all">{symbolDisplay}</p>
-          </div>
-          <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Market Price</p>
-            <p className="text-sm text-white">{marketPriceDisplay}</p>
+
+        {/* ── Order type: compact pills ─────────────────────────────────── */}
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Order Type</p>
+          <div className="grid grid-cols-5 gap-1 font-mono text-[10px] font-semibold uppercase">
+            {([
+              ['market', 'Mkt'],
+              ['limit', 'Lmt'],
+              ['stop', 'Stp'],
+              ['stop_limit', 'StpL'],
+              ['trailing_stop', 'Trl'],
+            ] as const).map(([val, lbl]) => {
+              const disabled = val === 'market' && Boolean(marketClosed);
+              const activeT = orderType === val;
+              return (
+                <button
+                  key={val}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setOrderType(val)}
+                  className={`rounded-sm py-1.5 tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    activeT ? 'bg-intel-accent text-intel-bg' : 'bg-intel-panel2 text-intel-ink2 hover:text-intel-ink'
+                  }`}
+                >
+                  {lbl}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-            <span>Quantity Mode</span>
+        {/* ── Quantity: steppers + quick chips ──────────────────────────── */}
+        <div>
+          <div className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-label text-intel-ink3">
+            <span>Quantity · {quantityLabel}</span>
+            {assetType === 'stock' && (
+              <div className="flex overflow-hidden rounded-sm border border-intel-line">
+                <button
+                  type="button"
+                  onClick={() => setQtyMode(primaryQtyMode)}
+                  className={`px-1.5 py-0.5 ${qtyMode !== 'dollars' ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3'}`}
+                >
+                  Shares
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQtyMode('dollars')}
+                  className={`px-1.5 py-0.5 ${qtyMode === 'dollars' ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3'}`}
+                >
+                  $
+                </button>
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
+          <div className="flex items-stretch gap-1">
             <button
               type="button"
-              className={`rounded-xl px-3 py-2 border ${qtyMode === primaryQtyMode
-                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                : 'border-gray-800 text-gray-400'
+              onClick={() => setQuantity(q => Math.max(1, q - 1))}
+              className="flex w-9 items-center justify-center rounded-panel border border-intel-line text-intel-ink2 hover:bg-intel-panel2"
+              aria-label="Decrease quantity"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <input
+              type="number"
+              min={1}
+              value={quantity}
+              onChange={(event: React.ChangeEvent<HTMLInputElement>) => setQuantity(Number(event.target.value) || 1)}
+              className="min-w-0 flex-1 rounded-panel border border-intel-line bg-intel-panel2 px-2 py-2 text-center font-mono tabular-nums text-[15px] font-semibold text-intel-ink focus:border-intel-accentLine focus-visible:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setQuantity(q => q + 1)}
+              className="flex w-9 items-center justify-center rounded-panel border border-intel-line text-intel-ink2 hover:bg-intel-panel2"
+              aria-label="Increase quantity"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="mt-1 grid grid-cols-4 gap-1 font-mono text-[10px]">
+            {QTY_CHIPS.map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setQuantity(n)}
+                className={`rounded-sm py-1 tabular-nums transition-colors ${
+                  quantity === n ? 'bg-intel-raised text-intel-ink' : 'bg-intel-panel2 text-intel-ink3 hover:text-intel-ink2'
                 }`}
-              onClick={() => setQtyMode(primaryQtyMode)}
-            >
-              {primaryQtyMode === 'contracts' ? 'Contracts' : 'Shares'}
-            </button>
-            <button
-              type="button"
-              disabled={notionalDisabled}
-              className={`rounded-xl px-3 py-2 border ${qtyMode === 'dollars'
-                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                : 'border-gray-800 text-gray-400'
-                } ${notionalDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              onClick={() => setQtyMode('dollars')}
-            >
-              Dollars
-            </button>
+              >
+                {n}
+              </button>
+            ))}
           </div>
-          {notionalDisabled && (
-            <p className="text-xs text-gray-500">Notional sizing is available for stock orders only.</p>
+          {/* Risk-based sizing: contracts from a dollar risk budget at the
+              working price (debit = max loss for a long single-leg). */}
+          {assetType === 'option' && side === 'buy' && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Size by risk $</span>
+              <input
+                type="number"
+                min={0}
+                value={riskBudget}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setRiskBudget(event.target.value)}
+                placeholder="500"
+                aria-label="Risk budget in dollars"
+                className="w-20 rounded-panel border border-intel-line bg-intel-panel2 px-2 py-1 text-right font-mono tabular-nums text-[11px] text-intel-ink placeholder:text-intel-ink3 focus:border-intel-accentLine focus-visible:outline-none"
+              />
+              <button
+                type="button"
+                disabled={riskSizedQty == null}
+                onClick={() => riskSizedQty != null && setQuantity(riskSizedQty)}
+                title={
+                  riskSizedQty != null && premiumForAnalytics != null
+                    ? `${riskSizedQty} contract${riskSizedQty === 1 ? '' : 's'} ≈ $${(riskSizedQty * premiumForAnalytics * multiplier).toFixed(0)} at $${premiumForAnalytics.toFixed(2)}`
+                    : 'Enter a risk budget and a working price first'
+                }
+                className="rounded-sm bg-intel-panel2 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-intel-ink2 transition-colors hover:text-intel-ink disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {riskSizedQty != null ? `Apply · ${riskSizedQty}` : 'Apply'}
+              </button>
+            </div>
           )}
         </div>
 
-        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-          <span>Quantity ({quantityLabel.toLowerCase()})</span>
-        </div>
-        <label className="flex flex-col gap-1 text-sm">
-          <input
-            type="number"
-            min={1}
-            value={quantity}
-            onChange={(event: React.ChangeEvent<HTMLInputElement>) => setQuantity(Number(event.target.value) || 1)}
-            className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
-          />
-        </label>
-
-        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-          <span>Order Type</span>
-        </div>
-        <label className="flex flex-col gap-1 text-sm">
-          <select
-            value={orderType}
-            onChange={(event: ChangeEvent<HTMLSelectElement>) => setOrderType(event.target.value as OrderType)}
-            className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
-          >
-            <option value="market" disabled={marketClosed}>Market</option>
-            <option value="limit">Limit</option>
-            <option value="stop">Stop</option>
-            <option value="stop_limit">Stop Limit</option>
-            <option value="trailing_stop">Trailing Stop</option>
-          </select>
-        </label>
-
-        {requiresStop && (
-          <label className="flex flex-col gap-1 text-sm">
-            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-              <span>Stop Price</span>
+        {/* ── Limit price with tick steppers ────────────────────────────── */}
+        {requiresLimit && (
+          <div>
+            <p className="mb-1 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Limit Price</p>
+            <div className="flex items-stretch gap-1">
+              <button
+                type="button"
+                onClick={() => bumpLimit(-1)}
+                className="flex w-9 items-center justify-center rounded-panel border border-intel-line text-intel-ink2 hover:bg-intel-panel2"
+                aria-label="Decrease limit"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={limitPrice}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setLimitPrice(event.target.value)}
+                className="min-w-0 flex-1 rounded-panel border border-intel-line bg-intel-panel2 px-2 py-2 text-center font-mono tabular-nums text-[15px] font-semibold text-intel-ink focus:border-intel-accentLine focus-visible:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => bumpLimit(1)}
+                className="flex w-9 items-center justify-center rounded-panel border border-intel-line text-intel-ink2 hover:bg-intel-panel2"
+                aria-label="Increase limit"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
             </div>
+          </div>
+        )}
+
+        {/* ── Stop price ────────────────────────────────────────────────── */}
+        {requiresStop && (
+          <div>
+            <p className="mb-1 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Stop Price</p>
             <input
               type="number"
               step="0.01"
               min={0}
               value={stopPrice}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setStopPrice(event.target.value)}
-              className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
+              className="w-full rounded-panel border border-intel-line bg-intel-panel2 px-2 py-2 text-center font-mono tabular-nums text-[15px] font-semibold text-intel-warn focus:border-intel-accentLine focus-visible:outline-none"
             />
-            {marketPriceDisplay !== '—' && (
-              <span className="text-xs text-white">Market: {marketPriceDisplay}</span>
-            )}
-          </label>
+            <p className="mt-1 font-mono text-[10px] text-intel-ink3">
+              {orderType === 'stop_limit' ? 'Stop = trigger · Limit = protection' : 'Executes at market once hit'}
+            </p>
+          </div>
         )}
 
-        {requiresLimit && (
-          <label className="flex flex-col gap-1 text-sm">
-            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-              <span>Limit Price</span>
+        {/* ── Trailing stop ─────────────────────────────────────────────── */}
+        {requiresTrail && (
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <p className="font-mono text-[9px] uppercase tracking-label text-intel-ink3">Trailing Stop</p>
+              <div className="flex overflow-hidden rounded-sm border border-intel-line font-mono text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setTrailType('percent')}
+                  className={`px-2 py-0.5 ${trailType === 'percent' ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3'}`}
+                >
+                  %
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrailType('amount')}
+                  className={`px-2 py-0.5 ${trailType === 'amount' ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3'}`}
+                >
+                  $
+                </button>
+              </div>
             </div>
             <input
               type="number"
               step="0.01"
               min={0}
-              value={limitPrice}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setLimitPrice(event.target.value)}
-              className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-white"
+              value={trailValue}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setTrailValue(event.target.value)}
+              className="w-full rounded-panel border border-intel-line bg-intel-panel2 px-2 py-2 text-center font-mono tabular-nums text-[15px] font-semibold text-intel-warn focus:border-intel-accentLine focus-visible:outline-none"
             />
-            {marketPriceDisplay !== '—' && (
-              <span className="text-xs text-white">Market: {marketPriceDisplay}</span>
-            )}
-          </label>
-        )}
-
-        {orderType === 'stop_limit' && (
-          <p className="text-xs text-gray-500">Stop = trigger. Limit = protection.</p>
-        )}
-        {orderType === 'stop' && (
-          <p className="text-xs text-gray-500">Stop = trigger. Executes at market once hit.</p>
-        )}
-
-        {requiresTrail && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-              <span>Trailing Stop</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
-              <button
-                type="button"
-                className={`rounded-xl px-3 py-2 border ${trailType === 'percent'
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-                  }`}
-                onClick={() => setTrailType('percent')}
-              >
-                Trail %
-              </button>
-              <button
-                type="button"
-                className={`rounded-xl px-3 py-2 border ${trailType === 'amount'
-                  ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                  : 'border-gray-800 text-gray-400'
-                  }`}
-                onClick={() => setTrailType('amount')}
-              >
-                Trail $
-              </button>
-            </div>
-            <label className="flex flex-col gap-1 text-sm">
-              Trail {trailType === 'percent' ? '%' : '$'}
-              <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={trailValue}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setTrailValue(event.target.value)}
-                className="bg-gray-950 border border-gray-900 rounded-xl px-3 py-2 text-emerald-200"
-              />
-            </label>
           </div>
         )}
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-            <span>Time in Force</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
-            <button
-              type="button"
-              className={`rounded-xl px-3 py-2 border ${timeInForce === 'day'
-                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                : 'border-gray-800 text-gray-400'
+        {/* ── Time in force ─────────────────────────────────────────────── */}
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Time in Force</p>
+          <div className="grid grid-cols-2 gap-1 font-mono text-[11px] font-semibold uppercase">
+            {(['day', 'gtc'] as const).map(tif => (
+              <button
+                key={tif}
+                type="button"
+                onClick={() => setTimeInForce(tif)}
+                className={`rounded-sm py-1.5 tracking-label transition-colors ${
+                  timeInForce === tif ? 'bg-intel-raised text-intel-ink' : 'bg-intel-panel2 text-intel-ink3 hover:text-intel-ink2'
                 }`}
-              onClick={() => setTimeInForce('day')}
-            >
-              DAY
-            </button>
-            <button
-              type="button"
-              className={`rounded-xl px-3 py-2 border ${timeInForce === 'gtc'
-                ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
-                : 'border-gray-800 text-gray-400'
-                }`}
-              onClick={() => setTimeInForce('gtc')}
-            >
-              GTC
-            </button>
+              >
+                {tif}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-900 bg-gray-950 px-3 py-2 text-sm space-y-2">
-          <div className="flex justify-between text-gray-400">
-            <span>{estimatedLabel}</span>
-            <span>{estimatedCost != null ? `$${estimatedCost.toFixed(2)}` : '—'}</span>
-          </div>
-          <div className="flex justify-between text-gray-400">
-            <span>Buying Power</span>
-            <span>
-              {buyingPowerLoading ? '…' : buyingPower != null ? `$${buyingPower.toFixed(2)}` : '—'}
-            </span>
-          </div>
-          {insufficientFunds && (
-            <p className="text-xs text-red-300">
-              Estimated cost exceeds buying power. Adjust size or price.
-            </p>
+        {/* ── Always-on risk read-out ───────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-intel-line pt-2.5 font-mono text-[11px] tabular-nums">
+          <span className="text-intel-ink3">{estimatedLabel}</span>
+          <span className={`text-right font-semibold ${insufficientFunds ? 'text-intel-neg' : 'text-intel-ink'}`}>
+            {estimatedCost != null ? `$${estimatedCost.toFixed(2)}` : '—'}
+          </span>
+          <span className="text-intel-ink3">Buying Power</span>
+          <span className="text-right text-intel-ink2">
+            {buyingPowerLoading ? '…' : buyingPower != null ? `$${buyingPower.toFixed(2)}` : '—'}
+          </span>
+          <span className="text-intel-ink3">Max Loss</span>
+          <span className={`text-right ${maxLossDisplay === 'unlimited' ? 'text-intel-neg' : 'text-intel-ink2'}`}>
+            {formatRiskAmount(maxLossDisplay)}
+          </span>
+          <span className="text-intel-ink3">Max Gain</span>
+          <span className={`text-right ${maxGain === 'unlimited' ? 'text-intel-pos' : 'text-intel-ink2'}`}>
+            {formatRiskAmount(maxGain)}
+          </span>
+          {probProfit != null && (
+            <>
+              <span className="text-intel-ink3" title="Probability the position is profitable at expiration (Black-Scholes from the contract's implied vol; breakeven as the effective strike).">
+                Prob. Profit
+              </span>
+              <span className="text-right text-intel-ink2">{(probProfit * 100).toFixed(0)}%</span>
+            </>
+          )}
+          {breakevenPrice != null && (
+            <>
+              <span className="text-intel-ink3">Breakeven</span>
+              <span className="text-right text-intel-ink2">${breakevenPrice.toFixed(2)}</span>
+            </>
+          )}
+          {dte != null && (
+            <>
+              <span className="text-intel-ink3">DTE</span>
+              <span className="text-right text-intel-ink2">{dte}</span>
+            </>
           )}
         </div>
+        {insufficientFunds && (
+          <p className="font-mono text-[10px] text-intel-neg">Cost exceeds buying power — adjust size or price.</p>
+        )}
 
-        <div className="border border-gray-900 rounded-2xl">
-          <button
-            type="button"
-            onClick={() => setRiskOpen((open: boolean) => !open)}
-            className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-300"
-          >
-            <span>Risk Preview</span>
-            {riskOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-          {riskOpen && (
-            <div className="px-4 pb-4 space-y-2 text-sm text-gray-400">
-              <div className="flex justify-between">
-                <span>Max Loss</span>
-                <span>{maxLoss != null ? `$${maxLoss.toFixed(2)}` : '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cost Basis</span>
-                <span>{costBasis != null ? `$${costBasis.toFixed(2)}` : '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Breakeven</span>
-                <span>{breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : '—'}</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-gray-500">
-          <span>Review</span>
-        </div>
+        {/* ── Action-labeled submit ─────────────────────────────────────── */}
         <button
           type="button"
           disabled={!canSubmit}
-          className={`w-full inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${side === 'buy'
-            ? 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800'
-            : 'bg-red-600 hover:bg-red-500 disabled:bg-gray-800'
-            }`}
+          aria-label={`Review order — ${side} ${quantity} ${symbolDisplay} · ${orderTypeLabel}`}
+          className={`w-full rounded-panel px-3 py-3 font-mono text-[13px] font-semibold uppercase tracking-label text-intel-bg transition-colors disabled:cursor-not-allowed disabled:bg-intel-panel2 disabled:text-intel-ink3 ${
+            side === 'buy' ? 'bg-intel-pos hover:brightness-110' : 'bg-intel-neg hover:brightness-110'
+          }`}
           onClick={() => setReviewOpen(true)}
         >
-          {submitting || isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Review Order'}
+          {submitting || isLoading ? (
+            <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+          ) : (
+            `${side} ${quantity} ${symbolDisplay} · ${orderTypeLabel}`
+          )}
         </button>
         {submissionResult && (
           <div
-            className={`text-sm rounded-xl px-3 py-2 ${submissionResult.status === 'success'
-              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/40'
-              : 'bg-red-500/10 text-red-300 border border-red-500/40'
+            className={`border-l-2 px-2.5 py-1.5 font-mono text-[11px] ${submissionResult.status === 'success'
+              ? 'border-intel-pos bg-intel-pos/10 text-intel-pos'
+              : 'border-intel-neg bg-intel-neg/10 text-intel-neg'
               }`}
           >
             {submissionResult.message}
@@ -644,14 +737,14 @@ export function OrderTicketPanel({
       </div>
       {reviewOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-gray-900 bg-gray-950 p-5 space-y-4">
+          <div className="w-full max-w-md rounded-2xl border border-intel-divider bg-intel-panel p-5 space-y-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Review Order</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-intel-ink3">Review Order</p>
               <p className="text-lg font-semibold text-white mt-1">
                 {side === 'buy' ? 'Buy' : 'Sell'} {symbolDisplay}
               </p>
             </div>
-            <div className="space-y-2 text-sm text-gray-300">
+            <div className="space-y-2 text-sm text-intel-ink2">
               <div className="flex justify-between">
                 <span>Quantity</span>
                 <span>{quantity} {quantityLabel}</span>
@@ -690,22 +783,22 @@ export function OrderTicketPanel({
             <div className="flex gap-2">
               <button
                 type="button"
-                className="flex-1 rounded-xl border border-gray-800 px-3 py-2 text-sm text-gray-300"
+                className="flex-1 rounded-panel border border-intel-line px-3 py-2 text-sm text-intel-ink2"
                 onClick={() => setReviewOpen(false)}
               >
                 Back
               </button>
               <button
                 type="button"
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${side === 'buy' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'
+                className={`flex-1 rounded-panel px-3 py-2 text-sm font-semibold ${side === 'buy' ? 'bg-intel-pos hover:bg-intel-pos' : 'bg-intel-neg hover:bg-intel-neg'
                   }`}
                 onClick={() => {
                   setReviewOpen(false);
-                  void handleSubmit();
+                  void handleConfirmManualOrder();
                 }}
                 disabled={!canSubmit}
               >
-                {submitting ? 'Submitting…' : 'Submit Order'}
+                {submitting ? 'Submitting…' : 'Submit Manual Paper Order'}
               </button>
             </div>
           </div>
@@ -713,4 +806,4 @@ export function OrderTicketPanel({
       )}
     </section>
   );
-}
+});

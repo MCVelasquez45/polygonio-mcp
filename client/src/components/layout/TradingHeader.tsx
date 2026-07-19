@@ -1,41 +1,47 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Briefcase, LayoutDashboard, Menu, MessageSquare, Plus, ScanSearch, Search, Settings, TrendingUp } from 'lucide-react';
-
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard';
+import { memo, useEffect, useMemo, useState } from 'react';
+import { Command, Menu, MessageSquare, Plus, Search, Settings, TrendingUp } from 'lucide-react';
+import { ActionButton } from '../intelligence/ui';
+import { LiveNumber, LiveState } from '../shared/terminal';
+import { useLiveQuote } from '../../lib/liveMarketStore';
+import { modeLabel, type AppView } from './navModes';
 
 type Props = {
   selectedTicker: string;
   onTickerSubmit: (ticker: string) => void;
   onAddToWatchlist: (ticker: string) => void;
-  currentView: View;
-  onViewChange: (view: View) => void;
+  currentView: AppView;
+  onViewChange: (view: AppView) => void;
   onToggleSidebar: () => void;
   onToggleChat: () => void;
   isChatOpen: boolean;
   chatDisabled?: boolean;
   onToggleSettings: () => void;
   isSettingsOpen?: boolean;
+  onOpenCommandPalette?: () => void;
 };
 
-const views: { id: View; label: string; icon: ReactNode }[] = [
-  { id: 'trading', label: 'Trading', icon: <TrendingUp className="h-4 w-4" /> },
-  { id: 'scanner', label: 'Scanner', icon: <ScanSearch className="h-4 w-4" /> },
-  { id: 'portfolio', label: 'Portfolio', icon: <Briefcase className="h-4 w-4" /> },
-  { id: 'dashboard', label: 'The Lab', icon: <LayoutDashboard className="h-4 w-4" /> },
-];
+/** SPY from a raw ticker or option symbol (O:SPY...), for the context pill. */
+function underlyingOf(ticker: string): string {
+  const t = ticker.trim().toUpperCase();
+  if (t.startsWith('O:')) {
+    const m = t.slice(2).match(/^([A-Z]+)/);
+    return m?.[1] ?? t;
+  }
+  return t;
+}
 
-export function TradingHeader({
+export const TradingHeader = memo(function TradingHeader({
   selectedTicker,
   onTickerSubmit,
   onAddToWatchlist,
   currentView,
-  onViewChange,
   onToggleSidebar,
   onToggleChat,
   isChatOpen,
   chatDisabled,
   onToggleSettings,
   isSettingsOpen,
+  onOpenCommandPalette,
 }: Props) {
   const [tickerInput, setTickerInput] = useState(selectedTicker);
 
@@ -43,10 +49,15 @@ export function TradingHeader({
     setTickerInput(selectedTicker);
   }, [selectedTicker]);
 
+  const underlying = useMemo(() => underlyingOf(selectedTicker), [selectedTicker]);
+  const quote = useLiveQuote(underlying);
+  const mid =
+    quote?.midpoint ??
+    (quote?.bidPrice != null && quote?.askPrice != null ? (quote.bidPrice + quote.askPrice) / 2 : null);
+
   const handleSubmit = () => {
     const normalized = tickerInput.trim().toUpperCase();
-    if (!normalized) return;
-    if (normalized === selectedTicker) return;
+    if (!normalized || normalized === selectedTicker) return;
     onTickerSubmit(normalized);
   };
 
@@ -57,109 +68,92 @@ export function TradingHeader({
   };
 
   return (
-    <header className="h-14 sm:h-16 bg-gray-950 border-b border-gray-900 flex items-center justify-between px-3 sm:px-6">
-      <div className="flex items-center gap-3 sm:gap-4">
+    <header className="flex h-14 items-center justify-between gap-3 border-b border-intel-line bg-intel-bg px-3 sm:h-16 sm:px-5">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+        {/* Mobile: toggle the Terminal watchlist drawer. */}
         <button
           type="button"
-          className="lg:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-gray-800 text-gray-300"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-intel-line text-intel-ink2 lg:hidden"
           onClick={onToggleSidebar}
-          aria-label="Toggle navigation"
+          aria-label="Toggle watchlist"
         >
           <Menu className="h-5 w-5" />
         </button>
         <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-xl bg-emerald-600/15 border border-emerald-500/30 flex items-center justify-center">
-            <TrendingUp className="h-5 w-5 text-emerald-400" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-panel border border-intel-accentLine bg-intel-accentSoft">
+            <TrendingUp className="h-5 w-5 text-intel-accent" />
           </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500 hidden sm:block">Options Desk</p>
-            <p className="text-base sm:text-lg font-semibold">Polygon Market Copilot</p>
+          <div className="hidden sm:block">
+            <p className="font-mono text-[10px] uppercase tracking-eyebrow text-intel-ink3">AI-Trader · {modeLabel(currentView)}</p>
+            <p className="text-sm font-semibold leading-tight text-intel-ink">Trading Terminal</p>
           </div>
         </div>
-        <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-900 border border-gray-800 px-1 py-1">
-          {views.map(view => (
-            <button
-              key={view.id}
-              type="button"
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${currentView === view.id
-                ? 'bg-emerald-600 text-white'
-                : 'text-gray-400 hover:text-gray-100'
-                }`}
-              onClick={() => onViewChange(view.id)}
-            >
-              {view.icon}
-              <span className="hidden xl:inline">{view.label}</span>
-            </button>
-          ))}
+
+        {/* Live symbol context — a quiet inline group, not a box, that persists
+            as you work the name. */}
+        <div className="hidden items-center gap-3 border-l border-intel-divider pl-4 lg:flex">
+          <span className="font-mono text-base font-semibold tracking-wide text-intel-ink">{underlying}</span>
+          <LiveNumber value={mid} className="text-sm text-intel-ink2" />
+          <LiveState timestamp={quote?.timestamp ?? null} />
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-3">
         <div className="relative">
-          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-intel-ink3" />
           <input
-            className="bg-gray-900 border border-gray-800 rounded-full pl-9 pr-4 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 min-w-[140px]"
-            placeholder="Search ticker"
+            className="h-9 min-w-[130px] rounded-lg border border-intel-line bg-intel-panel pl-9 pr-4 font-mono text-sm uppercase tracking-wide text-intel-ink focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+            placeholder="Symbol"
             value={tickerInput}
             onChange={event => setTickerInput(event.target.value.toUpperCase())}
             onKeyDown={event => event.key === 'Enter' && handleSubmit()}
+            aria-label="Load symbol"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleAddTicker}
-            className="inline-flex items-center gap-2 h-10 px-3 rounded-xl border border-gray-800 text-gray-200 text-sm font-semibold hover:border-emerald-500/60 hover:text-white"
-          >
-            <Plus className="h-4 w-4" /> Watchlist
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            className="hidden sm:inline-flex items-center gap-2 h-10 px-4 rounded-xl bg-emerald-600 text-white text-sm font-semibold"
-          >
-            Load
-          </button>
-          <button
-            type="button"
-            onClick={onToggleChat}
-            disabled={chatDisabled}
-            className={`inline-flex items-center justify-center h-10 w-10 rounded-xl border ${isChatOpen
-              ? 'border-emerald-500 text-emerald-300'
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          title="Command palette (⌘K)"
+          aria-label="Open command palette"
+          className="hidden h-9 items-center gap-2 rounded-lg border border-intel-line px-2.5 text-intel-ink2 transition-colors hover:border-intel-accentLine hover:text-intel-accent sm:inline-flex"
+        >
+          <Command className="h-4 w-4" />
+          <kbd className="font-mono text-[10px] text-intel-ink3">⌘K</kbd>
+        </button>
+        <ActionButton onClick={handleAddTicker} className="hidden sm:inline-flex">
+          <Plus className="h-4 w-4" /> Watchlist
+        </ActionButton>
+        <ActionButton onClick={handleSubmit} className="hidden sm:inline-flex">
+          Load
+        </ActionButton>
+        <button
+          type="button"
+          onClick={onToggleChat}
+          disabled={chatDisabled}
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border ${
+            isChatOpen
+              ? 'border-intel-accentLine bg-intel-accentSoft text-intel-accent'
               : chatDisabled
-                ? 'border-gray-900 text-gray-600'
-                : 'border-gray-800 text-gray-400 hover:text-white'
-              }`}
-            aria-label="Toggle chat"
-          >
-            <MessageSquare className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            onClick={onToggleSettings}
-            className={`hidden sm:inline-flex items-center justify-center h-10 w-10 rounded-xl border ${isSettingsOpen ? 'border-emerald-500/60 text-emerald-300' : 'border-gray-800 text-gray-400 hover:text-white'
-              }`}
-            aria-label="Settings"
-          >
-            <Settings className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
-
-      <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-900 flex lg:hidden">
-        {views.map(view => (
-          <button
-            key={view.id}
-            type="button"
-            className={`flex-1 py-2 flex flex-col items-center gap-1 text-xs ${view.id === currentView ? 'text-white' : 'text-gray-500'
-              }`}
-            onClick={() => onViewChange(view.id)}
-          >
-            {view.icon}
-            {view.label}
-          </button>
-        ))}
+                ? 'border-intel-lineSoft text-intel-ink3'
+                : 'border-intel-line text-intel-ink2 hover:text-intel-ink'
+          }`}
+          aria-label="Toggle AI chat"
+        >
+          <MessageSquare className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleSettings}
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border ${
+            isSettingsOpen
+              ? 'border-intel-accentLine bg-intel-accentSoft text-intel-accent'
+              : 'border-intel-line text-intel-ink2 hover:text-intel-ink'
+          }`}
+          aria-label="Settings"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
       </div>
     </header>
   );
-}
+});
