@@ -10,8 +10,9 @@ Version 1 is the first verified autonomous trading baseline. It successfully exe
 - Hardened release tag: `v1.0.1-production-hardened`
 - Environment verified: Alpaca paper trading
 - Current development branch: `feature/trading-intelligence-engine`
+- Current release candidate: AI-Trader V3 RC1 / PR #57
 
-Version 1 is a paper-trading release. It is not cleared for live-money deployment until the known production blockers in the release checklist are addressed.
+RC1 is a paper-trading release candidate. It is not cleared for live-money deployment.
 
 ## Core Workspaces
 
@@ -55,8 +56,11 @@ Run the V1 release checks from the repository root:
 npm --prefix client test
 npm --prefix client run build
 npm --prefix server run build
+npm --prefix server run test
 npm --prefix server run test:automation
 npm run test:dev
+npm audit --omit=dev
+git diff --check
 ```
 
 Some server automation and dev-platform tests bind local ports. In restricted sandboxes they may need to run outside the sandbox.
@@ -104,14 +108,80 @@ npm run dev:trading
 
 Each layer reads its own environment file. Never commit real API keys, broker credentials, database credentials, auth tokens, or local secrets.
 
+## Deployment
+
+This project deploys with native buildpacks:
+
+- Backend: Render Node service from `server/`
+- Frontend: Vercel Vite app from `client/`
+
+Render backend:
+
+```bash
+Build command: npm install && npm run build
+Start command: npm start
+Health check: /health
+```
+
+Required Render environment variables by name:
+
+- `NODE_ENV=production`
+- `PORT`
+- `CORS_ORIGINS`
+- `FRONTEND_ORIGIN`
+- `MONGO_URI` or `MONGODB_URI`
+- `MASSIVE_API_KEY`
+- `MASSIVE_BASE_URL`
+- `MASSIVE_SUBSCRIPTION_PROFILE`
+- `MASSIVE_OPTIONS_WS_URL`
+- `MASSIVE_OPTIONS_WS_ENABLED`
+- `MASSIVE_STOCKS_WS_ENABLED`
+- `APCA_API_KEY_ID`
+- `APCA_API_SECRET_KEY`
+- `APCA_API_BASE_URL`
+- `APCA_DATA_BASE_URL`
+- `ALPACA_PAPER`
+- `ALPACA_DATA_FEED`
+- `ALPACA_OPTION_FEED`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `AUTH_JWT_SECRET`
+
+Vercel frontend:
+
+```bash
+Build command: cd client && npm install && npm run build
+Output directory: client/dist
+```
+
+Required Vercel environment variables by name:
+
+- `VITE_API_URL`
+- `VITE_AUTH_TOKEN` only if using the local/dev token flow
+- `VITE_AUTH_ROLE` only if using the local/dev token flow
+
+For production, `VITE_API_URL` must be the Render backend URL. Do not use a
+localhost URL in Vercel. The backend `CORS_ORIGINS`/`FRONTEND_ORIGIN` values must
+include the Vercel frontend origin.
+
+## Massive Entitlement Status
+
+The current validated Massive profile is `options-advanced`:
+
+- Real-time options REST and options WebSocket are expected.
+- Real-time stocks WebSocket is not included and is disabled by default.
+- Current-day stock intraday aggregates are not authorized under this profile.
+- Underlying data surfaced through options snapshots must be labeled as delayed.
+- The app must never display `LIVE` for data that came from a delayed snapshot,
+  stale cache, disconnected socket, or unauthorized endpoint.
+
 ## Release Status
 
-Recommendation: Version 1 Complete for autonomous paper trading.
+Recommendation: RC1 targets autonomous paper-trading validation only.
 
-Known blockers before live trading:
+Known limitations before live-money trading:
 
 - Production authentication and authorization.
-- Environment-restricted CORS and Socket.IO origins.
 - Rate limiting and security headers for exposed endpoints.
 - Live-broker operational approval and controls.
 - Credential rotation confirmation for any historical secret exposure.

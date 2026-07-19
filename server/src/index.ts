@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import { createServer } from 'http';
 import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
@@ -56,7 +56,12 @@ import {
 import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
 
 const app = express();
-app.use(cors());
+const corsOrigin = buildCorsOrigin();
+const corsOptions: CorsOptions = {
+  origin: corsOrigin,
+  credentials: false,
+};
+app.use(cors(corsOptions));
 
 // Proxy: Python Screener Service
 // Must be placed before bodyParser/express.json() to stream requests correctly
@@ -87,7 +92,7 @@ app.use((req: RequestWithContext, res, next) => {
     context: {
       method: req.method,
       path: req.originalUrl,
-      body: req.body ?? {},
+      queryParamNames: Object.keys(req.query ?? {}),
     },
   });
   next();
@@ -146,7 +151,10 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const httpServer = createServer(app);
 
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*' }
+  cors: {
+    origin: corsOrigin,
+    credentials: false,
+  }
 });
 app.set('io', io);
 initLiveFeed(io);
@@ -345,4 +353,65 @@ function logMongoGuidance(config: MongoConfig) {
     console.log('[SERVER] Tip: start mongod locally or point MONGO_URI to Atlas.');
   }
   console.log('[SERVER] AGG_WORKER_ENABLED controls background aggregate ingestion.');
+}
+
+type CorsOriginCallback = NonNullable<CorsOptions['origin']>;
+
+function buildCorsOrigin(): CorsOriginCallback {
+  const configuredOrigins = [
+    ...splitOrigins(process.env.CORS_ORIGINS),
+    ...splitOrigins(process.env.CLIENT_ORIGIN),
+    ...splitOrigins(process.env.FRONTEND_ORIGIN),
+    ...splitOrigins(process.env.VERCEL_FRONTEND_URL),
+  ];
+  const allowed = new Set(
+    configuredOrigins.map(origin => origin.replace(/\/+$/, '')).filter(Boolean)
+  );
+
+  if (process.env.NODE_ENV !== 'production') {
+    for (const origin of [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:3000',
+      'http://localhost:4000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:4000',
+    ]) {
+      allowed.add(origin);
+    }
+  }
+
+  if (process.env.NODE_ENV === 'production' && allowed.size === 0) {
+    writeStructuredLog({
+      component: 'server',
+      module: 'cors',
+      event: 'CORS_ORIGINS_NOT_CONFIGURED',
+      severity: 'warning',
+      context: {
+        message: 'Browser CORS requests will be rejected until CORS_ORIGINS or FRONTEND_ORIGIN is configured.',
+      },
+    });
+  }
+
+  return (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const normalizedOrigin = origin.replace(/\/+$/, '');
+    if (allowed.has(normalizedOrigin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
+  };
+}
+
+function splitOrigins(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
 }

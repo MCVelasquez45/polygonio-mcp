@@ -146,7 +146,6 @@ http.interceptors.request.use(config => {
     console.log('[CLIENT] HTTP request', {
       method: config.method,
       url: config.url,
-      data: config.data,
       baseURL: config.baseURL
     });
   }
@@ -159,7 +158,6 @@ http.interceptors.response.use(
       console.log('[CLIENT] HTTP response', {
         url: response.config.url,
         status: response.status,
-        data: response.data,
       });
     }
     return response;
@@ -198,7 +196,6 @@ http.interceptors.response.use(
       url: error?.config?.url,
       baseURL: error?.config?.baseURL,
       method: error?.config?.method,
-      data: error?.response?.data
     });
     return Promise.reject(error);
   }

@@ -212,7 +212,11 @@ export class MassiveWsClient {
     try {
       this.ws.send(JSON.stringify(payload));
     } catch (error) {
-      console.error('[MassiveWS] failed to send payload', { payload, error });
+      const safePayload =
+        payload?.action === 'auth'
+          ? { ...payload, params: '[redacted]' }
+          : payload;
+      console.error('[MassiveWS] failed to send payload', { payload: safePayload, error });
     }
   }
 }
