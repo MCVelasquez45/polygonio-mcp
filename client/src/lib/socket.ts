@@ -37,10 +37,15 @@ export function getSharedSocket(): Socket {
     typeof window !== 'undefined' &&
     window.location.protocol === 'https:' &&
     parsed?.protocol === 'http:';
+  const usesSameOriginProxy =
+    import.meta.env.PROD &&
+    typeof window !== 'undefined' &&
+    parsed?.origin === window.location.origin;
+  const usePollingOnly = isMixedContent || usesSameOriginProxy;
 
   const socket = io(baseUrl, {
-    transports: isMixedContent ? ['polling'] : ['websocket', 'polling'],
-    upgrade: !isMixedContent,
+    transports: usePollingOnly ? ['polling'] : ['websocket', 'polling'],
+    upgrade: !usePollingOnly,
     withCredentials: false,
     path: '/socket.io',
     timeout: 10_000,

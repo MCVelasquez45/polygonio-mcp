@@ -549,6 +549,9 @@ function App() {
   const lastChecklistRefreshRef = useRef(0);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
+  const liveSocketConnectedRef = useRef(false);
+  const liveSubscriptionActiveRef = useRef(false);
+  const marketClosedRef = useRef(false);
   // Tick timestamps are refs, not state: only the fallback logic reads them,
   // and holding them as state re-rendered the whole app on every market tick.
   const lastLiveQuoteAtRef = useRef<number | null>(null);
@@ -568,6 +571,12 @@ function App() {
   const lastSnapshotSymbolRef = useRef<string | null>(null);
   const [tradeMarkers, setTradeMarkers] = useState<SeriesMarker<UTCTimestamp>[]>([]);
 
+
+  useEffect(() => {
+    liveSocketConnectedRef.current = liveSocketConnected;
+    liveSubscriptionActiveRef.current = liveSubscriptionActive;
+    marketClosedRef.current = Boolean(marketSessionMeta?.marketClosed);
+  }, [liveSocketConnected, liveSubscriptionActive, marketSessionMeta?.marketClosed]);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -1949,10 +1958,12 @@ function App() {
     };
 
     const shouldFallback = () => {
-      const marketClosed = Boolean(marketSessionMeta?.marketClosed);
-      const allowFallbackWhileClosed = !marketClosed || !liveSubscriptionActive;
+      const marketClosed = marketClosedRef.current;
+      const liveConnected = liveSocketConnectedRef.current;
+      const subscriptionActive = liveSubscriptionActiveRef.current;
+      const allowFallbackWhileClosed = !marketClosed || !subscriptionActive;
       if (!allowFallbackWhileClosed) return false;
-      if (!liveSocketConnected || !liveSubscriptionActive) return true;
+      if (!liveConnected || !subscriptionActive) return true;
       const now = Date.now();
       const lastUpdate = Math.max(lastLiveQuoteAtRef.current ?? 0, lastLiveTradeAtRef.current ?? 0);
       if (!lastUpdate) return true;
@@ -1976,12 +1987,7 @@ function App() {
       controller.abort();
       clearInterval(interval);
     };
-  }, [
-    activeContractSymbol,
-    liveSocketConnected,
-    liveSubscriptionActive,
-    marketSessionMeta?.marketClosed
-  ]);
+  }, [activeContractSymbol]);
 
   // Spawn a brand new chat session in the dock and make it active.
   function startNewConversation() {
