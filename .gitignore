@@ -102,3 +102,7 @@ scripts/
 # client/src/lib is frontend source (shared socket, stores), not a Python
 # build dir — exempt it from the packaging `lib/` rule above.
 !client/src/lib/
+.vercel
+.env*
+!.env.example
+!**/.env.example

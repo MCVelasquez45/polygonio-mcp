@@ -25,7 +25,7 @@
       "destination": "https://polygonio-backend.onrender.com/socket.io/:path*"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ]

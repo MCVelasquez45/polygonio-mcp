@@ -1,7 +1,6 @@
 import axios from 'axios';
 
 const DEFAULT_API_PORT = String(4e3);
-const PRODUCTION_API_BASE_URL = 'https://polygonio-backend.onrender.com';
 const DEV_SERVER_PORTS = new Set([
   String(Number.parseInt('5', 10) * 1000 + 173),
   String(Number.parseInt('5', 10) * 1000 + 174),
@@ -62,9 +61,6 @@ function assertApiRuntimeConfig(): void {
         `[CLIENT] Invalid VITE_API_BASE_URL '${configuredUrl}'. Expected an absolute http(s) backend URL.`
       );
     }
-    if (import.meta.env.PROD && typeof window !== 'undefined' && window.location && parsed.host === window.location.host) {
-      throw new Error('[CLIENT] VITE_API_BASE_URL must point to the Render backend, not the frontend origin.');
-    }
   }
 
   const configuredPort = import.meta.env.DEV && typeof import.meta.env.VITE_API_PORT === 'string' ? import.meta.env.VITE_API_PORT.trim() : '';
@@ -77,8 +73,14 @@ function assertApiRuntimeConfig(): void {
 }
 
 function resolveApiBaseUrl(): string {
+  // Hosted production (Vercel): always same-origin. Requests go to /api/* on the
+  // frontend origin and the Vercel rewrites proxy them to the backend, so the
+  // bundle never needs to know the backend URL.
   if (shouldUseSameOriginProxy()) {
     return window.location.origin;
+  }
+  if (import.meta.env.PROD && (typeof window === 'undefined' || !window.location)) {
+    return '';
   }
   const configured =
     typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL.trim()
@@ -91,9 +93,6 @@ function resolveApiBaseUrl(): string {
       const windowHost = window.location.hostname || LOCALHOST;
       const configuredIsLocal = isLocalHost(parsed.hostname);
       const windowIsLocal = isLocalHost(windowHost);
-      if (import.meta.env.PROD && parsed.host === window.location.host) {
-        return PRODUCTION_API_BASE_URL;
-      }
       if (configuredIsLocal && !windowIsLocal) {
         // Ignore localhost configs when the UI is served from a different host (mobile/LAN).
       } else {
@@ -102,9 +101,6 @@ function resolveApiBaseUrl(): string {
     } else {
       return trimmed;
     }
-  }
-  if (import.meta.env.PROD) {
-    return PRODUCTION_API_BASE_URL;
   }
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname || LOCALHOST;
