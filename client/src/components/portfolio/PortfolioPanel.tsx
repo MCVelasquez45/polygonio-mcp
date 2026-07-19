@@ -404,6 +404,9 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
   const [insightsUpdatedAt, setInsightsUpdatedAt] = useState<number | null>(null);
   const [positionSnapshots, setPositionSnapshots] = useState<Record<string, WatchlistSnapshot>>({});
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  // Per-contract greeks for open positions (Massive contract snapshots via the
+  // watchlist endpoint, which returns delta/gamma/theta/vega for O: symbols).
+  const [contractGreeks, setContractGreeks] = useState<Record<string, { delta: number | null; gamma: number | null; theta: number | null; vega: number | null }>>({});
   const [portfolioOperations, setPortfolioOperations] = useState<PortfolioOperations | null>(null);
   const insightsAllowed = aiEnabled && sentimentEnabled;
 
@@ -606,6 +609,42 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
     };
   }, [positions]);
 
+  // Fetch contract-level greeks for the open book. Batched through the same
+  // snapshot endpoint (≤25 symbols) and refreshed when positions change.
+  useEffect(() => {
+    const contracts = positions.map(position => toLiveOptionSymbol(position.symbol));
+    if (!contracts.length) {
+      setContractGreeks({});
+      return;
+    }
+    let cancelled = false;
+    marketApi
+      .getWatchlistSnapshots(contracts.slice(0, 25))
+      .then(payload => {
+        if (cancelled) return;
+        const next: Record<string, { delta: number | null; gamma: number | null; theta: number | null; vega: number | null }> = {};
+        payload.entries?.forEach(entry => {
+          if (entry?.entryType !== 'contract') return;
+          const key = normalizePositionSymbol(entry.contract ?? entry.ticker ?? '');
+          if (!key) return;
+          const greeks = (entry as { greeks?: Record<string, number | null> }).greeks ?? {};
+          next[key] = {
+            delta: typeof greeks.delta === 'number' ? greeks.delta : null,
+            gamma: typeof greeks.gamma === 'number' ? greeks.gamma : null,
+            theta: typeof greeks.theta === 'number' ? greeks.theta : null,
+            vega: typeof greeks.vega === 'number' ? greeks.vega : null,
+          };
+        });
+        setContractGreeks(next);
+      })
+      .catch(() => {
+        if (!cancelled) setContractGreeks({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [positions]);
+
   const handleClosePosition = useCallback(
     (position: PositionView) => {
       if (closingSymbol) return;
@@ -729,6 +768,33 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
     ],
     [automationPositions, manualPositions]
   );
+
+  // Book greeks exposure: Σ greek × signed contracts × 100. Null (shown as em
+  // dash) when any open position is missing that greek — a partial sum would
+  // misstate the book.
+  const bookGreeks = useMemo(() => {
+    if (!positions.length) return null;
+    const sums = { delta: 0, gamma: 0, theta: 0, vega: 0 };
+    const complete = { delta: true, gamma: true, theta: true, vega: true };
+    for (const pos of positions) {
+      const greeks = contractGreeks[normalizePositionSymbol(pos.symbol)];
+      const signedContracts = (pos.side === 'short' ? -1 : 1) * Math.max(1, Math.abs(pos.qty));
+      (['delta', 'gamma', 'theta', 'vega'] as const).forEach(key => {
+        const value = greeks?.[key];
+        if (value == null) {
+          complete[key] = false;
+        } else {
+          sums[key] += value * signedContracts * 100;
+        }
+      });
+    }
+    return {
+      delta: complete.delta ? sums.delta : null,
+      gamma: complete.gamma ? sums.gamma : null,
+      theta: complete.theta ? sums.theta : null,
+      vega: complete.vega ? sums.vega : null,
+    };
+  }, [positions, contractGreeks]);
 
   // Allocation donut — positions by absolute market value.
   const allocationData = useMemo<ChartDatum[]>(
@@ -875,6 +941,34 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
             tone={risk && risk.consecutiveLossCount >= 3 ? 'neg' : risk && risk.consecutiveLossCount > 0 ? 'warn' : 'neutral'}
           />
         </div>
+        {/* Book greeks — net portfolio exposure per unit move / day / vol pt. */}
+        {bookGreeks && (
+          <div className="mt-2 grid grid-cols-2 gap-y-2 divide-intel-divider border-t border-intel-divider pt-2 sm:grid-cols-4 sm:divide-x">
+            <AccountStat
+              label="Net Δ Delta"
+              value={bookGreeks.delta != null ? fmtNum(bookGreeks.delta, 1) : '—'}
+              tone={bookGreeks.delta != null ? pnlTone(bookGreeks.delta) : 'neutral'}
+              title="Share-equivalent directional exposure: Σ delta × contracts × 100. Positive = long the underlying."
+            />
+            <AccountStat
+              label="Net Γ Gamma"
+              value={bookGreeks.gamma != null ? fmtNum(bookGreeks.gamma, 1) : '—'}
+              title="Delta change per $1 underlying move: Σ gamma × contracts × 100."
+            />
+            <AccountStat
+              label="Net Θ Theta"
+              value={bookGreeks.theta != null ? fmtSignedUsd(bookGreeks.theta) : '—'}
+              tone={bookGreeks.theta != null ? pnlTone(bookGreeks.theta) : 'neutral'}
+              title="Time decay per day at current marks: Σ theta × contracts × 100."
+            />
+            <AccountStat
+              label="Net V Vega"
+              value={bookGreeks.vega != null ? fmtSignedUsd(bookGreeks.vega) : '—'}
+              tone={bookGreeks.vega != null ? pnlTone(bookGreeks.vega) : 'neutral'}
+              title="P/L per 1-point implied-vol move: Σ vega × contracts × 100."
+            />
+          </div>
+        )}
       </div>
 
       {/* POSITIONS BLOTTER */}
