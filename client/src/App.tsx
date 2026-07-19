@@ -531,6 +531,7 @@ function App() {
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);
   const selectionHydratedRef = useRef(false);
+  const [selectionHydrated, setSelectionHydrated] = useState(false);
   const pendingSelectionRef = useRef<{ contract: string | null; expiration: string | null }>({ contract: null, expiration: null });
   const chartFocusRef = useRef<{ symbol: string | null; timeframe: string; sessionMode: ChartSessionMode } | null>(
     null
@@ -1262,6 +1263,8 @@ function App() {
         }
       } catch (error) {
         console.warn('Failed to hydrate option selection', error);
+      } finally {
+        if (!cancelled) setSelectionHydrated(true);
       }
     }
     hydrateSelection();
@@ -1299,6 +1302,7 @@ function App() {
       setChainLoading(false);
       return;
     }
+    if (!selectionHydrated) return;
     const shouldSkipFetch =
       skipChainFetchRef.current &&
       selectedExpiration &&
@@ -1391,7 +1395,7 @@ function App() {
         clearTimeout(retryTimeout);
       }
     };
-  }, [normalizedTicker, selectedExpiration]);
+  }, [normalizedTicker, selectedExpiration, selectionHydrated]);
 
   useEffect(() => {
     setSelectedLeg(null);
@@ -1428,6 +1432,7 @@ function App() {
       setChainUnderlyingPrice(null);
       return;
     }
+    if (!selectionHydrated) return;
     let cancelled = false;
     const controller = new AbortController();
     setChainError(null);
@@ -1468,7 +1473,7 @@ function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [normalizedTicker]);
+  }, [normalizedTicker, selectionHydrated]);
 
   // When a pending contract symbol is provided, auto-select that leg from the chain.
   // Ensure the expiration selector follows the desired contract's expiry.
