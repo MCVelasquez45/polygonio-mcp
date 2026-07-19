@@ -179,7 +179,7 @@ export const ChartPanel = memo(function ChartPanel({
   const isIntraday = timeframeUnit === 'minute' || timeframeUnit === 'hour';
   const hasRenderableData = data.length > 0 && (!isIntraday || data.length >= 2);
 
-  const chartInstanceKey = chartKey ? `${chartKey}-${timeframe}` : timeframe;
+  const chartInstanceKey = chartKey ?? 'chart';
   const lastBar = data.at(-1) ?? null;
   const changeUp = displayChange != null && displayChange >= 0;
 

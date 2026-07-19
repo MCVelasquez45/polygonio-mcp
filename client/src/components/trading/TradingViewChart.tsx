@@ -387,7 +387,6 @@ function ChartCanvas({
     if (!container || width === 0 || height === 0) return;
 
     const shouldRebuild =
-      timeframe !== lastTimeframeRef.current ||
       theme !== lastThemeRef.current ||
       togglesKey !== lastTogglesRef.current ||
       !chartRef.current;
@@ -441,21 +440,17 @@ function ChartCanvas({
         borderVisible: false,
         priceScaleId: 'right',
       });
-      const volume = isIntraday
-        ? chart.addSeries(HistogramSeries, {
-          priceFormat: { type: 'volume' },
-          priceScaleId: '',
-          lastValueVisible: false,
-        })
-        : null;
-      if (volume) {
-        volume.priceScale().applyOptions({
-          scaleMargins: {
-            top: 0.82,
-            bottom: 0,
-          },
-        });
-      }
+      const volume = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        lastValueVisible: false,
+      });
+      volume.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.82,
+          bottom: 0,
+        },
+      });
       const sma = indicators.sma
         ? chart.addSeries(LineSeries, {
           color: palette.sma,
@@ -537,7 +532,26 @@ function ChartCanvas({
       openingRangeLinesRef.current = {};
       prevBarsRef.current = [];
     } else {
-      chartRef.current?.resize(width, height);
+      const unit = resolveTimeframeUnit(timeframe);
+      const isIntraday = unit === 'minute' || unit === 'hour';
+      chartRef.current?.applyOptions({
+        width,
+        height,
+        rightPriceScale: {
+          borderVisible: false,
+          scaleMargins: isIntraday
+            ? { top: 0.12, bottom: 0.18 }
+            : { top: 0.08, bottom: 0.08 },
+        },
+        timeScale: {
+          timeVisible: isIntraday,
+          secondsVisible: false,
+          tickMarkFormatter: buildTickFormatter(timeframe),
+          rightOffset: isIntraday ? INTRADAY_RIGHT_OFFSET : NON_INTRADAY_RIGHT_OFFSET,
+          fixLeftEdge: true,
+        },
+      });
+      lastTimeframeRef.current = timeframe;
     }
   }, [height, palette, theme, timeframe, width, togglesKey, indicators]);
 
@@ -571,7 +585,9 @@ function ChartCanvas({
 
       const timeValue = typeof param.time === 'number' ? param.time : undefined;
       const formattedTime = timeValue ? timeFormatter.format(new Date(timeValue * 1000)) : '';
-      const volumeValue = volumeBar?.value ?? null;
+      const unit = resolveTimeframeUnit(timeframe);
+      const isIntraday = unit === 'minute' || unit === 'hour';
+      const volumeValue = isIntraday ? volumeBar?.value ?? null : null;
       const volumeLine = volumeValue != null ? `\nVol ${Math.round(volumeValue).toLocaleString()}` : '';
 
       tooltip.textContent =
@@ -619,6 +635,9 @@ function ChartCanvas({
     const sma = smaSeriesRef.current;
     const volume = volumeSeriesRef.current;
     if (!candles) return;
+    const unit = resolveTimeframeUnit(timeframe);
+    const isIntraday = unit === 'minute' || unit === 'hour';
+    const effectiveVolumeData = isIntraday ? volumeData : [];
 
     if (normalizedBars.length === 0) {
       candles.setData([]);
@@ -641,8 +660,12 @@ function ChartCanvas({
       if (lastCandle) {
         candles.update(lastCandle);
         if (volume) {
-          const lastVolume = volumeData[volumeData.length - 1];
-          if (lastVolume) volume.update(lastVolume);
+          if (isIntraday) {
+            const lastVolume = effectiveVolumeData[effectiveVolumeData.length - 1];
+            if (lastVolume) volume.update(lastVolume);
+          } else {
+            volume.setData([]);
+          }
         }
         const lastSma = smaData[smaData.length - 1];
         if (sma && lastSma) sma.update(lastSma);
@@ -652,7 +675,7 @@ function ChartCanvas({
       }
     } else {
       candles.setData(candleData);
-      if (volume) volume.setData(volumeData);
+      if (volume) volume.setData(effectiveVolumeData);
       sma?.setData(smaData);
       if (chartRef.current) {
         applyVisibleRange(chartRef.current, normalizedBars.length, timeframe, width);

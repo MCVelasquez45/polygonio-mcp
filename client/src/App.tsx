@@ -1882,12 +1882,19 @@ function App() {
     const socket = socketRef.current;
     const symbol = chartDataSymbol?.trim().toUpperCase() ?? null;
     const previousFocus = chartFocusRef.current;
-    const focusChanged = previousFocus?.symbol !== symbol || previousFocus?.timeframe !== timeframe;
+    const symbolChanged = previousFocus?.symbol !== symbol;
+    const timeframeChanged = previousFocus?.timeframe !== timeframe;
+    const focusChanged = symbolChanged || timeframeChanged || previousFocus?.sessionMode !== chartSessionMode;
     chartFocusRef.current = { symbol, timeframe, sessionMode: chartSessionMode };
-    if (focusChanged) {
+    if (symbolChanged) {
       setBars([]);
       setIndicators(undefined);
       setMarketSessionMeta(null);
+    }
+    if (timeframeChanged) {
+      setChartAnalysis(null);
+      setChartAnalysisError(null);
+      setChartAnalysisUpdatedAt(null);
     }
     if (!socket || !liveSocketConnected) return;
 

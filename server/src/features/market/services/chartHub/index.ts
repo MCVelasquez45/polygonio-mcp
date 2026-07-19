@@ -235,7 +235,7 @@ function refreshAggregateSubscription(symbol: string) {
   let needsLive = false;
   keys.forEach(key => {
     const timeframe = timeframeByKey.get(key);
-    if (timeframe?.timespan === 'minute') {
+    if (timeframe?.timespan === 'minute' || timeframe?.timespan === 'hour') {
       needsLive = true;
     }
   });

@@ -1,5 +1,5 @@
 import type { Candle } from './buffer';
-import type { TimeframeConfig } from './backfill';
+import { resolveTimeframeMs, type TimeframeConfig } from './backfill';
 
 const AGG_TIMESTAMP_MS_THRESHOLD = 1_000_000_000_000;
 
@@ -32,7 +32,7 @@ export function ingestAggregateEvent(args: {
   event: any;
   maxMinuteBars: number;
 }): AggregateBuildResult | null {
-  if (args.timeframe.timespan !== 'minute') return null;
+  if (args.timeframe.timespan !== 'minute' && args.timeframe.timespan !== 'hour') return null;
   const normalized = normalizeAggregateEvent(args.event);
   if (!normalized) return null;
   if (normalized.symbol !== args.symbol) return null;
@@ -45,7 +45,7 @@ export function ingestAggregateEvent(args: {
   upsertMinuteBar(state, normalized, minuteStart);
   pruneMinuteBars(state, args.maxMinuteBars);
 
-  const bucketMs = args.timeframe.multiplier * 60_000;
+  const bucketMs = resolveTimeframeMs(args.timeframe);
   const bucketStart = Math.floor(minuteStart / bucketMs) * bucketMs;
   const bucketEnd = bucketStart + bucketMs;
   const bucketBars = Array.from(state.minuteBars.entries())

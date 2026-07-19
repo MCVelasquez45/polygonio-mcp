@@ -8,8 +8,8 @@
  * click, blanking the chart to "Loading bars…" until the socket re-pushed a
  * snapshot (App.tsx:2091 in the audited revision).
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 
 type Handler = (payload?: any) => void;
 
@@ -159,10 +159,23 @@ const SNAPSHOT_BARS = Array.from({ length: 5 }, (_, i) => ({
   v: 1000 + i,
 }));
 
+const FIVE_MINUTE_BARS = Array.from({ length: 5 }, (_, i) => ({
+  t: 1_755_100_000_000 + i * 5 * 60_000,
+  o: 460 + i,
+  h: 461 + i,
+  l: 459 + i,
+  c: 460.5 + i,
+  v: 2000 + i,
+}));
+
 describe('option contract selection', () => {
   beforeEach(() => {
     window.localStorage.clear();
     fakeSocket.emitted = [];
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it('keeps the underlying chart mounted and does not re-request candles', async () => {
@@ -202,5 +215,61 @@ describe('option contract selection', () => {
     expect(screen.queryByText('Loading bars…')).not.toBeInTheDocument();
     // ...and no new candle request was issued for the unchanged underlying.
     expect(fakeSocket.emitCount('chart:focus')).toBe(focusEmitsBeforeSelection);
+  });
+
+  it('switches chart timeframe without unmounting and ignores stale snapshots', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fakeSocket.emitCount('chart:focus')).toBeGreaterThan(0);
+    });
+    const initialFocus = fakeSocket.emitted.find(e => e.event === 'chart:focus');
+    expect(initialFocus?.payload?.symbol).toBe('SPY');
+    expect(initialFocus?.payload?.timeframe).toBe('1/day');
+
+    act(() => {
+      fakeSocket.receive('chart:snapshot', {
+        symbol: 'SPY',
+        timeframe: '1/day',
+        bars: SNAPSHOT_BARS,
+        health: null,
+        session: null,
+      });
+    });
+    expect(await screen.findByTestId('chart-canvas')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '5M' }));
+
+    expect(screen.getByTestId('chart-canvas')).toBeInTheDocument();
+    expect(screen.queryByText('Loading bars…')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      const lastFocus = fakeSocket.emitted.filter(e => e.event === 'chart:focus').at(-1);
+      expect(lastFocus?.payload).toMatchObject({ symbol: 'SPY', timeframe: '5/minute' });
+    });
+
+    act(() => {
+      fakeSocket.receive('chart:snapshot', {
+        symbol: 'SPY',
+        timeframe: '1/day',
+        bars: FIVE_MINUTE_BARS,
+        health: null,
+        session: null,
+      });
+    });
+    expect(screen.getAllByText('453.50').length).toBeGreaterThan(0);
+
+    act(() => {
+      fakeSocket.receive('chart:snapshot', {
+        symbol: 'SPY',
+        timeframe: '5/minute',
+        bars: FIVE_MINUTE_BARS,
+        health: null,
+        session: null,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('464.50').length).toBeGreaterThan(0);
+    });
   });
 });
