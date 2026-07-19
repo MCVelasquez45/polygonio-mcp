@@ -106,23 +106,23 @@ export function HealthBadge({ mode, lastUpdateMsAgo, gapsDetected = 0, providerT
         .health-badge {
           display: inline-flex;
           align-items: center;
-          gap: 0.35rem;
-          padding: 0.25rem 0.6rem;
-          border-radius: 9999px;
+          gap: 0.25rem;
+          padding: 1px 6px;
+          border-radius: 6px;
           border: 1px solid;
-          font-size: 0.7rem;
+          font-size: 10px;
           font-weight: 600;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.16em;
           white-space: nowrap;
         }
 
         .health-badge.compact {
-          padding: 0.2rem 0.4rem;
-          font-size: 0.65rem;
+          padding: 1px 5px;
+          font-size: 9px;
         }
 
         .badge-icon {
-          font-size: 0.6rem;
+          font-size: 9px;
         }
 
         .badge-icon.animate {

@@ -26,6 +26,8 @@ export type CockpitTrade = {
   currentSpreadPct?: number | null;
   unrealizedPnl?: number | null;
   unrealizedPnlPct?: number | null;
+  dailyPnl?: number | null;
+  dailyPnlPct?: number | null;
   mfe?: number | null;
   mae?: number | null;
   stopPrice?: number | null;
@@ -34,6 +36,8 @@ export type CockpitTrade = {
   brokerStatus?: string | null;
   lifecycleStatus?: string | null;
   exitReason?: string | null;
+  currentAiRecommendation?: string | null;
+  aiRecommendation?: string | null;
   daysToExpiration?: number | null;
   entryTime?: string | null;
   filledTime?: string | null;
@@ -218,12 +222,17 @@ const PILL_TONES: Record<string, string> = {
 export function Pill({
   children,
   tone = 'neutral',
+  dot = false,
 }: {
   children: ReactNode;
   tone?: 'good' | 'warn' | 'bad' | 'neutral';
+  dot?: boolean;
 }) {
+  const dotClass =
+    tone === 'good' ? 'bg-intel-pos' : tone === 'warn' ? 'bg-intel-warn' : tone === 'bad' ? 'bg-intel-neg' : 'bg-intel-ink3';
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${PILL_TONES[tone]}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label ${PILL_TONES[tone]}`}>
+      {dot ? <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden="true" /> : null}
       {children}
     </span>
   );
@@ -259,7 +268,7 @@ export function FreshnessDot({ freshness }: { freshness: QuoteFreshness }) {
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'good' | 'warn' | 'bad' | 'neutral' }) {
   return (
-    <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest ${PILL_TONES[tone]}`}>
+    <span className={`rounded-md px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label ${PILL_TONES[tone]}`}>
       {children}
     </span>
   );

@@ -11,9 +11,9 @@ import {
  */
 export function LiveDot({ active = true, label }: { active?: boolean; label?: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-label">
+    <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-label">
       <span
-        className={`h-2 w-2 rounded-full ${active ? 'bg-intel-pos motion-safe:animate-livering' : 'bg-intel-ink3'}`}
+        className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-intel-pos motion-safe:animate-livering' : 'bg-intel-ink3'}`}
         aria-hidden="true"
       />
       {label && <span className={active ? 'text-intel-pos' : 'text-intel-ink3'}>{label}</span>}
@@ -30,8 +30,8 @@ export function Heartbeat({ healthy, label = 'Automation' }: { healthy?: boolean
   const text = healthy == null ? 'text-intel-ink3' : healthy ? 'text-intel-pos' : 'text-intel-neg';
   const state = healthy == null ? 'Unknown' : healthy ? 'Live' : 'Down';
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-label">
-      <span className={`h-2 w-2 rounded-full ${color} ${healthy ? 'motion-safe:animate-heartbeat' : ''}`} aria-hidden="true" />
+    <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-label">
+      <span className={`h-1.5 w-1.5 rounded-full ${color} ${healthy ? 'motion-safe:animate-heartbeat' : ''}`} aria-hidden="true" />
       <span className={text}>{label} · {state}</span>
     </span>
   );
@@ -47,7 +47,7 @@ const FRESH_STYLE: Record<QuoteFreshness, { cls: string; label: string }> = {
 export function FreshnessBadge({ freshness, ageLabel }: { freshness: QuoteFreshness; ageLabel?: string }) {
   const s = FRESH_STYLE[freshness];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10.5px] tracking-wide ${s.cls}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px] tracking-wide ${s.cls}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${freshness === 'FRESH' ? 'bg-intel-pos motion-safe:animate-livering' : freshness === 'STALE' ? 'bg-intel-warn' : 'bg-intel-ink3'}`} aria-hidden="true" />
       {s.label}{ageLabel ? ` · ${ageLabel}` : ''}
     </span>
@@ -89,7 +89,7 @@ export function MarketDataBadge({
   const age = marketDataAgeLabel(status, ageMs ?? null, delayLabel);
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10.5px] tracking-wide ${s.pill} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px] tracking-wide ${s.pill} ${className}`}
       data-status={status ?? 'NONE'}
     >
       <span
@@ -152,7 +152,7 @@ export function ConnectionBadge({ connected, label }: { connected: boolean | nul
   const dot = connected == null ? 'bg-intel-ink3' : connected ? 'bg-intel-pos' : 'bg-intel-neg';
   const state = connected == null ? 'Unknown' : connected ? 'Connected' : 'Disconnected';
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] tracking-wide ${tone}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px] tracking-wide ${tone}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
       {label} · {state}
     </span>

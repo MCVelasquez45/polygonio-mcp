@@ -2487,6 +2487,79 @@ function App() {
     ]
   );
 
+  const deskInsightPanel = (
+    <div className="rounded-panel bg-intel-panel p-3 space-y-3">
+      <div className="flex items-center justify-between border-b border-intel-divider pb-2">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-label text-intel-ai">Latest Insight · AI</p>
+          <p className="text-sm text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
+          {deskInsightUpdatedLabel && (
+            <p className="text-[11px] text-intel-ink3">Last updated {deskInsightUpdatedLabel}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleDeskInsightRefresh}
+            disabled={deskInsightLoading || !deskInsightsAllowed}
+            className="rounded-md border border-intel-line px-2 py-0.5 font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent disabled:opacity-60"
+          >
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleToggleChat}
+            disabled={!chatAllowed}
+            className="rounded-md border border-intel-accentLine px-2 py-0.5 font-mono text-[10px] text-intel-accent hover:bg-intel-accentSoft disabled:opacity-60"
+          >
+            Ask AI
+          </button>
+        </div>
+      </div>
+      {deskInsightLoading ? (
+        <div className="space-y-2 animate-pulse">
+          <div className="h-3 w-3/4 rounded bg-intel-panel2" />
+          <div className="h-3 w-1/2 rounded bg-intel-panel2" />
+          <div className="h-3 w-2/3 rounded bg-intel-panel2" />
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          <div className="rounded-md border border-intel-lineSoft bg-intel-bg/25 px-3 py-2">
+            <p className="font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ai">Summary</p>
+            <p className="mt-1 text-sm text-intel-ink whitespace-pre-line">
+              {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
+            </p>
+          </div>
+          {(sentimentText || fedEvent) && (
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              {sentimentText && (
+                <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono ${sentimentStyles}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${sentimentDot}`} />
+                  Sentiment: {sentimentText}
+                </span>
+              )}
+              {fedEvent && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-intel-warn/30 bg-intel-warn/10 px-1.5 py-[1px] font-mono text-intel-warn">
+                  Fed: {fedEvent.title ?? fedEvent.name ?? 'Upcoming event'} · {fedEvent.date ?? 'TBD'}
+                </span>
+              )}
+            </div>
+          )}
+          {deskHighlights.length ? (
+            <ul className="space-y-1 text-xs text-intel-ink2">
+              {deskHighlights.map((item: string) => (
+                <li key={item} className="flex items-start gap-2">
+                  <span className="text-intel-accent">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+
   // Main trading workspace layout (watchlist, search, chart, scanner, chain, contract analysis, order ticket).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
@@ -2536,88 +2609,8 @@ function App() {
           sessionMeta={marketSessionMeta}
           markers={tradeMarkers}
         />
-        <div className="bg-intel-panel rounded-panel p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-intel-divider pb-2">
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-label text-intel-ai">Latest Insight · AI</p>
-              <p className="text-sm text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
-              {deskInsightUpdatedLabel && (
-                <p className="text-[11px] text-intel-ink3">Last updated {deskInsightUpdatedLabel}</p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleDeskInsightRefresh}
-                disabled={deskInsightLoading || !deskInsightsAllowed}
-                className="px-3 py-1 rounded-full border border-intel-line text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent disabled:opacity-60"
-              >
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={handleToggleChat}
-                disabled={!chatAllowed}
-                className="px-3 py-1 rounded-full border border-intel-accentLine text-xs text-intel-accent hover:bg-intel-accentSoft disabled:opacity-60"
-              >
-                Ask AI
-              </button>
-            </div>
-          </div>
-          {deskInsightLoading ? (
-            <div className="space-y-2 animate-pulse">
-              <div className="h-3 w-3/4 rounded bg-intel-panel2" />
-              <div className="h-3 w-1/2 rounded bg-intel-panel2" />
-              <div className="h-3 w-2/3 rounded bg-intel-panel2" />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-intel-ink whitespace-pre-line">
-                {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
-              </p>
-              {(sentimentText || fedEvent) && (
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {sentimentText && (
-                    <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 ${sentimentStyles}`}>
-                      <span className={`h-2 w-2 rounded-full ${sentimentDot}`} />
-                      Sentiment: {sentimentText}
-                    </span>
-                  )}
-                  {fedEvent && (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-intel-warn/30 bg-intel-warn/10 px-2 py-1 text-intel-warn">
-                      Fed: {fedEvent.title ?? fedEvent.name ?? 'Upcoming event'} · {fedEvent.date ?? 'TBD'}
-                    </span>
-                  )}
-                </div>
-              )}
-              {deskHighlights.length ? (
-                <ul className="space-y-1 text-xs text-intel-ink2">
-                  {deskHighlights.map((item: string) => (
-                    <li key={item} className="flex items-start gap-2">
-                      <span className="text-intel-accent">•</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          )}
-        </div>
-        <GreeksPanel
-          contract={contractDetail}
-          leg={selectedLeg}
-          label={displayTicker}
-          underlyingPrice={greeksUnderlyingPrice}
-          insight={deskInsight}
-          selection={contractSelection}
-          selectionLoading={contractSelectionLoading}
-          onRequestSelection={handleContractSelectionRequest}
-          selectionDisabled={!contractSelectionAllowed}
-          analysisRequestId={contractAnalysisRequestId}
-          analysisDisabled={!contractAnalysisAllowed}
-        />
       </div>
-      <div className="lg:col-span-1 min-h-[26rem] min-w-0 flex flex-col gap-4">
+      <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-4 min-h-[26rem] min-w-0 flex flex-col gap-4">
         <OrderTicketPanel
           contract={contractDetail}
           isLoading={false}
@@ -2630,7 +2623,7 @@ function App() {
         />
         <PriceLadder symbol={displayTicker} />
       </div>
-      <div className="lg:col-span-3 min-w-0">
+      <div className="lg:col-span-2 min-w-0">
         {marketSessionMeta?.marketClosed && (
           <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
             Options quotes are paused — spreads reflect the last available snapshot.
@@ -2651,6 +2644,24 @@ function App() {
           preferredSide={preferredOptionSide}
           onRequestAnalysis={handleContractAnalysisRequest}
           analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
+        />
+      </div>
+      <div className="lg:col-span-2 min-w-0">
+        {deskInsightPanel}
+      </div>
+      <div className="lg:col-span-2 min-w-0">
+        <GreeksPanel
+          contract={contractDetail}
+          leg={selectedLeg}
+          label={displayTicker}
+          underlyingPrice={greeksUnderlyingPrice}
+          insight={deskInsight}
+          selection={contractSelection}
+          selectionLoading={contractSelectionLoading}
+          onRequestSelection={handleContractSelectionRequest}
+          selectionDisabled={!contractSelectionAllowed}
+          analysisRequestId={contractAnalysisRequestId}
+          analysisDisabled={!contractAnalysisAllowed}
         />
       </div>
       <div className="lg:col-span-3 min-w-0">

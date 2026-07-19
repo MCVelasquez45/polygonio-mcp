@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { memo, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
 import type { QuoteSnapshot, OptionContractDetail } from '../../types/market';
 import { AlertTriangle, Loader2, Minus, Plus } from 'lucide-react';
 import { getBrokerAccount } from '../../api/alpaca';
@@ -66,6 +66,44 @@ function formatCountdown(value?: string | null): string | null {
   const days = Math.floor(hours / 24);
   const remainingHours = hours % 24;
   return `in ${days}d ${remainingHours}h`;
+}
+
+function TicketCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-panel border border-intel-line bg-intel-bg/30 p-2.5">
+      <p className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ink3">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function TicketMetric({
+  label,
+  value,
+  tone = 'neutral',
+  title,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: 'neutral' | 'pos' | 'neg' | 'warn' | 'muted';
+  title?: string;
+}) {
+  const valueClass =
+    tone === 'pos'
+      ? 'text-intel-pos'
+      : tone === 'neg'
+        ? 'text-intel-neg'
+        : tone === 'warn'
+          ? 'text-intel-warn'
+          : tone === 'muted'
+            ? 'text-intel-ink3'
+            : 'text-intel-ink';
+  return (
+    <div className="min-w-0" title={title}>
+      <p className="font-mono text-[8.5px] uppercase tracking-label text-intel-ink3">{label}</p>
+      <p className={`mt-0.5 truncate font-mono text-[12px] font-semibold tabular-nums ${valueClass}`}>{value}</p>
+    </div>
+  );
 }
 
 function resolveDefaultLegPrice(
@@ -266,6 +304,15 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   const spreadPx = quote?.spread ?? (bidPx != null && askPx != null ? askPx - bidPx : null);
   const bidSize = quote?.bidSize ?? null;
   const askSize = quote?.askSize ?? null;
+  const contractGreeks = contract?.greeks ?? null;
+  const deltaValue = typeof contractGreeks?.delta === 'number' ? contractGreeks.delta : null;
+  const thetaValue = typeof contractGreeks?.theta === 'number' ? contractGreeks.theta : null;
+  const vegaValue = typeof contractGreeks?.vega === 'number' ? contractGreeks.vega : null;
+  const ivDisplay = contractIv != null ? `${(contractIv * 100).toFixed(1)}%` : '—';
+  const popDisplay = probProfit != null ? `${(probProfit * 100).toFixed(0)}%` : '—';
+  const spreadDisplay = spreadPx != null ? `$${spreadPx.toFixed(2)}` : '—';
+  const spreadPctDisplay =
+    bidPx != null && askPx != null && midPx != null && midPx > 0 ? `${(((askPx - bidPx) / midPx) * 100).toFixed(1)}%` : null;
   // Price step: nickels above $3 (option convention), pennies below.
   const priceTick = midPx != null && midPx >= 3 ? 0.05 : 0.01;
   const armLimitAt = (value: number | null) => {
@@ -386,40 +433,41 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
           </div>
         )}
 
-        {/* ── Price ladder: click BID/MID/ASK to arm a limit ─────────────── */}
-        <div className="grid grid-cols-3 overflow-hidden rounded-panel border border-intel-line">
-          {([
-            ['Bid', bidPx, bidSize, 'pos', () => armLimitAt(bidPx)],
-            ['Mid', midPx, null, 'ink', () => armLimitAt(midPx)],
-            ['Ask', askPx, askSize, 'neg', () => armLimitAt(askPx)],
-          ] as const).map(([lbl, px, sz, tone, onClick], i) => {
-            const armed = requiresLimit && px != null && limitValue != null && Math.abs(limitValue - px) < 1e-6;
-            const toneText = tone === 'pos' ? 'text-intel-pos' : tone === 'neg' ? 'text-intel-neg' : 'text-intel-ink';
-            return (
-              <button
-                key={lbl}
-                type="button"
-                onClick={onClick}
-                disabled={px == null}
-                className={`flex flex-col items-center gap-0.5 px-1.5 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                  i < 2 ? 'border-r border-intel-line' : ''
-                } ${armed ? 'bg-intel-info/15' : 'hover:bg-intel-panel2'}`}
-              >
-                <span className="font-mono text-[8.5px] uppercase tracking-label text-intel-ink3">{lbl}</span>
-                <span className={`font-mono tabular-nums text-[13px] font-semibold leading-none ${toneText}`}>
-                  {px != null ? px.toFixed(2) : '—'}
-                </span>
-                <span className="font-mono text-[9px] tabular-nums leading-none text-intel-ink3">
-                  {sz != null ? `×${sz}` : ' '}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center justify-between px-0.5 font-mono text-[10px] tabular-nums text-intel-ink3">
-          <span>SPREAD {spreadPx != null ? spreadPx.toFixed(2) : '—'}</span>
-          <span>LAST {marketPriceDisplay}</span>
-        </div>
+        <TicketCard title="Execution">
+          <div className="grid grid-cols-3 overflow-hidden rounded-md border border-intel-line">
+            {([
+              ['Bid', bidPx, bidSize, 'pos', () => armLimitAt(bidPx)],
+              ['Mid', midPx, null, 'ink', () => armLimitAt(midPx)],
+              ['Ask', askPx, askSize, 'neg', () => armLimitAt(askPx)],
+            ] as const).map(([lbl, px, sz, tone, onClick], i) => {
+              const armed = requiresLimit && px != null && limitValue != null && Math.abs(limitValue - px) < 1e-6;
+              const toneText = tone === 'pos' ? 'text-intel-pos' : tone === 'neg' ? 'text-intel-neg' : 'text-intel-ink';
+              return (
+                <button
+                  key={lbl}
+                  type="button"
+                  onClick={onClick}
+                  disabled={px == null}
+                  className={`flex min-h-12 flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    i < 2 ? 'border-r border-intel-line' : ''
+                  } ${armed ? 'bg-intel-info/15' : 'hover:bg-intel-panel2'}`}
+                >
+                  <span className="font-mono text-[8.5px] uppercase tracking-label text-intel-ink3">{lbl}</span>
+                  <span className={`font-mono tabular-nums text-[13px] font-semibold leading-none ${toneText}`}>
+                    {px != null ? px.toFixed(2) : '—'}
+                  </span>
+                  <span className="font-mono text-[9px] tabular-nums leading-none text-intel-ink3">
+                    {sz != null ? `x${sz}` : '\u00a0'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <TicketMetric label="Spread" value={spreadPctDisplay ? `${spreadDisplay} / ${spreadPctDisplay}` : spreadDisplay} tone={spreadPx != null && spreadPx > 0 ? 'warn' : 'muted'} />
+            <TicketMetric label="Last" value={marketPriceDisplay} tone="muted" />
+          </div>
+        </TicketCard>
 
         {/* ── Side: hard split toggle ────────────────────────────────────── */}
         <div className="grid grid-cols-2 overflow-hidden rounded-panel border border-intel-line font-mono text-[13px] font-semibold uppercase tracking-label">
@@ -665,45 +713,50 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
           </div>
         </div>
 
-        {/* ── Always-on risk read-out ───────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-intel-line pt-2.5 font-mono text-[11px] tabular-nums">
-          <span className="text-intel-ink3">{estimatedLabel}</span>
-          <span className={`text-right font-semibold ${insufficientFunds ? 'text-intel-neg' : 'text-intel-ink'}`}>
-            {estimatedCost != null ? `$${estimatedCost.toFixed(2)}` : '—'}
-          </span>
-          <span className="text-intel-ink3">Buying Power</span>
-          <span className="text-right text-intel-ink2">
-            {buyingPowerLoading ? '…' : buyingPower != null ? `$${buyingPower.toFixed(2)}` : '—'}
-          </span>
-          <span className="text-intel-ink3">Max Loss</span>
-          <span className={`text-right ${maxLossDisplay === 'unlimited' ? 'text-intel-neg' : 'text-intel-ink2'}`}>
-            {formatRiskAmount(maxLossDisplay)}
-          </span>
-          <span className="text-intel-ink3">Max Gain</span>
-          <span className={`text-right ${maxGain === 'unlimited' ? 'text-intel-pos' : 'text-intel-ink2'}`}>
-            {formatRiskAmount(maxGain)}
-          </span>
-          {probProfit != null && (
-            <>
-              <span className="text-intel-ink3" title="Probability the position is profitable at expiration (Black-Scholes from the contract's implied vol; breakeven as the effective strike).">
-                Prob. Profit
-              </span>
-              <span className="text-right text-intel-ink2">{(probProfit * 100).toFixed(0)}%</span>
-            </>
-          )}
-          {breakevenPrice != null && (
-            <>
-              <span className="text-intel-ink3">Breakeven</span>
-              <span className="text-right text-intel-ink2">${breakevenPrice.toFixed(2)}</span>
-            </>
-          )}
-          {dte != null && (
-            <>
-              <span className="text-intel-ink3">DTE</span>
-              <span className="text-right text-intel-ink2">{dte}</span>
-            </>
-          )}
-        </div>
+        <TicketCard title="Risk">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+            <TicketMetric
+              label={estimatedLabel}
+              value={estimatedCost != null ? `$${estimatedCost.toFixed(2)}` : '—'}
+              tone={insufficientFunds ? 'neg' : 'neutral'}
+            />
+            <TicketMetric
+              label="Buying Power"
+              value={buyingPowerLoading ? '...' : buyingPower != null ? `$${buyingPower.toFixed(2)}` : '—'}
+              tone="muted"
+            />
+            <TicketMetric
+              label="Max Loss"
+              value={formatRiskAmount(maxLossDisplay)}
+              tone={maxLossDisplay === 'unlimited' ? 'neg' : 'muted'}
+            />
+            <TicketMetric
+              label="Max Gain"
+              value={formatRiskAmount(maxGain)}
+              tone={maxGain === 'unlimited' ? 'pos' : 'muted'}
+            />
+            <TicketMetric
+              label="Breakeven"
+              value={breakevenPrice != null ? `$${breakevenPrice.toFixed(2)}` : '—'}
+              tone="muted"
+            />
+          </div>
+        </TicketCard>
+
+        <TicketCard title="Probability">
+          <div className="grid grid-cols-5 gap-x-2 gap-y-2">
+            <TicketMetric
+              label="POP"
+              value={popDisplay}
+              title="Probability the position is profitable at expiration, using Black-Scholes from implied volatility."
+            />
+            <TicketMetric label="Delta" value={deltaValue != null ? deltaValue.toFixed(2) : '—'} tone={deltaValue != null && Math.abs(deltaValue) >= 0.6 ? 'warn' : 'muted'} />
+            <TicketMetric label="Theta" value={thetaValue != null ? thetaValue.toFixed(2) : '—'} tone={thetaValue != null && thetaValue < 0 ? 'neg' : 'muted'} />
+            <TicketMetric label="IV" value={ivDisplay} tone="muted" />
+            <TicketMetric label="DTE" value={dte != null ? dte : '—'} tone={dte != null && dte <= 7 ? 'warn' : 'muted'} />
+            <TicketMetric label="Vega" value={vegaValue != null ? vegaValue.toFixed(2) : '—'} tone="muted" />
+          </div>
+        </TicketCard>
         {insufficientFunds && (
           <p className="font-mono text-[10px] text-intel-neg">Cost exceeds buying power — adjust size or price.</p>
         )}

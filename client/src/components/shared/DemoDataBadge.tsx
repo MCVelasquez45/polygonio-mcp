@@ -8,13 +8,13 @@ export function DemoDataBadge({ note }: { note?: string }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '6px',
-        padding: '2px 10px',
-        borderRadius: '9999px',
+        gap: '4px',
+        padding: '1px 6px',
+        borderRadius: '6px',
         border: '1px solid rgba(245, 158, 11, 0.5)',
         background: 'rgba(245, 158, 11, 0.12)',
         color: '#fbbf24',
-        fontSize: '11px',
+        fontSize: '10px',
         fontWeight: 600,
         letterSpacing: '0.08em',
         textTransform: 'uppercase',
@@ -24,8 +24,8 @@ export function DemoDataBadge({ note }: { note?: string }) {
     >
       <span
         style={{
-          width: '6px',
-          height: '6px',
+          width: '5px',
+          height: '5px',
           borderRadius: '50%',
           background: '#f59e0b',
         }}

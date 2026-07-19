@@ -160,10 +160,16 @@ export const ChartPanel = memo(function ChartPanel({
   ]);
   const healthTone =
     healthLabel === 'Live'
-      ? 'border-intel-pos/40 bg-intel-pos/10 text-intel-pos'
+      ? 'text-intel-pos'
       : healthLabel === 'Backfilling' || healthLabel === 'Stale'
-        ? 'border-intel-warn/40 bg-intel-warn/10 text-intel-warn'
-        : 'border-intel-line bg-intel-panel2 text-intel-ink2';
+        ? 'text-intel-warn'
+        : 'text-intel-ink2';
+  const healthDot =
+    healthLabel === 'Live'
+      ? 'bg-intel-pos motion-safe:animate-livering'
+      : healthLabel === 'Backfilling' || healthLabel === 'Stale'
+        ? 'bg-intel-warn'
+        : 'bg-intel-ink3';
   const analysisUpdatedLabel = analysisUpdatedAt ? new Date(analysisUpdatedAt).toLocaleTimeString() : null;
   const emptyStateMessage = ticker.startsWith('O:')
     ? 'Select a contract to load chart data.'
@@ -193,7 +199,7 @@ export const ChartPanel = memo(function ChartPanel({
   const effectiveStudies: IndicatorToggles = isIntradayTimeframe ? studies : { ...studies, vwap: false };
 
   return (
-    <section className="flex min-h-[32rem] min-w-0 flex-col overflow-hidden rounded-panel border border-intel-line bg-intel-panel lg:min-h-[36rem]">
+    <section className="flex min-h-[32rem] min-w-0 flex-col overflow-hidden rounded-panel border border-intel-line bg-intel-panel lg:min-h-[38rem]">
       {/* ── Instrument header: readout left, controls right ─────────────── */}
       <header className="flex flex-col gap-2 border-b border-intel-line px-3 py-2.5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
@@ -210,11 +216,12 @@ export const ChartPanel = memo(function ChartPanel({
               </span>
             )}
             {isFrozen ? (
-              <span className="inline-flex items-center gap-1 rounded-sm border border-intel-warn/40 bg-intel-warn/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-label text-intel-warn">
-                <Lock className="h-2.5 w-2.5" /> Frozen
+              <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label text-intel-warn">
+                <Lock className="h-2.5 w-2.5" /> Snapshot
               </span>
             ) : health ? (
-              <span className={`inline-flex items-center rounded-sm border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-label ${healthTone}`}>
+              <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label ${healthTone}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${healthDot}`} aria-hidden="true" />
                 {healthLabel}
               </span>
             ) : null}
@@ -245,7 +252,7 @@ export const ChartPanel = memo(function ChartPanel({
                   key={mode}
                   type="button"
                   onClick={() => onSessionModeChange(mode)}
-                  className={`px-2.5 py-1 transition-colors ${sessionMode === mode ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3 hover:bg-intel-panel2'}`}
+                  className={`px-2 py-0.5 transition-colors ${sessionMode === mode ? 'bg-intel-raised text-intel-ink' : 'text-intel-ink3 hover:bg-intel-panel2'}`}
                 >
                   {mode === 'regular' ? 'RTH' : 'EXT'}
                 </button>
@@ -257,7 +264,7 @@ export const ChartPanel = memo(function ChartPanel({
               type="button"
               onClick={onRunAnalysis}
               disabled={analysisLoading || analysisDisabled}
-              className="rounded-panel border border-intel-aiLine px-2.5 py-1 font-mono text-[10px] uppercase tracking-label text-intel-ai transition-colors hover:bg-intel-aiSoft disabled:opacity-60"
+              className="rounded-md border border-intel-aiLine px-2 py-0.5 font-mono text-[10px] uppercase tracking-label text-intel-ai transition-colors hover:bg-intel-aiSoft disabled:opacity-60"
             >
               {analysisLoading ? 'Analyzing…' : 'Analyze · AI'}
             </button>
@@ -268,7 +275,7 @@ export const ChartPanel = memo(function ChartPanel({
                 key={option.value}
                 type="button"
                 onClick={() => onTimeframeChange(option.value)}
-                className={`border-l border-intel-line px-2 py-1 first:border-l-0 transition-colors ${
+                className={`border-l border-intel-line px-2 py-0.5 first:border-l-0 transition-colors ${
                   timeframe === option.value ? 'bg-intel-accent text-intel-bg' : 'text-intel-ink3 hover:bg-intel-panel2'
                 }`}
               >
@@ -288,7 +295,7 @@ export const ChartPanel = memo(function ChartPanel({
                   title={unavailable ? `${chip.title} — intraday timeframes only` : chip.title}
                   disabled={unavailable}
                   onClick={() => setStudies(prev => ({ ...prev, [chip.key]: !prev[chip.key] }))}
-                  className={`border-l border-intel-line px-2 py-1 first:border-l-0 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`border-l border-intel-line px-2 py-0.5 first:border-l-0 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                     active ? 'bg-intel-info/20 text-intel-info' : 'text-intel-ink3 hover:bg-intel-panel2'
                   }`}
                 >
@@ -316,9 +323,14 @@ export const ChartPanel = memo(function ChartPanel({
         )}
         {isLoading && data.length > 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-start justify-end p-3">
-            <span className="rounded-sm border border-intel-line bg-intel-panel px-2 py-1 font-mono text-[10px] text-intel-cyan">
+            <span className="rounded-md border border-intel-line bg-intel-panel px-1.5 py-[1px] font-mono text-[10px] text-intel-cyan">
               Updating…
             </span>
+          </div>
+        )}
+        {(isFrozen || usingLastSession) && hasRenderableData && (
+          <div className="pointer-events-none absolute left-4 top-4 rounded-md border border-intel-line bg-intel-panel/85 px-2 py-1 font-mono text-[10px] uppercase tracking-label text-intel-ink2">
+            ◐ Snapshot {healthAge ? `· ${healthAge}` : ''}
           </div>
         )}
       </div>

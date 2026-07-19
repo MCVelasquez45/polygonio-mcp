@@ -49,6 +49,15 @@ const MATRIX_HEADERS: Array<{ label: string; align: 'left' | 'right' }> = [
   { label: 'P.ITM', align: 'right' },
 ];
 
+type MatrixHighlight = {
+  atm?: boolean;
+  highestOi?: boolean;
+  highestVolume?: boolean;
+  tightestSpread?: boolean;
+  highestDelta?: boolean;
+  lowLiquidity?: boolean;
+};
+
 /** Normalize an OSI/Massive contract symbol for cross-source comparison. */
 function normalizeContract(symbol: string | null | undefined): string {
   return (symbol ?? '').toUpperCase().replace(/^O:/, '');
@@ -166,6 +175,89 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
     }
     return expectedMove(underlyingPrice, atmIv, dteValue);
   }, [activeGroup, optionType, underlyingPrice, dteValue]);
+
+  const matrixHighlights = useMemo(() => {
+    const ranked = new Map<string, MatrixHighlight>();
+    if (!rows.length) return ranked;
+
+    let atmTicker: string | null = null;
+    let atmDistance = Number.POSITIVE_INFINITY;
+    let maxOiTicker: string | null = null;
+    let maxOi = -Infinity;
+    let maxVolTicker: string | null = null;
+    let maxVol = -Infinity;
+    let tightTicker: string | null = null;
+    let tightSpread = Number.POSITIVE_INFINITY;
+    let highDeltaTicker: string | null = null;
+    let highDelta = -Infinity;
+
+    for (const row of rows) {
+      const leg = optionType === 'calls' ? row.call : row.put;
+      if (!leg) continue;
+      const strike = row.strike ?? leg.strike;
+      const quote = liveQuotes?.[leg.ticker];
+      const bid = quote?.bidPrice ?? leg.bid ?? null;
+      const ask = quote?.askPrice ?? leg.ask ?? null;
+      const detailOverride =
+        selectedContractDetail?.ticker?.toUpperCase() === leg.ticker.toUpperCase()
+          ? selectedContractDetail
+          : null;
+      const oi =
+        typeof detailOverride?.openInterest === 'number'
+          ? detailOverride.openInterest
+          : leg.openInterest ?? null;
+      const volume = leg.volume ?? null;
+      const delta =
+        typeof detailOverride?.greeks?.delta === 'number'
+          ? detailOverride.greeks.delta
+          : leg.delta ?? null;
+      const spread = spreadPercent(bid, ask);
+
+      if (underlyingPrice != null && strike != null) {
+        const distance = Math.abs(strike - underlyingPrice);
+        if (distance < atmDistance) {
+          atmDistance = distance;
+          atmTicker = leg.ticker;
+        }
+      }
+      if (oi != null && oi > maxOi) {
+        maxOi = oi;
+        maxOiTicker = leg.ticker;
+      }
+      if (volume != null && volume > maxVol) {
+        maxVol = volume;
+        maxVolTicker = leg.ticker;
+      }
+      if (spread != null && spread >= 0 && spread < tightSpread) {
+        tightSpread = spread;
+        tightTicker = leg.ticker;
+      }
+      if (delta != null && Math.abs(delta) > highDelta) {
+        highDelta = Math.abs(delta);
+        highDeltaTicker = leg.ticker;
+      }
+
+      const lowLiquidity =
+        (oi != null && oi < 100 && (volume ?? 0) < 20) ||
+        (spread != null && spread > 20) ||
+        (bid == null && ask == null);
+      if (lowLiquidity) {
+        ranked.set(leg.ticker, { ...(ranked.get(leg.ticker) ?? {}), lowLiquidity: true });
+      }
+    }
+
+    const mark = (ticker: string | null, key: keyof MatrixHighlight) => {
+      if (!ticker) return;
+      ranked.set(ticker, { ...(ranked.get(ticker) ?? {}), [key]: true });
+    };
+
+    mark(atmTicker, 'atm');
+    mark(maxOiTicker, 'highestOi');
+    mark(maxVolTicker, 'highestVolume');
+    mark(tightTicker, 'tightestSpread');
+    mark(highDeltaTicker, 'highestDelta');
+    return ranked;
+  }, [rows, optionType, underlyingPrice, liveQuotes, selectedContractDetail]);
 
   useEffect(() => {
     if (!scrollContainerRef.current || !tableBodyRef.current) return;
@@ -327,6 +419,30 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
           ? strike < underlyingPrice
           : strike > underlyingPrice
         : false;
+    const highlight = matrixHighlights.get(leg.ticker) ?? {};
+    const moneynessLabel = underlyingPrice != null && strike != null ? (highlight.atm ? 'ATM' : itm ? 'ITM' : 'OTM') : null;
+    const moneynessClass = highlight.atm
+      ? 'bg-intel-info/15 text-intel-info'
+      : itm
+        ? 'bg-intel-raised text-intel-ink3'
+        : 'bg-intel-panel2 text-intel-ink3';
+    const highlightTags: Array<{ label: string; cls: string; title: string }> = [
+      highlight.highestOi
+        ? { label: 'OI', cls: 'bg-intel-accentSoft text-intel-accent', title: 'Highest open interest in visible rows' }
+        : null,
+      highlight.highestVolume
+        ? { label: 'VOL', cls: 'bg-intel-pos/12 text-intel-pos', title: 'Highest volume in visible rows' }
+        : null,
+      highlight.tightestSpread
+        ? { label: 'TIGHT', cls: 'bg-intel-cyan/10 text-intel-cyan', title: 'Tightest spread in visible rows' }
+        : null,
+      highlight.highestDelta
+        ? { label: 'DELTA', cls: 'bg-intel-aiSoft text-intel-ai', title: 'Highest absolute delta in visible rows' }
+        : null,
+      highlight.lowLiquidity
+        ? { label: 'LOW LIQ', cls: 'bg-intel-warn/10 text-intel-warn', title: 'Low liquidity or wide spread' }
+        : null,
+    ].filter((tag): tag is { label: string; cls: string; title: string } => Boolean(tag));
 
     const changeUp = changePercent != null && changePercent >= 0;
     const cell = 'px-2 py-1 font-mono text-[11px] tabular-nums text-right';
@@ -364,9 +480,13 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
           className={`cursor-pointer border-l-2 transition-colors ${
             isSelected
               ? 'border-l-intel-info bg-intel-info/10'
-              : isHeld
+            : isHeld
               ? 'border-l-intel-accent bg-intel-accentSoft/40 hover:bg-intel-accentSoft'
-              : itm
+              : highlight.atm
+              ? 'border-l-intel-info bg-intel-info/5 hover:bg-intel-info/10'
+              : highlight.lowLiquidity
+              ? 'border-l-intel-warn/70 bg-intel-warn/5 hover:bg-intel-warn/10'
+            : itm
               ? 'border-l-transparent bg-intel-panel2/40 hover:bg-intel-panel2'
               : 'border-l-transparent hover:bg-intel-panel2/70'
           }`}
@@ -381,11 +501,23 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
                   POS
                 </span>
               )}
-              {itm && (
-                <span className="rounded-sm bg-intel-raised px-1 text-[8px] font-semibold uppercase tracking-label text-intel-ink3">
-                  ITM
+              {moneynessLabel && (
+                <span
+                  className={`rounded-sm px-1 text-[8px] font-semibold uppercase tracking-label ${moneynessClass}`}
+                  title={moneynessLabel === 'ATM' ? 'At the money' : moneynessLabel === 'ITM' ? 'In the money' : 'Out of the money'}
+                >
+                  {moneynessLabel}
                 </span>
               )}
+              {highlightTags.slice(0, 3).map(tag => (
+                <span
+                  key={tag.label}
+                  title={tag.title}
+                  className={`rounded-sm px-1 py-0 font-mono text-[8px] font-semibold uppercase tracking-label ${tag.cls}`}
+                >
+                  {tag.label}
+                </span>
+              ))}
             </span>
           </td>
           <td className={`${cell} text-intel-pos`}>{formatCurrency(liveBid)}</td>

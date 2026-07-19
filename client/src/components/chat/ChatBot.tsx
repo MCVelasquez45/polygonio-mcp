@@ -187,10 +187,13 @@ export function ChatBot({
             <p className="text-lg font-semibold">{conversationTitle}</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs px-3 py-1 rounded-full bg-intel-accentSoft text-intel-accent">Live</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-intel-pos/10 px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label text-intel-pos">
+              <span className="h-1.5 w-1.5 rounded-full bg-intel-pos motion-safe:animate-livering" aria-hidden="true" />
+              Live
+            </span>
             <button
               type="button"
-              className="text-xs px-3 py-1 rounded-full border border-intel-line text-intel-ink2 hover:text-white"
+              className="rounded-md border border-intel-line px-2 py-0.5 font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-ink"
               onClick={() => {
                 onRequestNewChat();
                 setMessages([DEFAULT_ASSISTANT_MESSAGE]);
@@ -234,7 +237,7 @@ export function ChatBot({
                     <button
                       type="button"
                       onClick={() => handleSaveReport(message)}
-                      className="rounded-full border border-intel-line px-2 py-1 text-intel-ink2 hover:text-white disabled:opacity-40"
+                      className="rounded-md border border-intel-line px-1.5 py-[1px] font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-ink disabled:opacity-40"
                       disabled={reportStatus[message.id]?.state === 'saving'}
                     >
                       {reportStatus[message.id]?.state === 'saving' ? 'Saving…' : 'Save report'}
@@ -282,7 +285,7 @@ export function ChatBot({
           <button
             type="submit"
             disabled={loading || !draft.trim()}
-            className="px-4 py-2 rounded-full bg-intel-accent text-white text-sm font-semibold disabled:bg-intel-panel2"
+            className="rounded-panel bg-intel-accent px-4 py-2 text-sm font-semibold text-intel-bg disabled:bg-intel-panel2 disabled:text-intel-ink3"
           >
             {loading ? 'Sending…' : 'Send'}
           </button>
@@ -293,6 +296,17 @@ export function ChatBot({
 }
 
 function renderStructuredReply(text: string): ReactNode {
+  const deskSections = new Set([
+    'summary',
+    'trend',
+    'momentum',
+    'support',
+    'resistance',
+    'expected move',
+    'key risk',
+    'suggested action',
+    'conclusion',
+  ]);
   const lines = text.split('\n');
   const elements: ReactNode[] = [];
   let listBuffer: string[] = [];
@@ -322,11 +336,22 @@ function renderStructuredReply(text: string): ReactNode {
     flushList();
     const boldMatch = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
     if (boldMatch) {
-      elements.push(
-        <p key={`bold-${elements.length}`}>
-          <strong>{boldMatch[1]}:</strong> {boldMatch[2]}
-        </p>
-      );
+      const heading = boldMatch[1].trim();
+      const body = boldMatch[2].trim();
+      if (deskSections.has(heading.toLowerCase())) {
+        elements.push(
+          <div key={`section-${elements.length}`} className="rounded-md border border-intel-lineSoft bg-intel-bg/30 px-2.5 py-2">
+            <p className="font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ai">{heading}</p>
+            {body ? <p className="mt-1 text-[13px] leading-relaxed text-intel-ink2">{body}</p> : null}
+          </div>
+        );
+      } else {
+        elements.push(
+          <p key={`bold-${elements.length}`}>
+            <strong>{heading}:</strong> {body}
+          </p>
+        );
+      }
     } else {
       elements.push(<p key={`p-${elements.length}`}>{trimmed}</p>);
     }

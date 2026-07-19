@@ -122,11 +122,13 @@ def _formatting_guardrails() -> str:
     return dedent(
         """\
         RESPONSE FORMAT:
-        - Start with **Summary:** (1-2 sentences)
-        - Then 3-6 bullet points for key data/reasons
-        - End with **Conclusion:** (1 short sentence)
+        - Use this section order when the data supports it:
+          **Summary:**, **Trend:**, **Momentum:**, **Support:**, **Resistance:**, **Expected Move:**, **Key Risk:**, **Suggested Action:**
+        - Keep each section to one concise sentence or 1-3 short bullets.
+        - Omit a section only when the available data cannot support it.
         - Expand acronyms at least once (e.g., IV = implied volatility)
-        - Keep the tone concise and trader-friendly
+        - Keep the tone concise, specific, and trader-friendly
+        - Avoid long paragraphs and generic caveats
         """
     ).strip()
 

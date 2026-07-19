@@ -20,7 +20,7 @@ type BadgeProps = {
 export function Badge({ children, tone = 'neutral', className = '' }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-label ${TONE_CLASS[tone]} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label ${TONE_CLASS[tone]} ${className}`}
     >
       {children}
     </span>
@@ -31,7 +31,7 @@ export function Badge({ children, tone = 'neutral', className = '' }: BadgeProps
 export function GradeBadge({ grade, className = '' }: { grade: string; className?: string }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 font-mono text-xs font-bold ${gradeToneClass(grade)} ${className}`}
+      className={`inline-flex items-center rounded-md border px-1.5 py-[1px] font-mono text-[11px] font-bold ${gradeToneClass(grade)} ${className}`}
       aria-label={`Grade ${grade}`}
     >
       {grade}
