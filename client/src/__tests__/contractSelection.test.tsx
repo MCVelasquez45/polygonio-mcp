@@ -141,9 +141,10 @@ vi.mock('../api', () => ({
   agentApi: {},
 }));
 
-// OrderTicketPanel imports these directly (not via the api index).
+// OrderTicketPanel / OptionsChainPanel import these directly (not via the api index).
 vi.mock('../api/alpaca', () => ({
   getBrokerAccount: vi.fn(async () => ({ buying_power: '10000' })),
+  getOptionPositions: vi.fn(async () => ({ positions: [] })),
 }));
 
 import App from '../App';
