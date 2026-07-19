@@ -112,11 +112,19 @@ function orderStatusTone(status?: string | null): string {
  */
 function formatOrderSource(source?: string | null) {
   if (!source) return '—';
-  const normalized = source.trim().toUpperCase().replace(/[_-]+/g, ' ');
+  const raw = source.trim();
+  // Known client_order_id prefixes are provenance: at2a-/auto- = automation
+  // engine, manual- = governed manual UI, mcp- = research tooling. A raw UUID
+  // means Alpaca generated the id (order placed outside this app).
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('at2a-') || lower.startsWith('auto-')) return 'AUTO';
+  if (lower.startsWith('manual-')) return 'MANUAL';
+  if (lower.startsWith('mcp-')) return 'RESEARCH';
+  const normalized = raw.toUpperCase().replace(/[_-]+/g, ' ');
   if (normalized.includes('AUTOMATION')) return 'AUTO';
   if (normalized.includes('MANUAL')) return 'MANUAL';
-  // A raw client_order_id (long/opaque token) is not operator-facing.
-  if (/[0-9a-f]{8}/i.test(source) || source.length > 24) return 'BROKER';
+  // Anything else long/opaque is not operator-facing.
+  if (/[0-9a-f]{8}/i.test(raw) || raw.length > 24) return 'BROKER';
   return normalized;
 }
 

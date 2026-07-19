@@ -3,6 +3,7 @@ import { Router } from 'express';
 // Order SUBMISSION is intentionally NOT here — it is governed by the manual
 // execution gateway (manualTrading.routes) and the automation engine.
 import {
+  cancelAlpacaOrder,
   getAlpacaAccount,
   getAlpacaClock,
   listAlpacaOptionOrders,
@@ -65,6 +66,28 @@ router.get('/alpaca/options/orders', async (req, res, next) => {
     const orders = await listAlpacaOptionOrders({ status, limit });
     res.json({ orders });
   } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/broker/alpaca/options/orders/:orderId – cancel an open order.
+// Cancellation is a risk-REDUCING lifecycle action on an order that already
+// passed a governed submission path; it does not create broker exposure, so it
+// lives on the façade rather than behind the intent gateway.
+router.delete('/alpaca/options/orders/:orderId', async (req, res, next) => {
+  try {
+    const orderId = req.params.orderId;
+    await cancelAlpacaOrder(orderId);
+    logAutomationEvent({
+      service: 'manual-trading',
+      event: 'MANUAL_ORDER_CANCEL_REQUESTED',
+      payload: { brokerOrderId: orderId, route: 'DELETE /api/broker/alpaca/options/orders/:orderId' },
+    });
+    res.status(202).json({ canceled: true, orderId });
+  } catch (error: any) {
+    const status = error?.response?.status ?? error?.statusCode;
+    if (status === 404) return res.status(404).json({ error: 'order not found' });
+    if (status === 422) return res.status(422).json({ error: 'order is not cancelable' });
     next(error);
   }
 });

@@ -32,6 +32,11 @@ test('legacy Alpaca option orders route preserves GET and disables POST', async 
       res.end(JSON.stringify([{ id: 'filled-1', symbol: 'SPY260724P00756000', status: 'filled' }]));
       return;
     }
+    if (req.method === 'DELETE' && String(req.url).includes('/orders/open-1')) {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
     res.statusCode = 500;
     res.end(JSON.stringify({ error: 'unexpected fake Alpaca call' }));
   });
@@ -68,6 +73,14 @@ test('legacy Alpaca option orders route preserves GET and disables POST', async 
     const postPayload = await postResponse.json();
     assert.equal(postPayload.error, 'DIRECT_BROKER_SUBMISSION_DISABLED');
     assert.equal(alpacaRequests.filter(r => r.method === 'POST').length, 0);
+
+    const deleteResponse = await fetch(`${base}/api/broker/alpaca/options/orders/open-1`, {
+      method: 'DELETE',
+    });
+    assert.equal(deleteResponse.status, 202);
+    const deletePayload = await deleteResponse.json();
+    assert.deepEqual(deletePayload, { canceled: true, orderId: 'open-1' });
+    assert.equal(alpacaRequests.filter(r => r.method === 'DELETE' && r.url.includes('/orders/open-1')).length, 1);
   } finally {
     await closeServer(routeServer?.server);
     await closeServer(fakeAlpaca.server);

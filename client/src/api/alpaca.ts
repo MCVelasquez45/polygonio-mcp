@@ -77,3 +77,11 @@ export async function getOptionOrders(
   const { data } = await http.get<{ orders: OptionOrder[] }>('/api/broker/alpaca/options/orders', { params, signal });
   return data;
 }
+
+/** Cancel an open broker order. Risk-reducing; call only from a deliberate user action. */
+export async function cancelOptionOrder(orderId: string): Promise<{ canceled: boolean; orderId: string }> {
+  const { data } = await http.delete<{ canceled: boolean; orderId: string }>(
+    `/api/broker/alpaca/options/orders/${encodeURIComponent(orderId)}`
+  );
+  return data;
+}
