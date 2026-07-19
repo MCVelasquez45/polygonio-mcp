@@ -2090,11 +2090,11 @@ def create_polygon_mcp_server() -> MCPServerStdio:
     return MCPServerStdio(
         params={
             "command": sys.executable,
-            "args": ["-m", "mcp_polygon"],
+            "args": ["-c", "import mcp_polygon; mcp_polygon.run()"],
             "env": {**os.environ, "POLYGON_API_KEY": api_key},
         },
-        # First-time `uvx` installs can exceed the 5s default; give the MCP
-        # server more time to start/respond before declaring failure.
+        # First-time MCP startup can exceed the 5s default; give the server
+        # more time to start/respond before declaring failure.
         client_session_timeout_seconds=30,
     )
 
