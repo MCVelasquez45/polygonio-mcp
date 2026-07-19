@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Info, RotateCcw, X } from 'lucide-react';
 import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
 import { getSharedSocket } from './lib/socket';
@@ -2680,6 +2681,85 @@ function App() {
   );
 
   const showTradingSidebar = view === 'trading';
+  const aiControlRows = [
+    { label: 'Enable AI', description: 'Master switch for all AI-powered tools.', checked: aiEnabled, disabled: false, onChange: setAiEnabled },
+    { label: 'AI Desk', description: 'Enable the AI Desk chat dock.', checked: aiChatEnabled, disabled: !aiEnabled, onChange: setAiChatEnabled },
+    { label: 'Desk Insights', description: 'Enable AI summaries, sentiment, and highlights.', checked: aiDeskInsightsEnabled, disabled: !aiEnabled, onChange: setAiDeskInsightsEnabled },
+    { label: 'Auto Insights', description: 'Automatically fetch AI insight when you change tickers.', checked: autoDeskInsights, disabled: !deskInsightsAllowed, onChange: setAutoDeskInsights },
+    { label: 'Contract Selection', description: 'Enable AI-driven contract picks on demand.', checked: aiContractSelectionEnabled, disabled: !aiEnabled, onChange: setAiContractSelectionEnabled },
+    { label: 'Auto Contract Selection', description: 'Let AI pick a contract when the chain loads.', checked: autoContractSelection, disabled: !contractSelectionAllowed, onChange: setAutoContractSelection },
+    { label: 'Contract Analysis', description: 'Enable Analyze with AI explanations.', checked: aiContractAnalysisEnabled, disabled: !aiEnabled, onChange: setAiContractAnalysisEnabled },
+    { label: '5 Minute Analysis', description: 'Enable the opening-range analysis panel.', checked: aiChartAnalysisEnabled, disabled: !aiEnabled, onChange: setAiChartAnalysisEnabled },
+    { label: 'Watchlist Scanner', description: 'Enable AI scanner reports and checklist highlights.', checked: aiScannerEnabled, disabled: !aiEnabled, onChange: setAiScannerEnabled },
+    { label: 'Portfolio Sentiment', description: 'Enable AI sentiment refresh for positions.', checked: aiPortfolioSentimentEnabled, disabled: !aiEnabled, onChange: setAiPortfolioSentimentEnabled },
+    { label: 'Auto Scanner Loop', description: 'Periodically refresh watchlist highlights.', checked: autoScannerEnabled, disabled: !aiEnabled, onChange: setAutoScannerEnabled },
+  ];
+  const enabledAiControls = aiControlRows.filter(control => control.checked).length;
+  const totalAiControls = aiControlRows.length;
+  const setAllAiControls = (enabled: boolean) => {
+    setAiEnabled(enabled);
+    setAiChatEnabled(enabled);
+    setAiDeskInsightsEnabled(enabled);
+    setAutoDeskInsights(enabled);
+    setAiContractSelectionEnabled(enabled);
+    setAutoContractSelection(enabled);
+    setAiContractAnalysisEnabled(enabled);
+    setAiChartAnalysisEnabled(enabled);
+    setAiScannerEnabled(enabled);
+    setAiPortfolioSentimentEnabled(enabled);
+    setAutoScannerEnabled(enabled);
+  };
+  const resetAiControls = () => {
+    setAiEnabled(true);
+    setAiChatEnabled(true);
+    setAiDeskInsightsEnabled(true);
+    setAutoDeskInsights(false);
+    setAiContractSelectionEnabled(true);
+    setAutoContractSelection(false);
+    setAiContractAnalysisEnabled(true);
+    setAiChartAnalysisEnabled(true);
+    setAiScannerEnabled(true);
+    setAiPortfolioSentimentEnabled(true);
+    setAutoScannerEnabled(false);
+  };
+  const renderAiControlRow = (control: typeof aiControlRows[number]) => (
+    <label
+      key={control.label}
+      className={`group relative flex min-h-10 cursor-pointer items-center justify-between gap-3 border-b border-intel-line/70 px-3 py-2 text-sm transition last:border-b-0 hover:bg-intel-panel2/70 focus-within:bg-intel-panel2/70 ${control.disabled ? 'opacity-45' : ''
+        }`}
+      title={control.description}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className={`h-1.5 w-1.5 rounded-full ${control.checked ? 'bg-intel-pos' : 'bg-intel-ink3'}`} />
+        <span className="truncate font-medium text-intel-ink">{control.label}</span>
+        <span className="relative flex-none text-intel-ink3">
+          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="pointer-events-none absolute left-1/2 top-6 z-10 hidden w-64 -translate-x-1/2 rounded-md border border-intel-line bg-intel-bg px-2.5 py-2 text-xs font-normal leading-relaxed text-intel-ink2 shadow-xl group-hover:block group-focus-within:block">
+            {control.description}
+          </span>
+        </span>
+      </span>
+      <span className="flex flex-none items-center gap-2">
+        <span className={`font-mono text-[10px] font-semibold uppercase tracking-label ${control.checked ? 'text-intel-pos' : 'text-intel-ink3'}`}>
+          {control.checked ? 'On' : 'Off'}
+        </span>
+        <input
+          type="checkbox"
+          checked={control.checked}
+          onChange={event => control.onChange(event.target.checked)}
+          disabled={control.disabled}
+          aria-label={`${control.label}: ${control.checked ? 'on' : 'off'}`}
+          className="peer sr-only"
+        />
+        <span
+          aria-hidden="true"
+          className="h-5 w-9 rounded-full border border-intel-line bg-intel-panel2 p-0.5 transition peer-checked:border-intel-accentLine peer-checked:bg-intel-accentSoft peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-intel-accent"
+        >
+          <span className={`block h-3.5 w-3.5 rounded-full transition ${control.checked ? 'translate-x-4 bg-intel-accent' : 'bg-intel-ink3'}`} />
+        </span>
+      </span>
+    </label>
+  );
 
   return (
     <div className="h-screen w-full overflow-x-hidden flex flex-col bg-intel-bg text-intel-ink">
@@ -2700,216 +2780,116 @@ function App() {
       <MarketContextBar />
       {settingsOpen && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4"
+          className="fixed inset-0 z-40 flex justify-end bg-black/70 sm:px-3 sm:py-3"
           onClick={() => setSettingsOpen(false)}
+          role="presentation"
         >
           <div
-            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-panel border border-intel-line bg-intel-panel p-5 space-y-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ai-settings-title"
+            className="flex h-full w-full flex-col border-l border-intel-line bg-intel-panel shadow-2xl sm:max-w-[460px] sm:rounded-panel sm:border sm:border-intel-line"
             onClick={event => event.stopPropagation()}
+            onKeyDown={event => {
+              if (event.key === 'Escape') setSettingsOpen(false);
+            }}
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-intel-ink3">Settings</p>
-                <h2 className="text-lg font-semibold text-intel-ink">AI Request Controls</h2>
+            <div className="border-b border-intel-line px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-intel-ink3">Settings</p>
+                  <h2 id="ai-settings-title" className="mt-1 text-lg font-semibold text-intel-ink">AI Operator Controls</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(false)}
+                  aria-label="Close AI operator controls"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-intel-line text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setSettingsOpen(false)}
-                className="rounded-full border border-intel-line px-3 py-1 text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent"
-              >
-                Close
-              </button>
+              <div className="mt-3 flex items-center justify-between rounded-md border border-intel-line bg-intel-bg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${enabledAiControls ? 'bg-intel-pos' : 'bg-intel-ink3'}`} />
+                  <span className="text-sm font-semibold text-intel-ink">{enabledAiControls} / {totalAiControls} Enabled</span>
+                </div>
+                <span className="font-mono text-[10px] uppercase tracking-label text-intel-ink3">AI Systems</span>
+              </div>
             </div>
-            <div className="space-y-4 text-sm text-intel-ink2">
-              <label className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Enable AI features</span>
-                  <span className="block text-xs text-intel-ink3">Master switch for all AI-powered tools.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiEnabled}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiEnabled(event.target.checked)}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">AI chat</span>
-                  <span className="block text-xs text-intel-ink3">Enable the AI Desk chat dock.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiChatEnabled}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiChatEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Desk insights</span>
-                  <span className="block text-xs text-intel-ink3">Enable AI summaries, sentiment, and highlights.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiDeskInsightsEnabled}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAiDeskInsightsEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Auto desk insights</span>
-                  <span className="block text-xs text-intel-ink3">Automatically fetch AI insight when you change tickers.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={autoDeskInsights}
-                  onChange={event => setAutoDeskInsights(event.target.checked)}
-                  disabled={!deskInsightsAllowed}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">AI contract selection</span>
-                  <span className="block text-xs text-intel-ink3">Enable AI-driven contract picks on demand.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiContractSelectionEnabled}
-                  onChange={event => setAiContractSelectionEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Auto contract selection</span>
-                  <span className="block text-xs text-intel-ink3">Let AI pick a contract when the chain loads.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={autoContractSelection}
-                  onChange={event => setAutoContractSelection(event.target.checked)}
-                  disabled={!contractSelectionAllowed}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">AI contract analysis</span>
-                  <span className="block text-xs text-intel-ink3">Enable “Analyze with AI” explanations.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiContractAnalysisEnabled}
-                  onChange={event => setAiContractAnalysisEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">5-minute chart analysis</span>
-                  <span className="block text-xs text-intel-ink3">Enable the opening-range analysis panel.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiChartAnalysisEnabled}
-                  onChange={event => setAiChartAnalysisEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">AI watchlist scanner</span>
-                  <span className="block text-xs text-intel-ink3">Enable AI scanner reports + checklist highlights.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiScannerEnabled}
-                  onChange={event => setAiScannerEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Portfolio sentiment</span>
-                  <span className="block text-xs text-intel-ink3">Enable AI sentiment refresh for positions.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={aiPortfolioSentimentEnabled}
-                  onChange={event => setAiPortfolioSentimentEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
-                />
-              </label>
-            </div>
-          </div>
-          <div className="space-y-4">
-            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-intel-ink2 font-semibold flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-intel-warn" />
-              Autonomous Operations
-            </h3>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
-                <span>
-                  <span className="block text-sm font-semibold text-intel-ink">Order execution</span>
-                  <span className="block text-xs text-intel-ink2">
-                    Research is read-only. Manual orders require explicit confirmation in the ticket.
-                    Autonomous execution runs only through the deterministic automation engine.
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              <section className="overflow-visible rounded-md border border-intel-line bg-intel-bg">
+                <div className="border-b border-intel-line bg-intel-panel2/60 px-3 py-2">
+                  <h3 className="font-mono text-[11px] font-semibold uppercase tracking-label text-intel-ink3">General</h3>
+                </div>
+                {aiControlRows.slice(0, 3).map(renderAiControlRow)}
+              </section>
+
+              <section className="mt-3 overflow-visible rounded-md border border-intel-line bg-intel-bg">
+                <div className="border-b border-intel-line bg-intel-panel2/60 px-3 py-2">
+                  <h3 className="font-mono text-[11px] font-semibold uppercase tracking-label text-intel-ink3">Automation</h3>
+                </div>
+                {aiControlRows.slice(3, 6).map(renderAiControlRow)}
+              </section>
+
+              <section className="mt-3 overflow-visible rounded-md border border-intel-line bg-intel-bg">
+                <div className="border-b border-intel-line bg-intel-panel2/60 px-3 py-2">
+                  <h3 className="font-mono text-[11px] font-semibold uppercase tracking-label text-intel-ink3">Analysis</h3>
+                </div>
+                {aiControlRows.slice(6, 9).map(renderAiControlRow)}
+              </section>
+
+              <section className="mt-3 overflow-visible rounded-md border border-intel-line bg-intel-bg">
+                <div className="border-b border-intel-line bg-intel-panel2/60 px-3 py-2">
+                  <h3 className="font-mono text-[11px] font-semibold uppercase tracking-label text-intel-ink3">Advanced</h3>
+                </div>
+                {aiControlRows.slice(9).map(renderAiControlRow)}
+                <div className="flex items-center justify-between gap-3 border-t border-intel-line/70 px-3 py-2 text-sm">
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-intel-ink">Order Execution</span>
                   </span>
-                </span>
+                  <span className="flex flex-none items-center gap-1.5 rounded-md border border-intel-line bg-intel-panel2 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">
+                    Locked
+                  </span>
+                </div>
+                <details className="border-t border-intel-line/70">
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm font-medium text-intel-ink transition hover:bg-intel-panel2/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-intel-accent">
+                    Advanced Settings
+                    <ChevronRight className="h-4 w-4 text-intel-ink3" aria-hidden="true" />
+                  </summary>
+                  <div className="border-t border-intel-line/70 px-3 py-2 text-xs leading-relaxed text-intel-ink3">
+                    Future model routing, experimental features, and debug options are not enabled in this build.
+                  </div>
+                </details>
+              </section>
+            </div>
+
+            <div className="border-t border-intel-line bg-intel-panel px-3 py-3">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAllAiControls(true)}
+                  className="rounded-md border border-intel-line bg-intel-panel2 px-2 py-2 text-xs font-semibold text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+                >
+                  Enable All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllAiControls(false)}
+                  className="rounded-md border border-intel-line bg-intel-panel2 px-2 py-2 text-xs font-semibold text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+                >
+                  Disable All
+                </button>
+                <button
+                  type="button"
+                  onClick={resetAiControls}
+                  className="inline-flex items-center justify-center gap-1 rounded-md border border-intel-line bg-intel-panel2 px-2 py-2 text-xs font-semibold text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  Reset
+                </button>
               </div>
-              <label
-                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-warn/20 bg-intel-warn/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
-                  }`}
-              >
-                <span>
-                  <span className="block text-sm font-semibold text-intel-warn">Auto scanner loop</span>
-                  <span className="block text-xs text-intel-warn/80">Periodically refresh watchlist highlights.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={autoScannerEnabled}
-                  onChange={event => setAutoScannerEnabled(event.target.checked)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-intel-warn/60 bg-intel-panel2 text-intel-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-warn"
-                />
-              </label>
             </div>
           </div>
         </div>
