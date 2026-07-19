@@ -41,6 +41,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health", status_code=status.HTTP_200_OK)
+async def health_check() -> dict[str, str]:
+    return {"status": "ok", "service": "polygon-agent"}
+
+
 class AnalysisRequest(BaseModel):
     query: str
     session_name: str | None = None
