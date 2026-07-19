@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postbuild": "node scripts/assert-no-backend-url.mjs"
+    "postbuild": "node scripts/assert-no-backend-url.mjs",
+    "smoke:prod": "node scripts/smoke-prod.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
