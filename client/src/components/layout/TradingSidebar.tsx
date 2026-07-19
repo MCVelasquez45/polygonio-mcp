@@ -14,6 +14,7 @@ import type { WatchlistSnapshot } from '../../types/market';
 import { formatExpirationDate } from '../../utils/expirations';
 import { deriveMarketDataStatus } from '../../lib/marketDataStatus';
 import { useNow } from '../../hooks/useNow';
+import { Sparkline } from '../intelligence/ui/charts/MicroCharts';
 
 type WatchlistEntry = {
   symbol: string;
@@ -31,6 +32,10 @@ const WATCHLIST_SNAPSHOT_TTL_MS = 30_000;
 const WATCHLIST_STALE_MS = 90_000;
 const WATCHLIST_SNAPSHOT_BATCH_SIZE = 25;
 const WATCHLIST_PROVIDER_COOLDOWN_MS = 60_000;
+// Daily closes for the per-row sparkline. 30 sessions, refreshed rarely — the
+// shape of a month barely moves intraday and the provider budget is precious.
+const SPARKLINE_WINDOW = 30;
+const SPARKLINE_TTL_MS = 10 * 60_000;
 
 type SnapshotBatchResult = {
   entries: WatchlistSnapshot[];
@@ -122,6 +127,9 @@ export const TradingSidebar = memo(function TradingSidebar({
   // Drives the per-card quote-age label; reading the fetch-time ref each tick.
   const now = useNow(1000);
   const providerCooldownUntilRef = useRef(0);
+  // 30-session close series per symbol for the row sparklines.
+  const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
+  const sparklineCacheRef = useRef<Map<string, { values: number[]; fetchedAt: number }>>(new Map());
 
   // Sort mode for the scanner. Default to biggest movers first — the way a
   // desk actually scans a universe. Click a column header to cycle.
@@ -357,6 +365,57 @@ export const TradingSidebar = memo(function TradingSidebar({
     void refreshSnapshots({ force: refreshNonce > 0 });
   }, [watchlistSymbolsKey, refreshNonce, refreshSnapshots]);
 
+  // Sparkline sweep: sequential (never a burst), cache-first, and it stops
+  // for the session's sweep the moment the provider throttles. It does not
+  // start until the snapshot batch has landed at least once — Last/Chg% own
+  // the provider budget; trend lines are the least urgent data on the row.
+  const snapshotsReady = Object.keys(snapshots).length > 0;
+  useEffect(() => {
+    if (!snapshotsReady) return;
+    const symbols = watchlistSymbolsKey
+      .split(',')
+      .filter(Boolean)
+      .filter(symbol => !symbol.startsWith('O:'));
+    if (!symbols.length) {
+      setSparklines({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      for (const symbol of symbols) {
+        if (cancelled) return;
+        await new Promise(resolve => setTimeout(resolve, 400));
+        if (cancelled) return;
+        const cached = sparklineCacheRef.current.get(symbol);
+        if (cached && Date.now() - cached.fetchedAt < SPARKLINE_TTL_MS) {
+          setSparklines(prev => (prev[symbol] ? prev : { ...prev, [symbol]: cached.values }));
+          continue;
+        }
+        try {
+          const response = await marketApi.getAggregates({
+            ticker: symbol,
+            multiplier: 1,
+            timespan: 'day',
+            window: SPARKLINE_WINDOW,
+          });
+          const closes = (response.results ?? [])
+            .map(bar => bar?.c)
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+          if (closes.length >= 2 && !cancelled) {
+            sparklineCacheRef.current.set(symbol, { values: closes, fetchedAt: Date.now() });
+            // Paint each row as its series lands — no barrier on the sweep.
+            setSparklines(prev => ({ ...prev, [symbol]: closes }));
+          }
+        } catch (error: unknown) {
+          if ((error as { response?: { status?: number } })?.response?.status === 429) break;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [watchlistSymbolsKey, snapshotsReady]);
+
   useEffect(() => {
     if (!watchlistSymbolsKey) return;
     const interval = setInterval(() => {
@@ -494,12 +553,20 @@ export const TradingSidebar = memo(function TradingSidebar({
             {/* Column header — sortable, sticky feel. This is a data grid, not a
                 list of cards. Click a heading to sort; the active heading shows
                 the direction caret. */}
-            <div className="grid grid-cols-[minmax(0,1fr)_58px_62px] items-center gap-2 border-b border-intel-line px-2 pb-1 text-[9px] font-semibold uppercase tracking-label text-intel-ink3">
+            <div className="grid grid-cols-[minmax(0,1fr)_36px_54px_56px] items-center gap-1.5 border-b border-intel-line px-2 pb-1 text-[9px] font-semibold uppercase tracking-label text-intel-ink3">
               {([
                 ['symbol', 'Symbol', 'justify-start'],
+                ['spark', '30D', 'justify-start'],
                 ['last', 'Last', 'justify-end'],
                 ['change', 'Chg%', 'justify-end'],
               ] as const).map(([key, label, justify]) => {
+                if (key === 'spark') {
+                  return (
+                    <span key={key} className={`flex items-center ${justify} text-intel-ink3`} title="30-session close trend">
+                      {label}
+                    </span>
+                  );
+                }
                 const activeCol = sortKey === key;
                 return (
                   <button
@@ -584,7 +651,7 @@ export const TradingSidebar = memo(function TradingSidebar({
                   >
                     {/* Selection edge — a hard left rule when this row drives the workspace. */}
                     {active && <span className="absolute inset-y-0 left-0 w-[2px] bg-intel-info" />}
-                    <div className="grid grid-cols-[minmax(0,1fr)_58px_62px] items-center gap-2">
+                    <div className="grid grid-cols-[minmax(0,1fr)_36px_54px_56px] items-center gap-1.5">
                       {/* Symbol cell: freshness dot + ticker, remove on hover */}
                       <div className="flex min-w-0 items-center gap-1.5">
                         <span
@@ -612,6 +679,14 @@ export const TradingSidebar = memo(function TradingSidebar({
                           <X className="h-3 w-3" />
                         </button>
                       </div>
+                      {/* 30-session trend */}
+                      <span className="flex items-center" aria-hidden="true">
+                        {sparklines[stock.symbol.toUpperCase()] ? (
+                          <Sparkline values={sparklines[stock.symbol.toUpperCase()]} width={36} height={14} />
+                        ) : (
+                          <span className="h-[14px]" />
+                        )}
+                      </span>
                       {/* Last */}
                       <span className="text-right font-mono tabular-nums text-[13px] leading-none text-intel-ink">
                         {priceDisplay}
