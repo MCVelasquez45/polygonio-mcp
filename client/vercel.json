@@ -13,6 +13,14 @@
       "destination": "https://polygonio-backend.onrender.com/health"
     },
     {
+      "source": "/socket.io",
+      "destination": "https://polygonio-backend.onrender.com/socket.io"
+    },
+    {
+      "source": "/socket.io/",
+      "destination": "https://polygonio-backend.onrender.com/socket.io/"
+    },
+    {
       "source": "/socket.io/:path*",
       "destination": "https://polygonio-backend.onrender.com/socket.io/:path*"
     },
