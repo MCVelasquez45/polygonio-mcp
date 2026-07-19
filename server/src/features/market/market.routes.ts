@@ -340,16 +340,30 @@ router.get('/options/selection', async (req, res, next) => {
   }
 });
 
-router.post('/options/selection', async (req, res, next) => {
+async function persistOptionSelection(req: any, res: any, next: any) {
   try {
     const body = req.body ?? {};
     const userId = typeof body.userId === 'string' && body.userId.trim().length ? body.userId : 'default';
-    const ticker = typeof body.ticker === 'string' ? body.ticker.trim().toUpperCase() : '';
-    const contract = typeof body.contract === 'string' ? body.contract.trim().toUpperCase() : '';
+    const ticker =
+      typeof body.ticker === 'string'
+        ? body.ticker.trim().toUpperCase()
+        : typeof body.selectedTicker === 'string'
+          ? body.selectedTicker.trim().toUpperCase()
+          : '';
+    const contract =
+      typeof body.contract === 'string'
+        ? body.contract.trim().toUpperCase()
+        : typeof body.selectedContract === 'string'
+          ? body.selectedContract.trim().toUpperCase()
+          : typeof body.contractSymbol === 'string'
+            ? body.contractSymbol.trim().toUpperCase()
+            : '';
     const expiration = typeof body.expiration === 'string' ? body.expiration : undefined;
-    const strike = typeof body.strike === 'number' ? body.strike : undefined;
-    const type = body.type === 'call' || body.type === 'put' ? body.type : undefined;
-    const side = body.side === 'sell' ? 'sell' : 'buy';
+    const rawStrike = typeof body.strike === 'number' ? body.strike : Number(body.strike);
+    const strike = Number.isFinite(rawStrike) ? rawStrike : undefined;
+    const rawType = String(body.type ?? body.optionType ?? body.callPut ?? '').toLowerCase();
+    const type: 'call' | 'put' | undefined = rawType === 'call' || rawType === 'put' ? rawType : undefined;
+    const side: 'buy' | 'sell' = body.side === 'sell' ? 'sell' : 'buy';
     if (!ticker || !contract) {
       return res.status(400).json({ error: 'ticker and contract are required' });
     }
@@ -358,7 +372,12 @@ router.post('/options/selection', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}
+
+router.post('/options/selection', persistOptionSelection);
+router.put('/options/selection', persistOptionSelection);
+router.post('/options/select', persistOptionSelection);
+router.put('/options/select', persistOptionSelection);
 
 router.get('/reference/exchanges', async (req, res, next) => {
   try {

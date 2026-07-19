@@ -20,7 +20,7 @@ let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
 
 // GET /api/broker/alpaca/account – fetches account snapshot (buying power, etc.).
-router.get('/alpaca/account', async (_req, res, next) => {
+async function getAccountSnapshot(_req: any, res: any, next: any) {
   try {
     const now = Date.now();
     if (cachedAccount && cachedAccount.expiresAt > now) {
@@ -32,7 +32,10 @@ router.get('/alpaca/account', async (_req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}
+
+router.get('/alpaca/account', getAccountSnapshot);
+router.get('/account', getAccountSnapshot);
 
 // GET /api/broker/alpaca/clock – returns Alpaca market clock.
 router.get('/alpaca/clock', async (_req, res, next) => {

@@ -42,6 +42,7 @@ import {
 } from './features/portfolio/automationVisibilitySocket.service';
 import { marketDataRouter } from './features/marketData/marketData.routes';
 import { intelligenceRouter } from './features/intelligence/intelligence.routes';
+import { optionsRouter } from './features/options/options.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
@@ -113,6 +114,7 @@ app.use('/api/agent', agentProxyRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);
+app.use('/api/options', optionsRouter);
 app.use('/api/broker', brokerRouter);
 app.use('/api/trading/manual', manualTradingRouter);
 app.use('/api/analysis', analysisRouter);

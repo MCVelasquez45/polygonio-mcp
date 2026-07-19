@@ -153,8 +153,86 @@ function isLegacyBrokerSubmissionDisabled(error: any): boolean {
   );
 }
 
+function createCorrelationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function setHeader(config: any, key: string, value: string): void {
+  if (typeof config.headers?.set === 'function') {
+    config.headers.set(key, value);
+    return;
+  }
+  config.headers = { ...(config.headers ?? {}), [key]: value };
+}
+
+function getHeader(headers: any, key: string): string | undefined {
+  if (!headers) return undefined;
+  if (typeof headers.get === 'function') {
+    return headers.get(key) ?? headers.get(key.toLowerCase()) ?? undefined;
+  }
+  return headers[key] ?? headers[key.toLowerCase()];
+}
+
+function redactedPayload(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      return redactedPayload(JSON.parse(value));
+    } catch {
+      return value.length > 2000 ? `${value.slice(0, 2000)}...` : value;
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactedPayload);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        /secret|password|token|api[_-]?key|authorization|mongo|uri/i.test(key) ? '[REDACTED]' : redactedPayload(entry),
+      ])
+    );
+  }
+  return value;
+}
+
+function fullRequestUrl(config: any): string {
+  try {
+    return new URL(config?.url ?? '', config?.baseURL ?? getActiveBaseUrl()).toString();
+  } catch {
+    return `${config?.baseURL ?? getActiveBaseUrl()}${config?.url ?? ''}`;
+  }
+}
+
+function expectedRouteFor(method: string, url: string): string {
+  const path = (() => {
+    try {
+      return new URL(url, getActiveBaseUrl()).pathname;
+    } catch {
+      return url;
+    }
+  })();
+  const normalizedMethod = method.toUpperCase();
+  const routes: Array<{ method: string; match: RegExp; expected: string }> = [
+    { method: 'GET', match: /^\/api\/broker\/account$/, expected: 'GET /api/broker/account -> server/src/features/broker/broker.routes.ts' },
+    { method: 'GET', match: /^\/api\/broker\/alpaca\/account$/, expected: 'GET /api/broker/alpaca/account -> server/src/features/broker/broker.routes.ts' },
+    { method: 'GET', match: /^\/api\/portfolio\/operations$/, expected: 'GET /api/portfolio/operations -> server/src/features/portfolio/portfolio.routes.ts' },
+    { method: 'GET', match: /^\/api\/watchlist/, expected: 'GET /api/watchlist -> server/src/features/watchlist/watchlist.routes.ts' },
+    { method: 'GET', match: /^\/api\/automation\/status$/, expected: 'GET /api/automation/status -> server/src/features/automation/automation.routes.ts' },
+    { method: 'POST', match: /^\/api\/market\/options\/selection$/, expected: 'POST /api/market/options/selection -> server/src/features/market/market.routes.ts' },
+    { method: 'PUT', match: /^\/api\/market\/options\/selection$/, expected: 'PUT /api/market/options/selection -> server/src/features/market/market.routes.ts' },
+    { method: 'POST', match: /^\/api\/options\/select$/, expected: 'POST /api/options/select -> server/src/features/options/options.routes.ts' },
+    { method: 'PUT', match: /^\/api\/options\/select$/, expected: 'PUT /api/options/select -> server/src/features/options/options.routes.ts' },
+    { method: 'POST', match: /^\/api\/analyze$/, expected: 'POST /api/analyze -> server/src/features/assistant/analyze.routes.ts' },
+  ];
+  return routes.find(route => route.method === normalizedMethod && route.match.test(path))?.expected ?? 'No explicit client route metadata registered';
+}
+
 http.interceptors.request.use(config => {
   config.baseURL = getActiveBaseUrl();
+  setHeader(config, 'x-request-id', getHeader(config.headers, 'x-request-id') ?? createCorrelationId());
   if (HTTP_DEBUG) {
     console.log('[CLIENT] HTTP request', {
       method: config.method,
@@ -205,10 +283,17 @@ http.interceptors.response.use(
     }
     console.error('[CLIENT] HTTP error', {
       message: error?.message,
-      status: error?.response?.status,
-      url: error?.config?.url,
+      method: String(error?.config?.method ?? 'GET').toUpperCase(),
+      url: fullRequestUrl(error?.config),
+      status: error?.response?.status ?? null,
+      responseBody: redactedPayload(error?.response?.data),
+      requestPayload: redactedPayload(error?.config?.data),
+      correlationId:
+        getHeader(error?.response?.headers, 'x-request-id') ??
+        getHeader(error?.config?.headers, 'x-request-id') ??
+        null,
+      expectedRoute: expectedRouteFor(String(error?.config?.method ?? 'GET'), error?.config?.url ?? ''),
       baseURL: error?.config?.baseURL,
-      method: error?.config?.method,
     });
     return Promise.reject(error);
   }
