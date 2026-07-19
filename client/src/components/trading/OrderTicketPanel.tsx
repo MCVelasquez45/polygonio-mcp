@@ -4,6 +4,8 @@ import { AlertTriangle, Loader2, Minus, Plus } from 'lucide-react';
 import { getBrokerAccount } from '../../api/alpaca';
 import { submitManualPaperOrder } from '../../api/manualTrading';
 import { useLiveQuote } from '../../lib/liveMarketStore';
+import { computeExpirationDte } from '../../utils/expirations';
+import { probOfProfitLong } from '../../lib/optionsMath';
 
 type Props = {
   contract?: OptionContractDetail | null;
@@ -108,6 +110,7 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   const [reviewOpen, setReviewOpen] = useState(false);
   const [buyingPower, setBuyingPower] = useState<number | null>(null);
   const [buyingPowerLoading, setBuyingPowerLoading] = useState(false);
+  const [riskBudget, setRiskBudget] = useState('');
 
   useEffect(() => {
     setQuantity(1);
@@ -191,6 +194,54 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   const costBasis = estimatedCost;
   const maxLoss =
     side === 'buy' && estimatedCost != null ? estimatedCost : null;
+
+  // ── Position analytics (display only) ─────────────────────────────────
+  // Single-leg risk shape from side × type. "Unlimited" is stated, never a
+  // fabricated number; short-put risk is the assignment value below breakeven.
+  const contractSide: 'call' | 'put' = contract?.type?.toLowerCase() === 'put' ? 'put' : 'call';
+  const dte = contract?.expiration ? computeExpirationDte(contract.expiration) : null;
+  const contractIv =
+    typeof contract?.impliedVolatility === 'number' && Number.isFinite(contract.impliedVolatility)
+      ? contract.impliedVolatility
+      : null;
+  const premiumForAnalytics = estimatePrice ?? markPrice ?? null;
+  const maxGain: number | 'unlimited' | null = (() => {
+    if (premiumForAnalytics == null || quantity <= 0 || !contract?.ticker) return null;
+    if (side === 'buy') {
+      if (contractSide === 'call') return 'unlimited';
+      return contract?.strike != null
+        ? Math.max(0, contract.strike - premiumForAnalytics) * quantity * multiplier
+        : null;
+    }
+    return premiumForAnalytics * quantity * multiplier;
+  })();
+  const maxLossDisplay: number | 'unlimited' | null = (() => {
+    if (premiumForAnalytics == null || quantity <= 0 || !contract?.ticker) return maxLoss;
+    if (side === 'buy') return premiumForAnalytics * quantity * multiplier;
+    if (contractSide === 'call') return 'unlimited';
+    return contract?.strike != null
+      ? Math.max(0, contract.strike - premiumForAnalytics) * quantity * multiplier
+      : null;
+  })();
+  // Probability of profit at expiration (Black-Scholes, breakeven as strike).
+  // A short position profits when the long side doesn't: POP_short = 1 − POP_long.
+  const popLong = probOfProfitLong(
+    contractSide,
+    spotPrice ?? null,
+    contract?.strike ?? null,
+    premiumForAnalytics,
+    contractIv,
+    dte
+  );
+  const probProfit = popLong == null ? null : side === 'buy' ? popLong : 1 - popLong;
+  const formatRiskAmount = (value: number | 'unlimited' | null) =>
+    value === 'unlimited' ? 'Unlimited' : value != null ? `$${value.toFixed(2)}` : '—';
+  // Contracts a dollar risk budget buys at the working price (long debit).
+  const riskBudgetValue = Number(riskBudget);
+  const riskSizedQty =
+    Number.isFinite(riskBudgetValue) && riskBudgetValue > 0 && premiumForAnalytics != null && premiumForAnalytics > 0
+      ? Math.floor(riskBudgetValue / (premiumForAnalytics * multiplier)) || null
+      : null;
   const orderTypeLabels: Record<OrderType, string> = {
     market: 'Market',
     limit: 'Limit',
@@ -480,6 +531,35 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
               </button>
             ))}
           </div>
+          {/* Risk-based sizing: contracts from a dollar risk budget at the
+              working price (debit = max loss for a long single-leg). */}
+          {assetType === 'option' && side === 'buy' && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-label text-intel-ink3">Size by risk $</span>
+              <input
+                type="number"
+                min={0}
+                value={riskBudget}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setRiskBudget(event.target.value)}
+                placeholder="500"
+                aria-label="Risk budget in dollars"
+                className="w-20 rounded-panel border border-intel-line bg-intel-panel2 px-2 py-1 text-right font-mono tabular-nums text-[11px] text-intel-ink placeholder:text-intel-ink3 focus:border-intel-accentLine focus-visible:outline-none"
+              />
+              <button
+                type="button"
+                disabled={riskSizedQty == null}
+                onClick={() => riskSizedQty != null && setQuantity(riskSizedQty)}
+                title={
+                  riskSizedQty != null && premiumForAnalytics != null
+                    ? `${riskSizedQty} contract${riskSizedQty === 1 ? '' : 's'} ≈ $${(riskSizedQty * premiumForAnalytics * multiplier).toFixed(0)} at $${premiumForAnalytics.toFixed(2)}`
+                    : 'Enter a risk budget and a working price first'
+                }
+                className="rounded-sm bg-intel-panel2 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-intel-ink2 transition-colors hover:text-intel-ink disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {riskSizedQty != null ? `Apply · ${riskSizedQty}` : 'Apply'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Limit price with tick steppers ────────────────────────────── */}
@@ -596,11 +676,31 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
             {buyingPowerLoading ? '…' : buyingPower != null ? `$${buyingPower.toFixed(2)}` : '—'}
           </span>
           <span className="text-intel-ink3">Max Loss</span>
-          <span className="text-right text-intel-ink2">{maxLoss != null ? `$${maxLoss.toFixed(2)}` : '—'}</span>
+          <span className={`text-right ${maxLossDisplay === 'unlimited' ? 'text-intel-neg' : 'text-intel-ink2'}`}>
+            {formatRiskAmount(maxLossDisplay)}
+          </span>
+          <span className="text-intel-ink3">Max Gain</span>
+          <span className={`text-right ${maxGain === 'unlimited' ? 'text-intel-pos' : 'text-intel-ink2'}`}>
+            {formatRiskAmount(maxGain)}
+          </span>
+          {probProfit != null && (
+            <>
+              <span className="text-intel-ink3" title="Probability the position is profitable at expiration (Black-Scholes from the contract's implied vol; breakeven as the effective strike).">
+                Prob. Profit
+              </span>
+              <span className="text-right text-intel-ink2">{(probProfit * 100).toFixed(0)}%</span>
+            </>
+          )}
           {breakevenPrice != null && (
             <>
               <span className="text-intel-ink3">Breakeven</span>
               <span className="text-right text-intel-ink2">${breakevenPrice.toFixed(2)}</span>
+            </>
+          )}
+          {dte != null && (
+            <>
+              <span className="text-intel-ink3">DTE</span>
+              <span className="text-right text-intel-ink2">{dte}</span>
             </>
           )}
         </div>
