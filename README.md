@@ -21,7 +21,7 @@ Version 1 is a paper-trading release. It is not cleared for live-money deploymen
 - Cockpit: one active automation-owned options trade, live quote state, exit strategy, execution state, and AI hold rationale.
 - The Lab: strategy research and backtest workflow.
 - Automation Command Center: session control, watchlist state, risk status, operational recovery, and automation health.
-- Trading Intelligence: planned Version 2 reporting and analytics layer.
+- Trading Intelligence: Version 2 reporting, analytics, and research layer.
 
 ## V1 Capabilities
 
@@ -73,6 +73,10 @@ Some server automation and dev-platform tests bind local ports. In restricted sa
 - Roadmap: `docs/ROADMAP.md`
 - Trading Intelligence plan: `docs/plans/trading-intelligence-engine.md`
 - Trading Session Capture: `docs/features/trading-session-capture.md`
+- Trade Intelligence Reports: `docs/features/trade-intelligence-reports.md`
+- Daily Intelligence Reports: `docs/features/daily-intelligence-reports.md`
+- Decision Journal: `docs/features/decision-journal.md`
+- Strategy Analytics: `docs/features/strategy-analytics.md`
 
 ## Local Development
 

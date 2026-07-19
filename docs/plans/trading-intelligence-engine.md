@@ -1,6 +1,6 @@
 # Trading Intelligence Engine Plan
 
-Base milestone: `v1.0-autonomous-trading`
+Base milestone: `v1.0.1-production-hardened`
 
 This branch is reserved for the Trading Intelligence and Daily Reporting Layer. No production trading rules, thresholds, broker execution logic, GPT prompt formats, or risk controls should be changed as part of this planning document.
 
@@ -35,6 +35,8 @@ Success metric:
 
 Generate per-trade reports that explain why a trade happened and how it behaved.
 
+Implementation status: Milestone 2 is implemented in the `intelligence_trade_reports` collection with read APIs, admin-gated generation/backfill, deterministic grading, timeline replay, and a minimal Trade Reports UI. See `docs/features/trade-intelligence-reports.md`.
+
 Initial scope:
 
 - Entry thesis and contract-selection attribution.
@@ -50,6 +52,8 @@ Success metric:
 ## Milestone 3: Daily Trading Report
 
 Create an end-of-day report across all evaluations and trades.
+
+Implementation status: Milestone 3 is implemented in the `intelligence_daily_reports` collection with read APIs, admin-gated generation/backfill, deterministic grading, factual executive summaries, and a minimal Daily Reports UI. See `docs/features/daily-intelligence-reports.md`.
 
 Initial scope:
 
@@ -67,6 +71,8 @@ Success metric:
 
 Build a durable journal for automation decisions and operator interventions.
 
+Implementation status: Milestone 4 is implemented in the `intelligence_decision_journal` collection with read APIs, admin-gated backfill, deterministic reason-code capture, source timelines, and a minimal Decision Journal UI. See `docs/features/decision-journal.md`.
+
 Initial scope:
 
 - Evaluation snapshots.
@@ -80,7 +86,24 @@ Success metric:
 
 - A reviewer can trace any trade or rejection from market context to final outcome.
 
-## Milestone 5: Missed Opportunity Analytics
+## Milestone 5: Strategy Analytics
+
+Analyze strategy, symbol, regime, timing, confidence, DTE, delta, IV, weekday, exit-reason, and risk-profile cohorts across the historical evidence.
+
+Implementation status: Milestone 5 is implemented in the `intelligence_strategy_analytics` collection with read APIs, admin-gated generation/backfill, deterministic cohort ranking, and a minimal Strategy Analytics UI. See `docs/features/strategy-analytics.md`.
+
+Initial scope:
+
+- Deterministic aggregation from Trade Reports, Daily Reports, and Decision Journals.
+- Cohort ranking by strategy, symbol, sector, market regime, confidence, DTE, delta, IV, weekday, time of day, exit reason, and risk profile.
+- Evidence-quality score and missing-data warnings.
+- Daily, weekly, monthly, and rolling windows.
+
+Success metric:
+
+- A reviewer can compare cohort performance without re-reading raw trade logs.
+
+## Milestone 6: Missed Opportunity Analytics
 
 Analyze false negatives, rejected opportunities, missed fills, and opportunity cost.
 
@@ -94,22 +117,6 @@ Initial scope:
 Success metric:
 
 - Missed-opportunity findings are backed by cohort-level evidence, not individual anecdotes.
-
-## Milestone 6: Strategy Analytics
-
-Analyze strategy and filter contribution across regimes.
-
-Initial scope:
-
-- Filter value by accepted and rejected cohorts.
-- False positives and false negatives.
-- Regime dependence by trend, flow, relative volume, volatility, and market timing.
-- Selection quality by contract attributes.
-- Exit quality by trigger, time in trade, and market condition.
-
-Success metric:
-
-- Strategy recommendations identify hypothesis, evidence, missing evidence, expected upside, risks introduced, and rollback criteria.
 
 ## Milestone 7: AI Coach
 

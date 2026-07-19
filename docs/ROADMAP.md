@@ -21,7 +21,7 @@ Version 1 is frozen after the production-hardened release. Additional feature wo
 
 ## Version 2: Trading Intelligence Platform
 
-Status: Planned.
+Status: In progress. Milestones 1, 2, 3, 4, and 5 are implemented.
 
 Guardrails:
 
@@ -36,19 +36,31 @@ Milestones:
 
 1. Trading Session Capture
 2. Trade Intelligence Reports
-3. Daily Trading Report
+3. Daily Intelligence Report
 4. Decision Journal
-5. Missed Opportunity Analytics
-6. Strategy Analytics
+5. Strategy Analytics
+6. Missed Opportunity Analytics
 7. AI Coach
 8. Historical Intelligence Workspace
 
-Milestone 1 implementation docs:
+Milestone 1 through 5 implementation docs:
 
 - `docs/V2_ARCHITECTURE.md`
 - `docs/features/trading-session-capture.md`
+- `docs/features/trade-intelligence-reports.md`
+- `docs/features/daily-intelligence-reports.md`
+- `docs/features/decision-journal.md`
+- `docs/features/strategy-analytics.md`
 - `docs/architecture/v2-trading-session-source-map.md`
+- `docs/architecture/v2-trade-report-source-map.md`
+- `docs/architecture/v2-daily-report-source-map.md`
+- `docs/architecture/v2-decision-journal-source-map.md`
+- `docs/architecture/v2-strategy-analytics-source-map.md`
 - `docs/api/trading-intelligence-sessions.md`
+- `docs/api/trading-intelligence-trades.md`
+- `docs/api/trading-intelligence-daily.md`
+- `docs/api/trading-intelligence-decisions.md`
+- `docs/api/trading-intelligence-analytics.md`
 
 ## Live Trading Readiness Track
 
