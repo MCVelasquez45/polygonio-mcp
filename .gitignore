@@ -98,6 +98,8 @@ scripts/
 #  the screener's Python runtime — both must be in the repo.)
 !server/scripts/
 !server/scripts/assert-port-free.js
+!client/scripts/
+!client/scripts/assert-no-backend-url.mjs
 !python-screener-service/.python-version
 # client/src/lib is frontend source (shared socket, stores), not a Python
 # build dir — exempt it from the packaging `lib/` rule above.
