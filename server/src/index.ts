@@ -99,7 +99,7 @@ app.use((req: RequestWithContext, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => {
+app.get(['/health', '/api/health'], (_req, res) => {
   writeStructuredLog({
     component: 'server',
     module: 'health',
