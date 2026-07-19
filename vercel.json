@@ -4,6 +4,9 @@
   "outputDirectory": "client/dist",
   "framework": "vite",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://polygonio-backend.onrender.com/api/:path*" },
+    { "source": "/health", "destination": "https://polygonio-backend.onrender.com/health" },
+    { "source": "/socket.io/:path*", "destination": "https://polygonio-backend.onrender.com/socket.io/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

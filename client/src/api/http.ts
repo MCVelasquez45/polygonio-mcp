@@ -37,6 +37,11 @@ function isLocalHost(hostname: string): boolean {
   return isLoopbackHost(hostname) || isPrivateHostname(hostname);
 }
 
+function shouldUseSameOriginProxy(): boolean {
+  if (!import.meta.env.PROD || typeof window === 'undefined' || !window.location) return false;
+  return !isLocalHost(window.location.hostname || LOCALHOST);
+}
+
 function parseAbsoluteUrl(value: string): URL | null {
   try {
     return new URL(value);
@@ -72,6 +77,9 @@ function assertApiRuntimeConfig(): void {
 }
 
 function resolveApiBaseUrl(): string {
+  if (shouldUseSameOriginProxy()) {
+    return window.location.origin;
+  }
   const configured =
     typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL.trim()
       ? import.meta.env.VITE_API_BASE_URL.trim()
