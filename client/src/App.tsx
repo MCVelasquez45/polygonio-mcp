@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
 import { getSharedSocket } from './lib/socket';
@@ -11,16 +11,26 @@ import {
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
+import { NavRail } from './components/layout/NavRail';
+import { MobileTabBar } from './components/layout/MobileTabBar';
+import { MarketContextBar } from './components/layout/MarketContextBar';
+import { CommandPalette } from './components/layout/CommandPalette';
 import { ChartPanel } from './components/trading/ChartPanel';
 import { GreeksPanel } from './components/options/GreeksPanel';
 import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
 import { OptionsChainPanel } from './components/options/OptionsChainPanel';
-import { OptionsScanner } from './components/screener/OptionsScanner';
-import { PortfolioPanel } from './components/portfolio/PortfolioPanel';
-import { CockpitLayout } from './components/cockpit/CockpitLayout';
-import { TradingSessionsPage } from './components/intelligence/TradingSessionsPage';
+import { PriceLadder } from './components/options/PriceLadder';
 import { ChatDock } from './components/chat/ChatDock';
-import { Dashboard } from './components/dashboard';
+
+// Route-level code splitting: the heavy switchable views load on demand, so the
+// initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
+// Intelligence + Operations up front. Named exports are adapted to the
+// default-export shape React.lazy expects.
+const OptionsScanner = lazy(() => import('./components/screener/OptionsScanner').then(m => ({ default: m.OptionsScanner })));
+const PortfolioPanel = lazy(() => import('./components/portfolio/PortfolioPanel').then(m => ({ default: m.PortfolioPanel })));
+const CockpitLayout = lazy(() => import('./components/cockpit/CockpitLayout').then(m => ({ default: m.CockpitLayout })));
+const TradingIntelligencePage = lazy(() => import('./components/intelligence/TradingIntelligencePage').then(m => ({ default: m.TradingIntelligencePage })));
+const SystemOperationsPage = lazy(() => import('./components/operations/SystemOperationsPage').then(m => ({ default: m.SystemOperationsPage })));
 import { analysisApi, chatApi, marketApi } from './api';
 import {
   LEGACY_SUBMISSION_DISABLED_MESSAGE,
@@ -345,7 +355,7 @@ function readStoredSessionMode(key: string, fallback: ChartSessionMode): ChartSe
   }
 }
 
-type View = 'trading' | 'scanner' | 'portfolio' | 'dashboard' | 'cockpit' | 'intelligence';
+type View = 'trading' | 'portfolio' | 'cockpit' | 'intelligence' | 'operations';
 type TimeframeKey = keyof typeof TIMEFRAME_MAP;
 type PreferredSide = 'call' | 'put' | null;
 type LiveTradePrint = TradePrint & { ticker: string };
@@ -421,7 +431,7 @@ function formatRelativeTime(value?: string | null): string | null {
   return `in ${days}d ${remainingHours}h`;
 }
 
-// Root component controlling all trading/scanner/portfolio views. Manages data
+// Root component controlling the workstation views. Manages data
 // fetching, caches, and cross-panel selection state.
 function App() {
   const [view, setView] = useState<View>('trading');
@@ -429,6 +439,20 @@ function App() {
   const normalizedTicker = ticker.trim().toUpperCase() || 'SPY';
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Keyboard-first navigation: ⌘K / Ctrl-K toggles the command palette from
+  // anywhere in the workstation.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+        event.preventDefault();
+        setCommandPaletteOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Option chain state (expirations + selected leg/contract).
   const [chainExpirations, setChainExpirations] = useState<OptionChainExpirationGroup[]>([]);
@@ -2367,12 +2391,12 @@ function App() {
   const sentimentTone = sentimentLabel ? sentimentLabel.toLowerCase() : 'neutral';
   const sentimentStyles =
     sentimentTone === 'bullish'
-      ? 'border-emerald-500/30 text-emerald-200 bg-emerald-500/10'
+      ? 'border-intel-pos/30 text-intel-pos bg-intel-pos/10'
       : sentimentTone === 'bearish'
-        ? 'border-rose-500/30 text-rose-200 bg-rose-500/10'
-        : 'border-gray-800 text-gray-300 bg-gray-900/60';
+        ? 'border-intel-neg/30 text-intel-neg bg-intel-neg/10'
+        : 'border-intel-line text-intel-ink2 bg-intel-panel2';
   const sentimentDot =
-    sentimentTone === 'bullish' ? 'bg-emerald-400' : sentimentTone === 'bearish' ? 'bg-rose-400' : 'bg-gray-500';
+    sentimentTone === 'bullish' ? 'bg-intel-pos' : sentimentTone === 'bearish' ? 'bg-intel-neg' : 'bg-intel-ink3';
   const sentimentText =
     sentimentLabel && sentimentScore != null
       ? `${sentimentLabel} (${sentimentScore.toFixed(2)})`
@@ -2450,30 +2474,28 @@ function App() {
     ]
   );
 
-  // Main trading workspace layout (chart, insights, greeks, and options chain).
+  // Main trading workspace layout (watchlist, search, chart, scanner, chain, contract analysis, order ticket).
   const tradingView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
       <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
         {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
           <div
-            className={`rounded-2xl border px-4 py-3 ${marketSessionMeta.marketClosed
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              : 'border-sky-500/40 bg-sky-500/10 text-sky-100'
+            className={`flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-panel border-l-2 bg-intel-panel px-3 py-1.5 ${marketSessionMeta.marketClosed
+              ? 'border-intel-warn text-intel-warn'
+              : 'border-intel-info text-intel-info'
               }`}
+            title={marketSessionMeta.note ?? undefined}
           >
-            <p className="text-sm font-semibold flex items-center gap-2">
+            <span className="font-mono text-[11px] font-semibold uppercase tracking-label">
               {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
-              {marketSessionMeta.usingLastSession && (
-                <span className="text-[10px] uppercase tracking-[0.3em] opacity-80">Last Session</span>
-              )}
-            </p>
-            <p className="text-xs mt-1">
+              {marketSessionMeta.usingLastSession ? ' · Last Session' : ''}
+            </span>
+            <span className="font-mono text-[11px] text-intel-ink3">
               {marketSessionMeta.marketClosed
                 ? 'Data reflects the last completed trading session.'
-                : 'Prices are updating slower during the extended session.'}{' '}
+                : 'Prices update slower during the extended session.'}{' '}
               {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
-            </p>
-            {marketSessionMeta.note && <p className="text-[11px] mt-1 opacity-80">{marketSessionMeta.note}</p>}
+            </span>
           </div>
         )}
         <ChartPanel
@@ -2501,13 +2523,13 @@ function App() {
           sessionMeta={marketSessionMeta}
           markers={tradeMarkers}
         />
-        <div className="bg-gray-950 border border-gray-900 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="bg-intel-panel rounded-panel p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-intel-divider pb-2">
             <div>
-              <p className="text-xs uppercase tracking-[0.4em] text-gray-500">Latest Insight</p>
-              <p className="text-sm text-gray-400">AI desk notes for {deskInsightSymbol}</p>
+              <p className="font-mono text-[10px] uppercase tracking-label text-intel-ai">Latest Insight · AI</p>
+              <p className="text-sm text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
               {deskInsightUpdatedLabel && (
-                <p className="text-[11px] text-gray-500">Last updated {deskInsightUpdatedLabel}</p>
+                <p className="text-[11px] text-intel-ink3">Last updated {deskInsightUpdatedLabel}</p>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -2515,7 +2537,7 @@ function App() {
                 type="button"
                 onClick={handleDeskInsightRefresh}
                 disabled={deskInsightLoading || !deskInsightsAllowed}
-                className="px-3 py-1 rounded-full border border-gray-800 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white disabled:opacity-60"
+                className="px-3 py-1 rounded-full border border-intel-line text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent disabled:opacity-60"
               >
                 Refresh
               </button>
@@ -2523,7 +2545,7 @@ function App() {
                 type="button"
                 onClick={handleToggleChat}
                 disabled={!chatAllowed}
-                className="px-3 py-1 rounded-full border border-emerald-500/40 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-60"
+                className="px-3 py-1 rounded-full border border-intel-accentLine text-xs text-intel-accent hover:bg-intel-accentSoft disabled:opacity-60"
               >
                 Ask AI
               </button>
@@ -2531,13 +2553,13 @@ function App() {
           </div>
           {deskInsightLoading ? (
             <div className="space-y-2 animate-pulse">
-              <div className="h-3 w-3/4 rounded bg-gray-800" />
-              <div className="h-3 w-1/2 rounded bg-gray-800" />
-              <div className="h-3 w-2/3 rounded bg-gray-800" />
+              <div className="h-3 w-3/4 rounded bg-intel-panel2" />
+              <div className="h-3 w-1/2 rounded bg-intel-panel2" />
+              <div className="h-3 w-2/3 rounded bg-intel-panel2" />
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-gray-200 whitespace-pre-line">
+              <p className="text-sm text-intel-ink whitespace-pre-line">
                 {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
               </p>
               {(sentimentText || fedEvent) && (
@@ -2549,17 +2571,17 @@ function App() {
                     </span>
                   )}
                   {fedEvent && (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-intel-warn/30 bg-intel-warn/10 px-2 py-1 text-intel-warn">
                       Fed: {fedEvent.title ?? fedEvent.name ?? 'Upcoming event'} · {fedEvent.date ?? 'TBD'}
                     </span>
                   )}
                 </div>
               )}
               {deskHighlights.length ? (
-                <ul className="space-y-1 text-xs text-gray-300">
+                <ul className="space-y-1 text-xs text-intel-ink2">
                   {deskHighlights.map((item: string) => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="text-emerald-300">•</span>
+                      <span className="text-intel-accent">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -2582,7 +2604,7 @@ function App() {
           analysisDisabled={!contractAnalysisAllowed}
         />
       </div>
-      <div className="lg:col-span-1 min-h-[26rem] min-w-0">
+      <div className="lg:col-span-1 min-h-[26rem] min-w-0 flex flex-col gap-4">
         <OrderTicketPanel
           contract={contractDetail}
           isLoading={false}
@@ -2593,10 +2615,11 @@ function App() {
           nextOpen={marketSessionMeta?.nextOpen ?? null}
           onOrderSubmitted={handleOrderSubmitted}
         />
+        <PriceLadder symbol={displayTicker} />
       </div>
       <div className="lg:col-span-3 min-w-0">
         {marketSessionMeta?.marketClosed && (
-          <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 text-amber-100 px-4 py-2 text-xs">
+          <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
             Options quotes are paused — spreads reflect the last available snapshot.
           </div>
         )}
@@ -2617,11 +2640,25 @@ function App() {
           analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
         />
       </div>
+      <div className="lg:col-span-3 min-w-0">
+        <OptionsScanner
+          reports={scannerReports}
+          isLoading={scannerLoading}
+          highlights={checklistHighlights}
+          highlightLoading={checklistLoading}
+          onRunScan={handleScannerRefresh}
+          runDisabled={!watchlistSymbols.length || !scannerAllowed}
+          aiDisabled={!scannerAllowed}
+          onTickerSelect={handleWorkspaceTickerSelect}
+        />
+      </div>
     </div>
   );
 
+  const showTradingSidebar = view === 'trading';
+
   return (
-    <div className="h-screen w-full flex flex-col bg-gray-950 text-gray-100">
+    <div className="h-screen w-full overflow-x-hidden flex flex-col bg-intel-bg text-intel-ink">
       <TradingHeader
         selectedTicker={normalizedTicker}
         onTickerSubmit={handleHeaderTickerSubmit}
@@ -2634,217 +2671,219 @@ function App() {
         onToggleSettings={handleToggleSettings}
         isSettingsOpen={settingsOpen}
         chatDisabled={!chatAllowed}
+        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
+      <MarketContextBar />
       {settingsOpen && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4"
           onClick={() => setSettingsOpen(false)}
         >
           <div
-            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-gray-800 bg-gray-950 p-5 space-y-4"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-panel border border-intel-line bg-intel-panel p-5 space-y-4"
             onClick={event => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Settings</p>
-                <h2 className="text-lg font-semibold">AI Request Controls</h2>
+                <p className="text-xs uppercase tracking-[0.3em] text-intel-ink3">Settings</p>
+                <h2 className="text-lg font-semibold text-intel-ink">AI Request Controls</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setSettingsOpen(false)}
-                className="rounded-full border border-gray-800 px-3 py-1 text-xs text-gray-300 hover:border-emerald-500/40 hover:text-white"
+                className="rounded-full border border-intel-line px-3 py-1 text-xs text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent"
               >
                 Close
               </button>
             </div>
-            <div className="space-y-4 text-sm text-gray-300">
-              <label className="flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3">
+            <div className="space-y-4 text-sm text-intel-ink2">
+              <label className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
                 <span>
-                  <span className="block text-sm font-semibold text-white">Enable AI features</span>
-                  <span className="block text-xs text-gray-500">Master switch for all AI-powered tools.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Enable AI features</span>
+                  <span className="block text-xs text-intel-ink3">Master switch for all AI-powered tools.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiEnabled(event.target.checked)}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI chat</span>
-                  <span className="block text-xs text-gray-500">Enable the AI Desk chat dock.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI chat</span>
+                  <span className="block text-xs text-intel-ink3">Enable the AI Desk chat dock.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiChatEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiChatEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Desk insights</span>
-                  <span className="block text-xs text-gray-500">Enable AI summaries, sentiment, and highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Desk insights</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI summaries, sentiment, and highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiDeskInsightsEnabled}
                   onChange={(event: ChangeEvent<HTMLInputElement>) => setAiDeskInsightsEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!deskInsightsAllowed ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Auto desk insights</span>
-                  <span className="block text-xs text-gray-500">Automatically fetch AI insight when you change tickers.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Auto desk insights</span>
+                  <span className="block text-xs text-intel-ink3">Automatically fetch AI insight when you change tickers.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoDeskInsights}
                   onChange={event => setAutoDeskInsights(event.target.checked)}
                   disabled={!deskInsightsAllowed}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI contract selection</span>
-                  <span className="block text-xs text-gray-500">Enable AI-driven contract picks on demand.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI contract selection</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI-driven contract picks on demand.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiContractSelectionEnabled}
                   onChange={event => setAiContractSelectionEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!contractSelectionAllowed ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Auto contract selection</span>
-                  <span className="block text-xs text-gray-500">Let AI pick a contract when the chain loads.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Auto contract selection</span>
+                  <span className="block text-xs text-intel-ink3">Let AI pick a contract when the chain loads.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoContractSelection}
                   onChange={event => setAutoContractSelection(event.target.checked)}
                   disabled={!contractSelectionAllowed}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI contract analysis</span>
-                  <span className="block text-xs text-gray-500">Enable “Analyze with AI” explanations.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI contract analysis</span>
+                  <span className="block text-xs text-intel-ink3">Enable “Analyze with AI” explanations.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiContractAnalysisEnabled}
                   onChange={event => setAiContractAnalysisEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">5-minute chart analysis</span>
-                  <span className="block text-xs text-gray-500">Enable the opening-range analysis panel.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">5-minute chart analysis</span>
+                  <span className="block text-xs text-intel-ink3">Enable the opening-range analysis panel.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiChartAnalysisEnabled}
                   onChange={event => setAiChartAnalysisEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">AI watchlist scanner</span>
-                  <span className="block text-xs text-gray-500">Enable AI scanner reports + checklist highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">AI watchlist scanner</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI scanner reports + checklist highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiScannerEnabled}
                   onChange={event => setAiScannerEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-gray-900 bg-gray-950/60 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-white">Portfolio sentiment</span>
-                  <span className="block text-xs text-gray-500">Enable AI sentiment refresh for positions.</span>
+                  <span className="block text-sm font-semibold text-intel-ink">Portfolio sentiment</span>
+                  <span className="block text-xs text-intel-ink3">Enable AI sentiment refresh for positions.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={aiPortfolioSentimentEnabled}
                   onChange={event => setAiPortfolioSentimentEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+                  className="h-4 w-4 rounded border-intel-line bg-intel-panel2 text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                 />
               </label>
             </div>
           </div>
           <div className="space-y-4">
-            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-gray-400 font-semibold flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <h3 className="px-1 text-xs uppercase tracking-[0.2em] text-intel-ink2 font-semibold flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-intel-warn" />
               Autonomous Operations
             </h3>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="flex items-center justify-between gap-4 rounded-2xl border border-gray-700/40 bg-gray-800/30 px-4 py-3">
+              <div className="flex items-center justify-between gap-4 rounded-panel border border-intel-line bg-intel-panel2 px-4 py-3">
                 <span>
-                  <span className="block text-sm font-semibold text-gray-200">Order execution</span>
-                  <span className="block text-xs text-gray-400">
+                  <span className="block text-sm font-semibold text-intel-ink">Order execution</span>
+                  <span className="block text-xs text-intel-ink2">
                     Research is read-only. Manual orders require explicit confirmation in the ticket.
                     Autonomous execution runs only through the deterministic automation engine.
                   </span>
                 </span>
               </div>
               <label
-                className={`flex items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
+                className={`flex items-center justify-between gap-4 rounded-panel border border-intel-warn/20 bg-intel-warn/5 px-4 py-3 ${!aiEnabled ? 'opacity-50' : ''
                   }`}
               >
                 <span>
-                  <span className="block text-sm font-semibold text-amber-100">Auto scanner loop</span>
-                  <span className="block text-xs text-amber-500/80">Periodically refresh watchlist highlights.</span>
+                  <span className="block text-sm font-semibold text-intel-warn">Auto scanner loop</span>
+                  <span className="block text-xs text-intel-warn/80">Periodically refresh watchlist highlights.</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={autoScannerEnabled}
                   onChange={event => setAutoScannerEnabled(event.target.checked)}
                   disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-amber-700 bg-gray-900 text-amber-500 focus:ring-amber-500"
+                  className="h-4 w-4 rounded border-intel-warn/60 bg-intel-panel2 text-intel-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-warn"
                 />
               </label>
             </div>
@@ -2852,38 +2891,45 @@ function App() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden bg-gray-950 relative">
-        {sidebarOpen && (
+      <div className="flex flex-1 overflow-hidden bg-intel-bg relative">
+        <NavRail
+          currentView={view}
+          onViewChange={setView}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
+        {sidebarOpen && showTradingSidebar && (
           <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-gray-950 border-r border-gray-900 lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-            } ${view === 'dashboard' ? 'lg:w-0 lg:overflow-hidden lg:-translate-x-full' : 'lg:w-72'}`}
+          className={`fixed inset-y-0 left-0 z-30 w-72 transform transition-transform duration-300 bg-intel-bg border-r border-intel-line lg:static lg:z-0 lg:translate-x-0 ${sidebarOpen && showTradingSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+            } ${showTradingSidebar ? 'lg:w-72' : 'lg:w-0 lg:overflow-hidden lg:-translate-x-full'}`}
+          aria-hidden={!showTradingSidebar}
         >
           <div className="h-full overflow-y-auto px-2">{sidebar}</div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto">
-          {view === 'dashboard' ? (
-            <Dashboard
-              socket={socketRef.current}
-              onTickerSelect={handleWorkspaceTickerSelect}
-            />
-          ) : (
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center py-20 text-sm text-intel-ink2">
+                Loading workspace…
+              </div>
+            }
+          >
             <div className="w-full max-w-screen-2xl mx-auto px-4 py-6 flex flex-col gap-4">
               {marketError && (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 text-sm text-red-300 px-4 py-3">
+                <div className="rounded-panel border border-intel-neg/30 bg-intel-neg/10 text-sm text-intel-neg px-4 py-3">
                   {marketError}
                 </div>
               )}
               {aiRequestWarning && (
-                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-100 px-4 py-3 flex items-start justify-between gap-4">
+                <div className="rounded-panel border border-intel-warn/30 bg-intel-warn/10 text-sm text-intel-warn px-4 py-3 flex items-start justify-between gap-4">
                   <span>{aiRequestWarning}</span>
                   <button
                     type="button"
                     onClick={() => setAiRequestWarning(null)}
-                    className="text-xs uppercase tracking-[0.2em] text-amber-200 hover:text-white"
+                    className="text-xs uppercase tracking-[0.2em] text-intel-warn hover:text-intel-ink"
                   >
                     Dismiss
                   </button>
@@ -2891,23 +2937,13 @@ function App() {
               )}
 
               {view === 'trading' && tradingView}
-              {view === 'scanner' && (
-                <div className="pb-24">
-                  <OptionsScanner
-                    reports={scannerReports}
-                    isLoading={scannerLoading}
-                    highlights={checklistHighlights}
-                    highlightLoading={checklistLoading}
-                    onRunScan={handleScannerRefresh}
-                    runDisabled={!watchlistSymbols.length || !scannerAllowed}
-                    aiDisabled={!scannerAllowed}
-                    onTickerSelect={handleWorkspaceTickerSelect}
-                  />
-                </div>
-              )}
               {view === 'portfolio' && (
                 <div className="pb-24">
-                  <PortfolioPanel aiEnabled={aiEnabled} sentimentEnabled={aiPortfolioSentimentEnabled} />
+                  <PortfolioPanel
+                    aiEnabled={aiEnabled}
+                    sentimentEnabled={aiPortfolioSentimentEnabled}
+                    onOpenSystemOperations={() => setView('operations')}
+                  />
                 </div>
               )}
               {view === 'cockpit' && (
@@ -2915,11 +2951,20 @@ function App() {
                   <CockpitLayout />
                 </div>
               )}
-              {view === 'intelligence' && <TradingSessionsPage />}
+              {view === 'intelligence' && <TradingIntelligencePage />}
+              {view === 'operations' && <SystemOperationsPage />}
             </div>
-          )}
+          </Suspense>
         </main>
       </div>
+
+      <MobileTabBar currentView={view} onViewChange={setView} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onViewChange={setView}
+        onTickerSubmit={handleHeaderTickerSubmit}
+      />
 
       <ChatDock
         isOpen={isChatOpen && chatAllowed}

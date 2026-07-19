@@ -612,6 +612,7 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
         <button
           type="button"
           disabled={!canSubmit}
+          aria-label={`Review order — ${side} ${quantity} ${symbolDisplay} · ${orderTypeLabel}`}
           className={`w-full rounded-panel px-3 py-3 font-mono text-[13px] font-semibold uppercase tracking-label text-intel-bg transition-colors disabled:cursor-not-allowed disabled:bg-intel-panel2 disabled:text-intel-ink3 ${
             side === 'buy' ? 'bg-intel-pos hover:brightness-110' : 'bg-intel-neg hover:brightness-110'
           }`}

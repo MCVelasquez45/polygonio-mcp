@@ -547,10 +547,11 @@ export function TradingViewChart({
   theme = 'dark',
   markers,
 }: TradingViewChartProps) {
-  const resolvedHeight = height ?? DEFAULT_HEIGHT;
-
+  // Only pin an explicit pixel height when the caller asks for one. Without it
+  // the container flexes to fill the chart pane (flex-1) and the ResizeObserver
+  // feeds the real size to the canvas — the chart owns its full pane.
   return (
-    <MeasuredContainer className="w-full flex-1 min-h-[320px] min-w-0" minWidth={280} minHeight={240} height={resolvedHeight}>
+    <MeasuredContainer className="w-full h-full flex-1 min-h-[320px] min-w-0" minWidth={280} minHeight={240} height={height}>
       {({ width, height }) => (
         <ChartCanvas
           width={width}

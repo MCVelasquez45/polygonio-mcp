@@ -192,8 +192,8 @@ describe('option contract selection', () => {
     // Click the contract row.
     fireEvent.click(strikeCell);
 
-    // Contract-scoped UI updates: the selected-row detail expands.
-    expect(await screen.findByText('Implied Vol')).toBeInTheDocument();
+    // Contract-scoped UI updates: the selected-row detail expands (IV tile).
+    expect((await screen.findAllByText('IV')).length).toBeGreaterThan(0);
 
     // THE acceptance criterion: the chart is still mounted, never blanked...
     expect(screen.getByTestId('chart-canvas')).toBeInTheDocument();
