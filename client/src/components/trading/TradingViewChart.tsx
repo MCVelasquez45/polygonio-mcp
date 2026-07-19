@@ -22,8 +22,34 @@ import {
 } from 'lightweight-charts';
 import { AggregateBar } from '../../types/market';
 import { MeasuredContainer } from '../shared/MeasuredContainer';
+import {
+  computeBollinger,
+  computeEma,
+  computeMacd,
+  computeRsi,
+  computeSessionVwap,
+} from '../../lib/chartIndicators';
 
 type Theme = 'dark' | 'light';
+
+/** Which studies render. SMA stays the default so existing behavior holds. */
+export type IndicatorToggles = {
+  sma: boolean;
+  ema: boolean;
+  vwap: boolean;
+  bollinger: boolean;
+  rsi: boolean;
+  macd: boolean;
+};
+
+export const DEFAULT_INDICATOR_TOGGLES: IndicatorToggles = {
+  sma: true,
+  ema: false,
+  vwap: false,
+  bollinger: false,
+  rsi: false,
+  macd: false,
+};
 
 export type TradingViewChartProps = {
   bars: AggregateBar[];
@@ -31,6 +57,7 @@ export type TradingViewChartProps = {
   height?: number;
   theme?: Theme;
   markers?: SeriesMarker<UTCTimestamp>[];
+  indicators?: IndicatorToggles;
 };
 
 type ThemePalette = {
@@ -51,7 +78,21 @@ type ChartCanvasProps = {
   timeframe: string;
   theme: Theme;
   markers?: SeriesMarker<UTCTimestamp>[];
+  indicators: IndicatorToggles;
 };
+
+// Study palette — chart-local, mirrors the intel token hues.
+const STUDY_COLORS = {
+  emaFast: '#f5a623',
+  emaSlow: '#a98bf5',
+  vwap: '#34c9df',
+  bollinger: 'rgba(148, 163, 184, 0.55)',
+  rsi: '#6aa5f5',
+  macd: '#34c9df',
+  macdSignal: '#f5a623',
+};
+const EMA_FAST_PERIOD = 9;
+const EMA_SLOW_PERIOD = 21;
 
 const DEFAULT_HEIGHT = 320;
 const SMA_PERIOD = 20;
@@ -272,6 +313,7 @@ function ChartCanvas({
   timeframe,
   theme,
   markers,
+  indicators,
 }: ChartCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -279,10 +321,24 @@ function ChartCanvas({
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const smaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const emaFastSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const emaSlowSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbUpperSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbMiddleSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdSignalSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdHistSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const openingRangeLinesRef = useRef<{ high?: IPriceLine; low?: IPriceLine }>({});
   const prevBarsRef = useRef<AggregateBar[]>([]);
   const lastTimeframeRef = useRef<string>(timeframe);
   const lastThemeRef = useRef<Theme>(theme);
+  // A change to the study set rebuilds the chart (rare, user-driven) so pane
+  // and series lifecycles stay simple and leak-free.
+  const togglesKey = `${indicators.sma}|${indicators.ema}|${indicators.vwap}|${indicators.bollinger}|${indicators.rsi}|${indicators.macd}`;
+  const lastTogglesRef = useRef<string>(togglesKey);
 
   const palette = useMemo(() => (theme === 'light' ? LIGHT_THEME : DARK_THEME), [theme]);
   const normalizedBars = useMemo(() => {
@@ -296,6 +352,30 @@ function ChartCanvas({
   const candleData = useMemo(() => mapBarsToCandles(normalizedBars), [normalizedBars]);
   const volumeData = useMemo(() => mapBarsToVolumes(normalizedBars, palette), [normalizedBars, palette]);
   const smaData = useMemo(() => computeSma(normalizedBars, SMA_PERIOD), [normalizedBars]);
+  const emaFastData = useMemo(
+    () => (indicators.ema ? computeEma(normalizedBars, EMA_FAST_PERIOD) : []),
+    [normalizedBars, indicators.ema]
+  );
+  const emaSlowData = useMemo(
+    () => (indicators.ema ? computeEma(normalizedBars, EMA_SLOW_PERIOD) : []),
+    [normalizedBars, indicators.ema]
+  );
+  const vwapData = useMemo(
+    () => (indicators.vwap ? computeSessionVwap(normalizedBars) : []),
+    [normalizedBars, indicators.vwap]
+  );
+  const bollingerData = useMemo(
+    () => (indicators.bollinger ? computeBollinger(normalizedBars) : null),
+    [normalizedBars, indicators.bollinger]
+  );
+  const rsiData = useMemo(
+    () => (indicators.rsi ? computeRsi(normalizedBars) : []),
+    [normalizedBars, indicators.rsi]
+  );
+  const macdData = useMemo(
+    () => (indicators.macd ? computeMacd(normalizedBars) : null),
+    [normalizedBars, indicators.macd]
+  );
   const openingRange = useMemo(() => computeOpeningRange(normalizedBars, timeframe), [normalizedBars, timeframe]);
   const tooltipClassName =
     theme === 'light'
@@ -306,7 +386,11 @@ function ChartCanvas({
     const container = containerRef.current;
     if (!container || width === 0 || height === 0) return;
 
-    const shouldRebuild = timeframe !== lastTimeframeRef.current || theme !== lastThemeRef.current || !chartRef.current;
+    const shouldRebuild =
+      timeframe !== lastTimeframeRef.current ||
+      theme !== lastThemeRef.current ||
+      togglesKey !== lastTogglesRef.current ||
+      !chartRef.current;
     if (shouldRebuild) {
       if (chartRef.current) {
         chartRef.current.remove();
@@ -372,21 +456,90 @@ function ChartCanvas({
           },
         });
       }
-      const sma = chart.addSeries(LineSeries, {
-        color: palette.sma,
-        lineWidth: 2,
-        priceScaleId: 'right',
-      });
+      const sma = indicators.sma
+        ? chart.addSeries(LineSeries, {
+          color: palette.sma,
+          lineWidth: 2,
+          priceScaleId: 'right',
+        })
+        : null;
+
+      // ── Overlay studies (main pane) ────────────────────────────────────
+      const overlayLine = (color: string, lineWidth: 1 | 2 = 1, dashed = false) =>
+        chart.addSeries(LineSeries, {
+          color,
+          lineWidth,
+          priceScaleId: 'right',
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
+        });
+      emaFastSeriesRef.current = indicators.ema ? overlayLine(STUDY_COLORS.emaFast, 1) : null;
+      emaSlowSeriesRef.current = indicators.ema ? overlayLine(STUDY_COLORS.emaSlow, 1) : null;
+      vwapSeriesRef.current = indicators.vwap ? overlayLine(STUDY_COLORS.vwap, 2) : null;
+      bbUpperSeriesRef.current = indicators.bollinger ? overlayLine(STUDY_COLORS.bollinger, 1) : null;
+      bbMiddleSeriesRef.current = indicators.bollinger ? overlayLine(STUDY_COLORS.bollinger, 1, true) : null;
+      bbLowerSeriesRef.current = indicators.bollinger ? overlayLine(STUDY_COLORS.bollinger, 1) : null;
+
+      // ── Oscillator panes (below price) ─────────────────────────────────
+      let nextPane = 1;
+      if (indicators.rsi) {
+        const rsi = chart.addSeries(
+          LineSeries,
+          { color: STUDY_COLORS.rsi, lineWidth: 1, lastValueVisible: true, priceLineVisible: false },
+          nextPane
+        );
+        rsi.createPriceLine({ price: 70, color: 'rgba(248,113,113,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '' });
+        rsi.createPriceLine({ price: 30, color: 'rgba(53,210,154,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '' });
+        rsiSeriesRef.current = rsi;
+        nextPane += 1;
+      } else {
+        rsiSeriesRef.current = null;
+      }
+      if (indicators.macd) {
+        macdHistSeriesRef.current = chart.addSeries(
+          HistogramSeries,
+          { priceScaleId: 'right', lastValueVisible: false, priceLineVisible: false },
+          nextPane
+        );
+        macdSeriesRef.current = chart.addSeries(
+          LineSeries,
+          { color: STUDY_COLORS.macd, lineWidth: 1, lastValueVisible: false, priceLineVisible: false },
+          nextPane
+        );
+        macdSignalSeriesRef.current = chart.addSeries(
+          LineSeries,
+          { color: STUDY_COLORS.macdSignal, lineWidth: 1, lastValueVisible: false, priceLineVisible: false },
+          nextPane
+        );
+        nextPane += 1;
+      } else {
+        macdSeriesRef.current = null;
+        macdSignalSeriesRef.current = null;
+        macdHistSeriesRef.current = null;
+      }
+      // Keep oscillator panes compact relative to the price pane. The panes
+      // API is v5; guard so an older build simply keeps default sizing.
+      try {
+        const panes = (chart as unknown as { panes?: () => Array<{ setHeight?: (h: number) => void }> }).panes?.() ?? [];
+        for (let i = 1; i < panes.length; i += 1) {
+          panes[i]?.setHeight?.(Math.max(72, Math.round(height * 0.16)));
+        }
+      } catch {
+        // pane sizing is cosmetic — never fail the chart for it
+      }
 
       candleSeriesRef.current = candles;
       volumeSeriesRef.current = volume;
       smaSeriesRef.current = sma;
+      lastTogglesRef.current = togglesKey;
       openingRangeLinesRef.current = {};
       prevBarsRef.current = [];
     } else {
       chartRef.current?.resize(width, height);
     }
-  }, [height, palette, theme, timeframe, width]);
+  }, [height, palette, theme, timeframe, width, togglesKey, indicators]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -465,12 +618,12 @@ function ChartCanvas({
     const candles = candleSeriesRef.current;
     const sma = smaSeriesRef.current;
     const volume = volumeSeriesRef.current;
-    if (!candles || !sma) return;
+    if (!candles) return;
 
     if (normalizedBars.length === 0) {
       candles.setData([]);
       if (volume) volume.setData([]);
-      sma.setData([]);
+      sma?.setData([]);
       prevBarsRef.current = [];
       return;
     }
@@ -485,14 +638,14 @@ function ChartCanvas({
 
     if (isLastUpdateOnly) {
       const lastCandle = candleData[candleData.length - 1];
-      const lastSma = smaData[smaData.length - 1];
-      if (lastCandle && lastSma) {
+      if (lastCandle) {
         candles.update(lastCandle);
         if (volume) {
           const lastVolume = volumeData[volumeData.length - 1];
           if (lastVolume) volume.update(lastVolume);
         }
-        sma.update(lastSma);
+        const lastSma = smaData[smaData.length - 1];
+        if (sma && lastSma) sma.update(lastSma);
       }
       if (chartRef.current) {
         applyVisibleRange(chartRef.current, normalizedBars.length, timeframe, width);
@@ -500,14 +653,35 @@ function ChartCanvas({
     } else {
       candles.setData(candleData);
       if (volume) volume.setData(volumeData);
-      sma.setData(smaData);
+      sma?.setData(smaData);
       if (chartRef.current) {
         applyVisibleRange(chartRef.current, normalizedBars.length, timeframe, width);
       }
     }
 
     prevBarsRef.current = normalizedBars;
-  }, [normalizedBars, candleData, smaData, volumeData, timeframe, width]);
+    // togglesKey: a study toggle rebuilds the chart with empty series while
+    // none of the data inputs change — this effect must re-run to refill them.
+  }, [normalizedBars, candleData, smaData, volumeData, timeframe, width, togglesKey]);
+
+  // Study series: recomputed arrays are small (≤ a few hundred points), so a
+  // plain setData on every bars/toggle change is both simple and fast enough.
+  useEffect(() => {
+    emaFastSeriesRef.current?.setData(emaFastData);
+    emaSlowSeriesRef.current?.setData(emaSlowData);
+    vwapSeriesRef.current?.setData(vwapData);
+    if (bollingerData) {
+      bbUpperSeriesRef.current?.setData(bollingerData.upper);
+      bbMiddleSeriesRef.current?.setData(bollingerData.middle);
+      bbLowerSeriesRef.current?.setData(bollingerData.lower);
+    }
+    rsiSeriesRef.current?.setData(rsiData);
+    if (macdData) {
+      macdHistSeriesRef.current?.setData(macdData.histogram);
+      macdSeriesRef.current?.setData(macdData.macd);
+      macdSignalSeriesRef.current?.setData(macdData.signal);
+    }
+  }, [emaFastData, emaSlowData, vwapData, bollingerData, rsiData, macdData, togglesKey]);
 
   useEffect(
     () => () => {
@@ -518,6 +692,16 @@ function ChartCanvas({
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       smaSeriesRef.current = null;
+      emaFastSeriesRef.current = null;
+      emaSlowSeriesRef.current = null;
+      vwapSeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbMiddleSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
+      rsiSeriesRef.current = null;
+      macdSeriesRef.current = null;
+      macdSignalSeriesRef.current = null;
+      macdHistSeriesRef.current = null;
     },
     [],
   );
@@ -546,6 +730,7 @@ export function TradingViewChart({
   height,
   theme = 'dark',
   markers,
+  indicators = DEFAULT_INDICATOR_TOGGLES,
 }: TradingViewChartProps) {
   // Only pin an explicit pixel height when the caller asks for one. Without it
   // the container flexes to fill the chart pane (flex-1) and the ResizeObserver
@@ -560,6 +745,7 @@ export function TradingViewChart({
           timeframe={timeframe}
           theme={theme}
           markers={markers}
+          indicators={indicators}
         />
       )}
     </MeasuredContainer>

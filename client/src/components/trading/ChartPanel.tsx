@@ -1,8 +1,35 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { AggregateBar, IndicatorBundle } from '../../types/market';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { Lock, TrendingDown, TrendingUp } from 'lucide-react';
-import { TradingViewChart } from './TradingViewChart';
+import {
+  DEFAULT_INDICATOR_TOGGLES,
+  TradingViewChart,
+  type IndicatorToggles,
+} from './TradingViewChart';
+
+const INDICATOR_STORAGE_KEY = 'market-copilot.chartIndicators';
+
+const INDICATOR_CHIPS: Array<{ key: keyof IndicatorToggles; label: string; title: string; intradayOnly?: boolean }> = [
+  { key: 'sma', label: 'SMA', title: 'Simple moving average (20)' },
+  { key: 'ema', label: 'EMA', title: 'Exponential moving averages (9 / 21)' },
+  { key: 'vwap', label: 'VWAP', title: 'Session volume-weighted average price (intraday)', intradayOnly: true },
+  { key: 'bollinger', label: 'BB', title: 'Bollinger bands (20, 2σ)' },
+  { key: 'rsi', label: 'RSI', title: 'Relative strength index (14) — separate pane' },
+  { key: 'macd', label: 'MACD', title: 'MACD (12/26/9) — separate pane' },
+];
+
+function readStoredToggles(): IndicatorToggles {
+  if (typeof window === 'undefined') return DEFAULT_INDICATOR_TOGGLES;
+  try {
+    const raw = window.localStorage.getItem(INDICATOR_STORAGE_KEY);
+    if (!raw) return DEFAULT_INDICATOR_TOGGLES;
+    const parsed = JSON.parse(raw) as Partial<IndicatorToggles>;
+    return { ...DEFAULT_INDICATOR_TOGGLES, ...parsed };
+  } catch {
+    return DEFAULT_INDICATOR_TOGGLES;
+  }
+}
 
 type TimeframeOption = {
   label: string;
@@ -150,6 +177,21 @@ export const ChartPanel = memo(function ChartPanel({
   const lastBar = data.at(-1) ?? null;
   const changeUp = displayChange != null && displayChange >= 0;
 
+  // Study toggles — persisted so the workspace comes back as it was left.
+  const [studies, setStudies] = useState<IndicatorToggles>(() => readStoredToggles());
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(studies));
+    } catch {
+      // persistence is best-effort
+    }
+  }, [studies]);
+  const isIntradayTimeframe = timeframe.endsWith('/minute') || timeframe.endsWith('/hour');
+  // VWAP resets per session; on daily bars it isn't meaningful, so drop it
+  // from the render (the toggle stays saved for when the user returns intraday).
+  const effectiveStudies: IndicatorToggles = isIntradayTimeframe ? studies : { ...studies, vwap: false };
+
   return (
     <section className="flex min-h-[32rem] min-w-0 flex-col overflow-hidden rounded-panel border border-intel-line bg-intel-panel lg:min-h-[36rem]">
       {/* ── Instrument header: readout left, controls right ─────────────── */}
@@ -234,6 +276,27 @@ export const ChartPanel = memo(function ChartPanel({
               </button>
             ))}
           </div>
+          {/* Studies — overlay + oscillator toggles */}
+          <div className="flex overflow-hidden rounded-panel border border-intel-line font-mono text-[10px] font-semibold">
+            {INDICATOR_CHIPS.map(chip => {
+              const active = effectiveStudies[chip.key];
+              const unavailable = chip.intradayOnly && !isIntradayTimeframe;
+              return (
+                <button
+                  key={chip.key}
+                  type="button"
+                  title={unavailable ? `${chip.title} — intraday timeframes only` : chip.title}
+                  disabled={unavailable}
+                  onClick={() => setStudies(prev => ({ ...prev, [chip.key]: !prev[chip.key] }))}
+                  className={`border-l border-intel-line px-2 py-1 first:border-l-0 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    active ? 'bg-intel-info/20 text-intel-info' : 'text-intel-ink3 hover:bg-intel-panel2'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </header>
 
@@ -243,7 +306,13 @@ export const ChartPanel = memo(function ChartPanel({
             {isLoading ? 'Loading bars…' : displayEmptyMessage}
           </div>
         ) : (
-          <TradingViewChart key={chartInstanceKey} bars={data} timeframe={timeframe} markers={markers} />
+          <TradingViewChart
+            key={chartInstanceKey}
+            bars={data}
+            timeframe={timeframe}
+            markers={markers}
+            indicators={effectiveStudies}
+          />
         )}
         {isLoading && data.length > 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-start justify-end p-3">

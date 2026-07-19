@@ -54,6 +54,7 @@ vi.mock('../lib/socket', () => ({
 // know whether the chart is mounted (vs the "Loading bars…" placeholder).
 vi.mock('../components/trading/TradingViewChart', () => ({
   TradingViewChart: () => <div data-testid="chart-canvas" />,
+  DEFAULT_INDICATOR_TOGGLES: { sma: true, ema: false, vwap: false, bollinger: false, rsi: false, macd: false },
 }));
 
 const CALL_TICKER = 'O:SPY260821C00450000';

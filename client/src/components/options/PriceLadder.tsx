@@ -1,29 +1,40 @@
 import { memo, useMemo } from 'react';
-import { useLiveQuote } from '../../lib/liveMarketStore';
+import { useLiveQuote, useLiveTrade, useLiveTradeHistory } from '../../lib/liveMarketStore';
 import { LiveState } from '../shared/terminal';
 
-// Institutional price ladder (DOM) — the "Option Matrix" execution surface.
-// A centered price spine with resting size on the flanks, the inside market
-// highlighted, and the mark called out. Built strictly from the real NBBO the
-// live store already carries: the inside bid/ask and their sizes. Deeper book
-// levels are shown as empty rungs rather than invented — a ladder must never
-// paint depth it doesn't have.
+// Institutional price ladder (DOM) — the execution surface. A centered price
+// spine with resting size on the flanks, the inside market highlighted, the
+// last trade lit on the spine, and a short time & sales tape below. Built
+// strictly from the real NBBO + prints the live store already carries: deeper
+// book levels are shown as empty rungs rather than invented — a ladder must
+// never paint depth it doesn't have.
 
 const TICK = 0.01;
 const RUNGS_EACH_SIDE = 7;
+const TAPE_ROWS = 8;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-type Rung = { price: number; bidSize: number | null; askSize: number | null; isBid: boolean; isAsk: boolean };
+type Rung = {
+  price: number;
+  bidSize: number | null;
+  askSize: number | null;
+  isBid: boolean;
+  isAsk: boolean;
+  isLast: boolean;
+};
 
 export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: string }) {
   const quote = useLiveQuote(symbol);
+  const lastTrade = useLiveTrade(symbol);
+  const tape = useLiveTradeHistory(symbol);
   const bid = quote?.bidPrice ?? null;
   const ask = quote?.askPrice ?? null;
   const mid =
     quote?.midpoint ?? (bid != null && ask != null ? round2((bid + ask) / 2) : null);
+  const lastPrice = lastTrade?.price ?? null;
 
   const rungs = useMemo<Rung[]>(() => {
     if (bid == null || ask == null) return [];
@@ -34,16 +45,20 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
       const price = round2(top - i * TICK);
       const isBid = Math.abs(price - bid) < TICK / 2;
       const isAsk = Math.abs(price - ask) < TICK / 2;
+      const isLast = lastPrice != null && Math.abs(price - lastPrice) < TICK / 2;
       rows.push({
         price,
         bidSize: isBid ? quote?.bidSize ?? null : null,
         askSize: isAsk ? quote?.askSize ?? null : null,
         isBid,
         isAsk,
+        isLast,
       });
     }
     return rows;
-  }, [bid, ask, quote?.bidSize, quote?.askSize]);
+  }, [bid, ask, quote?.bidSize, quote?.askSize, lastPrice]);
+
+  const tapeRows = useMemo(() => tape.slice(-TAPE_ROWS).reverse(), [tape]);
 
   return (
     <section className="flex h-full flex-col rounded-panel bg-intel-panel">
@@ -88,17 +103,20 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
                 )}
               </span>
 
-              {/* Price spine — mark highlighted, bid/ask tinted by side. */}
+              {/* Price spine — center band; last trade lit; bid/ask tinted. */}
               <span
-                className={`text-center font-semibold ${
-                  rung.isBid
-                    ? 'text-intel-info'
-                    : rung.isAsk
-                      ? 'text-intel-neg'
-                      : mid != null && Math.abs(rung.price - mid) < TICK / 2
-                        ? 'rounded bg-intel-accentSoft text-intel-accent'
-                        : 'text-intel-ink2'
+                className={`rounded-sm py-[1px] text-center font-semibold ${
+                  rung.isLast
+                    ? 'bg-intel-info text-intel-bg'
+                    : rung.isBid
+                      ? 'bg-intel-panel2 text-intel-info'
+                      : rung.isAsk
+                        ? 'bg-intel-panel2 text-intel-neg'
+                        : mid != null && Math.abs(rung.price - mid) < TICK / 2
+                          ? 'bg-intel-accentSoft text-intel-accent'
+                          : 'bg-intel-panel2/50 text-intel-ink2'
                 }`}
+                title={rung.isLast && lastTrade?.size != null ? `Last trade ×${lastTrade.size}` : undefined}
               >
                 {rung.price.toFixed(2)}
               </span>
@@ -122,14 +140,50 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
       <div className="flex items-center justify-between border-t border-intel-divider px-4 py-2 font-mono text-[11px] tabular-nums">
         <span className="text-intel-info">
           BID <span className="font-semibold text-intel-ink">{bid != null ? bid.toFixed(2) : '—'}</span>
+          {quote?.bidSize != null ? <span className="text-intel-ink3"> ×{quote.bidSize}</span> : null}
         </span>
         <span className="text-intel-ink3">
           SPR <span className="text-intel-ink2">{bid != null && ask != null ? (ask - bid).toFixed(2) : '—'}</span>
         </span>
         <span className="text-intel-neg">
+          {quote?.askSize != null ? <span className="text-intel-ink3">×{quote.askSize} </span> : null}
           <span className="font-semibold text-intel-ink">{ask != null ? ask.toFixed(2) : '—'}</span> ASK
         </span>
       </div>
+
+      {/* Time & sales — the most recent real prints, newest first. Direction
+          is judged against the concurrent mid: at/above ask lifts (green),
+          at/below bid hits (red), between prints neutral. */}
+      {tapeRows.length > 0 && (
+        <div className="border-t border-intel-divider px-4 py-2">
+          <div className="mb-1 font-mono text-[9.5px] uppercase tracking-label text-intel-ink3">Time &amp; Sales</div>
+          <div className="flex flex-col gap-[2px]">
+            {tapeRows.map((print, idx) => {
+              const tone =
+                mid == null || print.price == null
+                  ? 'text-intel-ink2'
+                  : print.price > mid
+                    ? 'text-intel-pos'
+                    : print.price < mid
+                      ? 'text-intel-neg'
+                      : 'text-intel-ink2';
+              const ts = print.timestamp != null ? new Date(print.timestamp) : null;
+              return (
+                <div
+                  key={`${print.timestamp ?? idx}-${idx}`}
+                  className="grid grid-cols-[56px_1fr_auto] gap-2 font-mono text-[10.5px] tabular-nums"
+                >
+                  <span className="text-intel-ink3">
+                    {ts ? ts.toLocaleTimeString(undefined, { hour12: false }) : '—'}
+                  </span>
+                  <span className={`font-semibold ${tone}`}>{print.price != null ? print.price.toFixed(2) : '—'}</span>
+                  <span className="text-intel-ink2">×{print.size ?? '—'}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </section>
   );
 });
