@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 // Central application entrypoint wiring platform feature routers + shared middleware.
-import { analyzeRouter } from './features/assistant';
+import { agentProxyRouter, analyzeRouter } from './features/assistant';
 import { chatRouter, conversationsRouter } from './features/conversations';
 import { marketRouter } from './features/market';
 import { brokerRouter, manualTradingRouter } from './features/broker';
@@ -74,7 +74,7 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 
 type RequestWithContext = express.Request & { requestId?: string };
 
@@ -109,6 +109,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/analyze', analyzeRouter);
+app.use('/api/agent', agentProxyRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/market', marketRouter);

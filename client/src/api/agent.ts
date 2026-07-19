@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { getApiBaseUrl } from './http';
+import { getApiBaseUrl, http } from './http';
 
 export type AgentResponse = {
   query: string;
@@ -7,17 +6,14 @@ export type AgentResponse = {
   session_name?: string | null;
 };
 
-const AGENT_BASE_URL =
-  (typeof import.meta.env.VITE_AGENT_URL === 'string' && import.meta.env.VITE_AGENT_URL.trim()) ||
-  `${getApiBaseUrl().replace(/\/+$/, '')}`.replace(/:4000$/, ':5001');
+const AGENT_API_BASE_PATH = '/api/agent';
 
 export function getAgentBaseUrl(): string {
-  return AGENT_BASE_URL;
+  return `${getApiBaseUrl().replace(/\/+$/, '')}/api`;
 }
 
 export async function runAgentScan(query: string): Promise<AgentResponse> {
-  // Direct call to Agent API (CORS enabled)
-  const response = await axios.post<AgentResponse>(`${AGENT_BASE_URL}/analyze`, {
+  const response = await http.post<AgentResponse>('/api/analyze', {
     query,
     context: { source: 'web-ui' }
   });
@@ -25,12 +21,12 @@ export async function runAgentScan(query: string): Promise<AgentResponse> {
 }
 
 export async function startAgentExtraction(payload: { transcript: string; socket_id?: string | null }) {
-  const response = await axios.post(`${AGENT_BASE_URL}/extract-strategy-async`, payload);
+  const response = await http.post(`${AGENT_API_BASE_PATH}/extract-strategy-async`, payload);
   return response.data;
 }
 
 export async function extractStrategy(payload: { transcript: string; socket_id?: string | null }) {
-  const response = await axios.post(`${AGENT_BASE_URL}/extract-strategy`, payload);
+  const response = await http.post(`${AGENT_API_BASE_PATH}/extract-strategy`, payload);
   return response.data;
 }
 
@@ -66,7 +62,7 @@ export async function transcribeAudioUpload(file: File, language = 'en'): Promis
     mime_type: file.type || 'application/octet-stream',
     language,
   };
-  const response = await axios.post<{ transcript: string }>(`${AGENT_BASE_URL}/transcribe-audio`, payload);
+  const response = await http.post<{ transcript: string }>(`${AGENT_API_BASE_PATH}/transcribe-audio`, payload);
   return response.data;
 }
 
@@ -116,7 +112,7 @@ export type SiftTemplateInfo = {
 
 /** Stateless extraction with custom fields. */
 export async function siftExtract(payload: SiftExtractRequest): Promise<SiftExtractResponse> {
-  const response = await axios.post<SiftExtractResponse>(`${AGENT_BASE_URL}/sift/extract`, payload);
+  const response = await http.post<SiftExtractResponse>(`${AGENT_API_BASE_PATH}/sift/extract`, payload);
   return response.data;
 }
 
@@ -124,8 +120,8 @@ export async function siftExtract(payload: SiftExtractRequest): Promise<SiftExtr
 export async function siftExtractTemplate(
   payload: SiftTemplateExtractRequest
 ): Promise<SiftTemplateExtractResponse> {
-  const response = await axios.post<SiftTemplateExtractResponse>(
-    `${AGENT_BASE_URL}/sift/extract-template`,
+  const response = await http.post<SiftTemplateExtractResponse>(
+    `${AGENT_API_BASE_PATH}/sift/extract-template`,
     payload
   );
   return response.data;
@@ -133,8 +129,8 @@ export async function siftExtractTemplate(
 
 /** List all available SIFT extraction templates. */
 export async function siftListTemplates(): Promise<Record<string, SiftTemplateInfo>> {
-  const response = await axios.get<{ templates: Record<string, SiftTemplateInfo> }>(
-    `${AGENT_BASE_URL}/sift/templates`
+  const response = await http.get<{ templates: Record<string, SiftTemplateInfo> }>(
+    `${AGENT_API_BASE_PATH}/sift/templates`
   );
   return response.data.templates;
 }
@@ -143,8 +139,8 @@ export async function siftListTemplates(): Promise<Record<string, SiftTemplateIn
 export async function siftListProviders(): Promise<
   Array<{ name: string; available: boolean; model: string | null }>
 > {
-  const response = await axios.get<{
+  const response = await http.get<{
     providers: Array<{ name: string; available: boolean; model: string | null }>;
-  }>(`${AGENT_BASE_URL}/sift/providers`);
+  }>(`${AGENT_API_BASE_PATH}/sift/providers`);
   return response.data.providers;
 }

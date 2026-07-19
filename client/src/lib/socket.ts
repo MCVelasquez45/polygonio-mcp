@@ -12,10 +12,18 @@ let sharedSocket: Socket | null = null;
 let lastConnectErrorLogAt = 0;
 const CONNECT_ERROR_LOG_INTERVAL_MS = 15_000;
 
+function resolveSocketBaseUrl(): string {
+  const configured =
+    typeof import.meta.env.VITE_SOCKET_URL === 'string' && import.meta.env.VITE_SOCKET_URL.trim()
+      ? import.meta.env.VITE_SOCKET_URL.trim()
+      : '';
+  return (configured || getApiBaseUrl()).replace(/\/+$/, '');
+}
+
 export function getSharedSocket(): Socket {
   if (sharedSocket) return sharedSocket;
 
-  const baseUrl = getApiBaseUrl();
+  const baseUrl = resolveSocketBaseUrl();
   const parsed = typeof window !== 'undefined' ? new URL(baseUrl, window.location.href) : null;
   const isMixedContent =
     typeof window !== 'undefined' &&
