@@ -5,6 +5,8 @@ import { logAiAudit } from '../../shared/ai/audit';
 
 // Base URL for the FastAPI agent (defaults to local dev port 5001).
 const PYTHON_URL = process.env.AGENT_API_URL || process.env.FASTAPI_URL || process.env.PYTHON_URL || 'http://localhost:5001';
+const AGENT_CHAT_TIMEOUT_MS = Math.max(30_000, Number(process.env.AGENT_CHAT_TIMEOUT_MS ?? 180_000));
+const AGENT_CHAT_RETRIES = Math.max(0, Number(process.env.AGENT_CHAT_RETRIES ?? 1));
 
 export type AiRequestMeta = {
   userKey?: string;
@@ -124,9 +126,10 @@ export async function agentChat(
   meta?: AiRequestMeta
 ) {
   const endpoint = `${PYTHON_URL}/v1/chat/completions`;
-  console.log('[SERVER] agentClient.chat -> POST', endpoint, { message, sessionName, context });
+  console.log('[SERVER] agentClient.chat -> POST', endpoint, { sessionName, hasContext: Boolean(context) });
   return runAiRequest(message, meta, async () => {
-    try {
+    let lastError: any = null;
+    for (let attempt = 0; attempt <= AGENT_CHAT_RETRIES; attempt += 1) {
       const payload: Record<string, unknown> = {
         model: 'gpt-5',
         messages: [{ role: 'user', content: message }],
@@ -136,13 +139,28 @@ export async function agentChat(
         payload.session_name = sessionName;
       }
 
-      const { data } = await axios.post(endpoint, payload);
-      const reply = data?.choices?.[0]?.message?.content ?? '(no reply)';
-      console.log('[SERVER] agentClient.chat <- response', reply);
-      return { reply, sessionName, raw: data };
-    } catch (error) {
-      console.error('[SERVER] agentClient.chat error', error);
-      throw error;
+      try {
+        const { data } = await axios.post(endpoint, payload, { timeout: AGENT_CHAT_TIMEOUT_MS });
+        const reply = data?.choices?.[0]?.message?.content ?? '(no reply)';
+        console.log('[SERVER] agentClient.chat <- response', { sessionName, replyChars: reply.length });
+        return { reply, sessionName, raw: data };
+      } catch (error: any) {
+        lastError = error;
+        const status = error?.response?.status;
+        const retryable = status === 502 || status === 503 || status === 504 || error?.code === 'ECONNABORTED';
+        console.error('[SERVER] agentClient.chat error', {
+          status,
+          code: error?.code,
+          attempt: attempt + 1,
+          retryable,
+          message: error?.response?.data?.error ?? error?.message,
+        });
+        if (!retryable || attempt >= AGENT_CHAT_RETRIES) {
+          throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2_000));
+      }
     }
+    throw lastError;
   });
 }

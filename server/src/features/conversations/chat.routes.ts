@@ -8,6 +8,54 @@ import { appendMessages } from './services/conversationStore';
 
 const router = Router();
 
+function normalizeChatSymbol(context: any): string | null {
+  const candidates = [
+    context?.selectedTicker,
+    context?.symbol,
+    context?.ticker,
+    context?.chart?.symbol,
+    context?.option?.underlying,
+    context?.option?.ticker,
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) {
+      const normalized = value.trim().toUpperCase();
+      return normalized.startsWith('O:') && typeof context?.option?.underlying === 'string'
+        ? context.option.underlying.trim().toUpperCase()
+        : normalized;
+    }
+  }
+  return null;
+}
+
+function describeChatUpstreamError(error: any): { status: number; error: string; upstreamStatus: number | null } {
+  const status = Number(error?.response?.status) || 500;
+  const upstreamStatus = Number(error?.response?.status) || null;
+  const responseData = error?.response?.data;
+  const upstreamMessage =
+    typeof responseData?.error === 'string'
+      ? responseData.error
+      : typeof responseData?.detail === 'string'
+      ? responseData.detail
+      : typeof responseData === 'string'
+      ? responseData.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+      : null;
+
+  if (status === 502 || status === 503 || status === 504 || error?.code === 'ECONNABORTED') {
+    return {
+      status,
+      upstreamStatus,
+      error: upstreamMessage || 'AI agent upstream timed out or returned a temporary gateway error. Please retry.',
+    };
+  }
+
+  return {
+    status,
+    upstreamStatus,
+    error: upstreamMessage || error?.message || 'Unknown chat service error',
+  };
+}
+
 router.post('/', async (req, res, next) => {
   try {
     const { message, sessionId, context } = req.body;
@@ -19,14 +67,16 @@ router.post('/', async (req, res, next) => {
     const resolvedSessionId =
       typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : randomUUID();
     const userKey = resolveAiUserKey(req);
+    const symbol = normalizeChatSymbol(context);
+    const agentSessionName = [userKey, symbol, resolvedSessionId].filter(Boolean).join(':');
 
     console.log('[SERVER] /api/chat forwarding payload:', {
-      message,
       sessionId: resolvedSessionId,
+      symbol,
       hasContext: Boolean(context),
     });
 
-    const data = await agentChat(message, resolvedSessionId, context, {
+    const data = await agentChat(message, agentSessionName, context, {
       userKey,
       feature: 'assistant.chat'
     });
@@ -36,6 +86,7 @@ router.post('/', async (req, res, next) => {
       resolvedSessionId,
       message,
       data.reply ?? '(no reply)',
+      { userKey, symbol },
     );
 
     res.json({
@@ -48,13 +99,17 @@ router.post('/', async (req, res, next) => {
       },
     });
   } catch (error: any) {
-    const errorDetail =
-      error?.response?.data?.error ||
-      error?.response?.data?.detail ||
-      error?.message ||
-      'Unknown error';
-    console.error('[SERVER] /api/chat error:', errorDetail);
-    res.status(error?.response?.status || 500).json({ error: errorDetail });
+    const detail = describeChatUpstreamError(error);
+    console.error('[SERVER] /api/chat error:', {
+      status: detail.status,
+      upstreamStatus: detail.upstreamStatus,
+      code: error?.code,
+      error: detail.error,
+    });
+    res.status(detail.status).json({
+      error: detail.error,
+      upstreamStatus: detail.upstreamStatus,
+    });
   }
 });
 

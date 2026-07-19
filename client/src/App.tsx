@@ -1161,14 +1161,26 @@ function App() {
   }, [availableExpirations, customExpirations]);
 
   // Load the user's AI conversations (remote first, falling back to local storage).
-  const hydrateConversations = useCallback(async () => {
+  const hydrateConversations = useCallback(async (symbol = displayTicker) => {
+    const normalizedSymbol = symbol.trim().toUpperCase() || 'SPY';
+    setConversations([]);
+    setActiveConversationId(null);
+    setLatestInsight('');
+    setTranscripts(() => {
+      const next: Record<string, ChatMessage[]> = {};
+      transcriptsRef.current = next;
+      return next;
+    });
     try {
-      const payloads = await chatApi.listConversations();
-      const list: ConversationMeta[] = payloads.map(normalizeConversation);
+      const payloads = await chatApi.listConversations(normalizedSymbol);
+      const list: ConversationMeta[] = payloads
+        .map(payload => normalizeConversation(payload))
+        .filter(convo => convo.symbol === normalizedSymbol);
       if (list.length === 0) {
-        const seeded = createConversation();
+        const seeded = createConversation(undefined, undefined, normalizedSymbol);
         setConversations([seeded]);
         setActiveConversationId(seeded.id);
+        setLatestInsight('');
         setTranscripts(() => {
           const next = { [seeded.sessionId]: [DEFAULT_ASSISTANT_MESSAGE] };
           transcriptsRef.current = next;
@@ -1176,34 +1188,35 @@ function App() {
         });
         return;
       }
-      setTranscripts(() => {
-        const next: Record<string, ChatMessage[]> = {};
-        transcriptsRef.current = next;
-        return next;
-      });
       setConversations(list);
       setActiveConversationId(list[0].id);
+      setLatestInsight(list[0].preview);
       await ensureTranscriptLoaded(list[0].sessionId);
     } catch (error) {
       console.warn('Failed to fetch conversations from API, using local cache if available.', error);
+      let loadedFromCache = false;
       if (typeof window !== 'undefined') {
-        const cached = window.localStorage.getItem(STORAGE_KEY);
+        const cached = window.localStorage.getItem(conversationStorageKey(normalizedSymbol));
         if (cached) {
           try {
             const parsed: ConversationMeta[] = JSON.parse(cached);
-            if (parsed.length) {
-              setConversations(parsed);
-              setActiveConversationId(parsed[0].id);
+            const scoped = parsed.filter(convo => convo.symbol === normalizedSymbol);
+            if (scoped.length) {
+              setConversations(scoped);
+              setActiveConversationId(scoped[0].id);
+              setLatestInsight(scoped[0].preview);
+              loadedFromCache = true;
             }
           } catch (parseError) {
             console.warn('Failed to parse cached conversations', parseError);
           }
         }
       }
-      if (!activeConversationIdRef.current) {
-        const seeded = createConversation();
+      if (!loadedFromCache) {
+        const seeded = createConversation(undefined, undefined, normalizedSymbol);
         setConversations([seeded]);
         setActiveConversationId(seeded.id);
+        setLatestInsight('');
         setTranscripts(() => {
           const next = { [seeded.sessionId]: [DEFAULT_ASSISTANT_MESSAGE] };
           transcriptsRef.current = next;
@@ -1211,12 +1224,12 @@ function App() {
         });
       }
     }
-  }, [ensureTranscriptLoaded]);
+  }, [displayTicker, ensureTranscriptLoaded]);
 
   // Kick off initial conversation fetch on mount.
   useEffect(() => {
-    hydrateConversations();
-  }, [hydrateConversations]);
+    hydrateConversations(displayTicker);
+  }, [hydrateConversations, displayTicker]);
 
   // Restore any persisted ticker/contract selection the user had previously saved.
   useEffect(() => {
@@ -1263,11 +1276,11 @@ function App() {
   useEffect(() => {
     if (!conversations.length || typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+      window.localStorage.setItem(conversationStorageKey(displayTicker), JSON.stringify(conversations));
     } catch (error) {
       console.warn('Failed to persist conversations to local storage', error);
     }
-  }, [conversations]);
+  }, [conversations, displayTicker]);
 
   useEffect(() => {
     if (!normalizedTicker) {
@@ -1964,7 +1977,7 @@ function App() {
 
   // Spawn a brand new chat session in the dock and make it active.
   function startNewConversation() {
-    const convo = createConversation();
+    const convo = createConversation(undefined, undefined, displayTicker);
     setConversations((prev: ConversationMeta[]) => [convo, ...prev]);
     setTranscripts((prev: Record<string, ChatMessage[]>) => {
       const next = {
@@ -2002,7 +2015,7 @@ function App() {
 
   // When the assistant replies, refresh metadata + previews so the list stays sorted.
   function handleConversationUpdate(payload: ConversationPayload) {
-    const normalized = normalizeConversation(payload);
+    const normalized = normalizeConversation(payload, displayTicker);
     setConversations((prev: ConversationMeta[]) => {
       const filtered = prev.filter((convo: ConversationMeta) => convo.sessionId !== normalized.sessionId);
       return [normalized, ...filtered];
@@ -2994,13 +3007,16 @@ export default App;
 // Initialize a new blank conversation entry the dock can display immediately.
 function createConversation(
   title = 'New chat',
-  preview = 'Ask the desk anything to get started.'
+  preview = 'Ask the desk anything to get started.',
+  symbol = 'SPY'
 ): ConversationMeta {
   const sessionId = crypto.randomUUID();
   const timestamp = Date.now();
+  const normalizedSymbol = symbol.trim().toUpperCase() || 'SPY';
   return {
     id: sessionId,
     sessionId,
+    symbol: normalizedSymbol,
     title,
     preview,
     createdAt: timestamp,
@@ -3009,15 +3025,20 @@ function createConversation(
 }
 
 // Clean API payloads to ensure the rest of the app sees consistent conversation data.
-function normalizeConversation(payload: ConversationPayload): ConversationMeta {
+function normalizeConversation(payload: ConversationPayload, fallbackSymbol?: string): ConversationMeta {
   return {
     id: payload.sessionId,
     sessionId: payload.sessionId,
+    symbol: (payload.symbol ?? fallbackSymbol ?? null)?.trim().toUpperCase() ?? null,
     title: payload.title || 'New chat',
     preview: payload.preview || 'Ask the agent anything to get started.',
     createdAt: Date.parse(payload.createdAt),
     updatedAt: Date.parse(payload.updatedAt),
   };
+}
+
+function conversationStorageKey(symbol: string): string {
+  return `${STORAGE_KEY}.${symbol.trim().toUpperCase() || 'SPY'}`;
 }
 
 // Transform raw conversation response objects into the simplified chat message model.

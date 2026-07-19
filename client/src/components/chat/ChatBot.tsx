@@ -126,7 +126,7 @@ export function ChatBot({
       const serverMessage = typeof error?.response?.data?.error === 'string' ? error.response.data.error : null;
       const isMaxTurnError = serverMessage?.includes('Max turns');
       const fallback =
-        serverMessage ?? 'Chat service unavailable. Ensure the FastAPI agent is running and try again.';
+        serverMessage ?? 'AI Desk request failed before a server response. Check the HTTP failure log and try again.';
       if (isMaxTurnError) {
         onRequestNewChat();
         setMessages([DEFAULT_ASSISTANT_MESSAGE]);

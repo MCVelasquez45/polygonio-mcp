@@ -281,7 +281,7 @@ http.interceptors.response.use(
       });
       return Promise.reject(error);
     }
-    console.error('[CLIENT] HTTP error', {
+    console.error('[CLIENT] HTTP failure', {
       message: error?.message,
       method: String(error?.config?.method ?? 'GET').toUpperCase(),
       url: fullRequestUrl(error?.config),

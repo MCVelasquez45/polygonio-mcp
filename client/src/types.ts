@@ -8,6 +8,7 @@ export type ChatMessage = {
 export type ConversationMeta = {
   id: string;
   sessionId: string;
+  symbol?: string | null;
   title: string;
   preview: string;
   createdAt: number;
@@ -16,6 +17,7 @@ export type ConversationMeta = {
 
 export type ConversationPayload = {
   sessionId: string;
+  symbol?: string | null;
   title: string;
   preview: string;
   createdAt: string;

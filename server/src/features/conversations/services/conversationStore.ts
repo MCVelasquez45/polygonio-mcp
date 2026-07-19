@@ -10,6 +10,8 @@ export type ConversationMessage = {
 
 export type ConversationDocument = {
   sessionId: string;
+  userKey?: string;
+  symbol?: string | null;
   title: string;
   preview: string;
   createdAt: Date;
@@ -19,6 +21,8 @@ export type ConversationDocument = {
 
 export type ConversationSummary = {
   sessionId: string;
+  userKey?: string;
+  symbol?: string | null;
   title: string;
   preview: string;
   createdAt: Date;
@@ -49,20 +53,27 @@ export async function appendMessages(
   sessionId: string,
   userContent: string,
   assistantContent: string,
+  metadata: { userKey?: string; symbol?: string | null } = {},
 ): Promise<ConversationSummary> {
   const now = new Date();
   const preview = derivePreview(assistantContent);
   const title = deriveTitle(userContent);
+  const userKey = metadata.userKey?.trim() || 'unknown';
+  const symbol = metadata.symbol?.trim().toUpperCase() || null;
 
   await conversationsCollection().updateOne(
-    { sessionId },
+    { sessionId, userKey },
     {
       $setOnInsert: {
         sessionId,
+        userKey,
+        symbol,
         title,
         createdAt: now,
       },
       $set: {
+        userKey,
+        symbol,
         preview,
         updatedAt: now,
       },
@@ -90,7 +101,7 @@ export async function appendMessages(
   );
 
   const doc = await conversationsCollection().findOne(
-    { sessionId },
+    { sessionId, userKey },
     { projection: { _id: 0, messages: 0 } },
   );
   if (!doc) {
@@ -99,19 +110,26 @@ export async function appendMessages(
   return doc;
 }
 
-export async function listConversations(): Promise<ConversationSummary[]> {
+export async function listConversations(filters: { userKey?: string; symbol?: string | null } = {}): Promise<ConversationSummary[]> {
+  const query: Record<string, unknown> = {};
+  if (filters.userKey) query.userKey = filters.userKey;
+  if (filters.symbol) query.symbol = filters.symbol.trim().toUpperCase();
   const cursor = conversationsCollection()
-    .find({}, { projection: { _id: 0, messages: 0 } })
+    .find(query, { projection: { _id: 0, messages: 0 } })
     .sort({ updatedAt: -1 });
   return cursor.toArray();
 }
 
-export async function getConversation(sessionId: string): Promise<ConversationDocument | null> {
-  const doc = await conversationsCollection().findOne({ sessionId }, { projection: { _id: 0 } });
+export async function getConversation(sessionId: string, userKey?: string): Promise<ConversationDocument | null> {
+  const query: Record<string, unknown> = { sessionId };
+  if (userKey) query.userKey = userKey;
+  const doc = await conversationsCollection().findOne(query, { projection: { _id: 0 } });
   return doc ?? null;
 }
 
-export async function deleteConversation(sessionId: string): Promise<boolean> {
-  const result = await conversationsCollection().deleteOne({ sessionId });
+export async function deleteConversation(sessionId: string, userKey?: string): Promise<boolean> {
+  const query: Record<string, unknown> = { sessionId };
+  if (userKey) query.userKey = userKey;
+  const result = await conversationsCollection().deleteOne(query);
   return (result.deletedCount ?? 0) > 0;
 }

@@ -11,8 +11,10 @@ type ChatReplyResponse = {
   conversation: ConversationPayload;
 };
 
-export async function listConversations(): Promise<ConversationPayload[]> {
-  const { data } = await http.get<ConversationsListResponse>('/api/conversations');
+export async function listConversations(symbol?: string): Promise<ConversationPayload[]> {
+  const { data } = await http.get<ConversationsListResponse>('/api/conversations', {
+    params: symbol ? { symbol } : undefined,
+  });
   return data.conversations ?? [];
 }
 
