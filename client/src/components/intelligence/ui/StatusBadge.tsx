@@ -24,22 +24,31 @@ export function EnvBadge({ environment }: { environment: 'PAPER' | 'LIVE' }) {
   return <Badge tone={environment === 'LIVE' ? 'accent' : 'neutral'}>{environment}</Badge>;
 }
 
-/** Health check → colored pill with status dot. null renders as unknown. */
-export function HealthPill({ label, healthy }: { label: string; healthy?: boolean | null }) {
+/** Health check -> compact colored status with dot. null renders as unknown. */
+export function HealthPill({
+  label,
+  healthy,
+  className = '',
+}: {
+  label: string;
+  healthy?: boolean | null;
+  className?: string;
+}) {
   const tone: Tone = healthy == null ? 'neutral' : healthy ? 'pos' : 'neg';
   const dot = tone === 'pos' ? 'bg-intel-pos' : tone === 'neg' ? 'bg-intel-neg' : 'bg-intel-ink3';
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] tracking-wide ${
+      title={label}
+      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-[1px] font-mono text-[10px] font-semibold leading-4 tracking-normal ${
         tone === 'pos'
           ? 'border-intel-pos/35 text-intel-pos'
           : tone === 'neg'
             ? 'border-intel-neg/35 text-intel-neg'
             : 'border-intel-line text-intel-ink2'
-      }`}
+      } ${className}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
-      {label}
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="min-w-0 truncate">{label}</span>
     </span>
   );
 }

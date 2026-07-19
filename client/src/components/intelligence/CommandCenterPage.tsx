@@ -95,17 +95,17 @@ function IntelCard({
         {status && <span className="ml-auto">{status}</span>}
       </div>
       <p className="mt-2 flex-1 text-sm text-intel-ink2">{summary}</p>
-      <div className="mt-3 flex items-end justify-between border-t border-intel-lineSoft pt-3">
-        <div>
+      <div className="mt-3 flex items-end justify-between gap-3 border-t border-intel-lineSoft pt-3">
+        <div className="min-w-0">
           <p className="font-mono text-[9.5px] uppercase tracking-label text-intel-ink3">{metricLabel}</p>
-          <p className="mt-0.5 font-mono text-lg tabular-nums text-intel-ink">{metricValue}</p>
+          <div className="mt-0.5 max-w-full font-mono text-lg leading-tight tabular-nums text-intel-ink">{metricValue}</div>
         </div>
         <button
           type="button"
           onClick={onOpen}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-intel-line px-3 py-1.5 font-mono text-xs text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-intel-line px-2 font-mono text-[11px] text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
         >
-          Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          Open <ArrowRight className="h-3 w-3" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -259,7 +259,7 @@ export function CommandCenterPage({ initial = {}, loadOnMount = true, onOpen }: 
           <Metric label="Open Positions" value={activePositions == null ? 'Not recorded' : fmtNum(activePositions)} />
           <Metric label="Open Orders" value={openOrders == null ? 'Not recorded' : fmtNum(openOrders)} />
           <Metric label="Live P/L" value={livePnl == null ? EMPTY.livePnl : fmtSignedUsd(livePnl)} tone={pnlTone(livePnl)} />
-          <Metric label="Health" value={<HealthPill label={health.label} healthy={health.healthy} />} />
+          <Metric label="Health" value={<HealthPill label={health.label} healthy={health.healthy} className="align-middle" />} />
         </MetricStrip>
         <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <MarketDataHealthCard
