@@ -66,8 +66,6 @@ export async function appendMessages(
     {
       $setOnInsert: {
         sessionId,
-        userKey,
-        symbol,
         title,
         createdAt: now,
       },
