@@ -13,11 +13,19 @@ let lastConnectErrorLogAt = 0;
 const CONNECT_ERROR_LOG_INTERVAL_MS = 15_000;
 
 function resolveSocketBaseUrl(): string {
+  const apiBaseUrl = getApiBaseUrl();
+  if (import.meta.env.PROD && typeof window !== 'undefined' && window.location) {
+    const parsedApiUrl = new URL(apiBaseUrl, window.location.href);
+    if (parsedApiUrl.origin === window.location.origin) {
+      return apiBaseUrl.replace(/\/+$/, '');
+    }
+  }
+
   const configured =
     typeof import.meta.env.VITE_SOCKET_URL === 'string' && import.meta.env.VITE_SOCKET_URL.trim()
       ? import.meta.env.VITE_SOCKET_URL.trim()
       : '';
-  return (configured || getApiBaseUrl()).replace(/\/+$/, '');
+  return (configured || apiBaseUrl).replace(/\/+$/, '');
 }
 
 export function getSharedSocket(): Socket {
