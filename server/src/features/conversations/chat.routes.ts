@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { agentChat } from '../assistant/agentClient';
+import { AI_AGENTS } from '../assistant/orchestrator/agents';
+import { runAgent } from '../assistant/orchestrator/orchestrator.service';
 import { resolveAiUserKey } from '../../shared/ai/controls';
 import { appendMessages } from './services/conversationStore';
 
@@ -56,9 +58,21 @@ function describeChatUpstreamError(error: any): { status: number; error: string;
   };
 }
 
+// AI Desk agent registry — drives the client's agent buttons.
+router.get('/agents', (_req, res) => {
+  res.json({
+    agents: AI_AGENTS.map(agent => ({
+      id: agent.id,
+      label: agent.label,
+      description: agent.description,
+      contexts: agent.contexts,
+    })),
+  });
+});
+
 router.post('/', async (req, res, next) => {
   try {
-    const { message, sessionId, context } = req.body;
+    const { message, sessionId, context, agentId } = req.body;
     if (typeof message !== 'string' || !message.trim()) {
       console.log('[SERVER] /api/chat validation failed:', req.body);
       return res.status(400).json({ error: 'message is required' });
@@ -73,13 +87,25 @@ router.post('/', async (req, res, next) => {
     console.log('[SERVER] /api/chat forwarding payload:', {
       sessionId: resolvedSessionId,
       symbol,
+      agentId: typeof agentId === 'string' ? agentId : null,
       hasContext: Boolean(context),
     });
 
-    const data = await agentChat(message, agentSessionName, context, {
-      userKey,
-      feature: 'assistant.chat'
-    });
+    const data =
+      typeof agentId === 'string' && agentId.trim()
+        ? await runAgent(
+            agentId.trim(),
+            {
+              symbol: symbol ?? '',
+              timeframe: typeof context?.chart?.timeframe === 'string' ? context.chart.timeframe : null,
+              contract: typeof context?.option?.ticker === 'string' ? context.option.ticker : null,
+            },
+            { userKey, sessionName: agentSessionName }
+          )
+        : await agentChat(message, agentSessionName, context, {
+            userKey,
+            feature: 'assistant.chat'
+          });
     console.log('[SERVER] /api/chat response from agent:', data);
 
     const conversation = await appendMessages(

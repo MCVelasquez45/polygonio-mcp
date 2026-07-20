@@ -27,44 +27,7 @@ export function ChatBot({
   onMessagesChange,
   onConversationUpdate,
 }: ChatBotProps) {
-  const promptTemplates: PromptTemplate[] = [
-    {
-      id: 'chart-read',
-      label: 'Analyze this chart',
-      prompt: 'Explain what is happening on this chart and call out any risks or trend shifts.',
-      description: 'Quick technical read for the active chart and timeframe.',
-    },
-    {
-      id: 'option-risk',
-      label: 'Option risk review',
-      prompt: 'Review the risk/reward for the selected option contract. Highlight IV, greeks, and key risk.',
-      description: 'Summarize risk/reward on the selected contract.',
-    },
-    {
-      id: 'why-move',
-      label: 'Why did it move?',
-      prompt: 'Why is this ticker moving today? Provide likely catalysts and key levels.',
-      description: 'Check news, momentum, and levels for the active ticker.',
-    },
-    {
-      id: 'daily-recap',
-      label: 'Daily recap',
-      prompt: 'Give me a concise daily recap for this ticker with trend, momentum, and notable events.',
-      description: 'Short daily summary for the active ticker.',
-    },
-    {
-      id: 'capitol-activity',
-      label: 'Congressional activity',
-      prompt: 'Summarize recent congressional trading activity relevant to this ticker and any notable patterns.',
-      description: 'Pulls recent Capitol Trades activity and highlights relevance.',
-    },
-    {
-      id: 'fed-move',
-      label: 'Fed movement',
-      prompt: 'Summarize the latest Fed movement and how it may affect this ticker or sector.',
-      description: 'Quick macro read tied to the active symbol.',
-    },
-  ];
+  const [agentTemplates, setAgentTemplates] = useState<PromptTemplate[]>(FALLBACK_AGENT_TEMPLATES);
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]
   );
@@ -79,6 +42,31 @@ export function ChatBot({
   useEffect(() => {
     messagesChangeRef.current = onMessagesChange;
   }, [onMessagesChange]);
+
+  // Agent registry is server-owned; fall back to the static list when offline.
+  useEffect(() => {
+    let cancelled = false;
+    chatApi
+      .listAiAgents()
+      .then(agents => {
+        if (cancelled || !agents.length) return;
+        setAgentTemplates(
+          agents.map(agent => ({
+            id: agent.id,
+            agentId: agent.id,
+            label: agent.label,
+            description: agent.description,
+            prompt: '',
+          }))
+        );
+      })
+      .catch(() => {
+        /* keep fallback templates */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setMessages(initialMessages.length ? initialMessages : [DEFAULT_ASSISTANT_MESSAGE]);
@@ -95,7 +83,7 @@ export function ChatBot({
     timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function sendUserMessage(text: string) {
+  async function sendUserMessage(text: string, agentId?: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
@@ -110,7 +98,7 @@ export function ChatBot({
     setLoading(true);
 
     try {
-      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context });
+      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context, agentId });
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -266,11 +254,15 @@ export function ChatBot({
 
       <form onSubmit={handleSubmit} className="border-t border-intel-line p-4 flex flex-col gap-3">
         <PromptTemplates
-          templates={promptTemplates}
+          templates={agentTemplates}
           disabled={loading}
-          onSelect={prompt => {
+          onSelect={template => {
             setDraft('');
-            void sendUserMessage(prompt);
+            if (template.agentId) {
+              void sendUserMessage(`${template.label} report — ${selectedTicker}`, template.agentId);
+            } else {
+              void sendUserMessage(template.prompt);
+            }
           }}
         />
         <textarea
@@ -295,6 +287,21 @@ export function ChatBot({
   );
 }
 
+// Mirrors the server registry (GET /api/chat/agents); used until it loads or
+// when the request fails so the desk is never left without analyst buttons.
+const FALLBACK_AGENT_TEMPLATES: PromptTemplate[] = [
+  { id: 'technical-analyst', agentId: 'technical-analyst', label: 'Technical Analyst', prompt: '', description: 'Chart structure, trend, momentum, and a trade thesis.' },
+  { id: 'options-risk-analyst', agentId: 'options-risk-analyst', label: 'Options Risk Analyst', prompt: '', description: 'Liquidity, greeks, IV, decay, and assignment risk.' },
+  { id: 'market-catalyst', agentId: 'market-catalyst', label: 'Market Catalyst Analyst', prompt: '', description: 'Why is it moving? Catalysts ranked by impact.' },
+  { id: 'market-recap', agentId: 'market-recap', label: 'Market Recap', prompt: '', description: 'Session recap with indices, rates, news, and catalysts.' },
+  { id: 'congressional-intel', agentId: 'congressional-intel', label: 'Congressional Intelligence', prompt: '', description: 'CapitolTrades positioning around the symbol.' },
+  { id: 'fed-intel', agentId: 'fed-intel', label: 'Fed Intelligence', prompt: '', description: 'Rates, inflation, labor — and the macro bias for the symbol.' },
+  { id: 'trade-thesis', agentId: 'trade-thesis', label: 'Trade Thesis', prompt: '', description: 'Institutional bull/bear thesis across all data sources.' },
+  { id: 'smart-entry', agentId: 'smart-entry', label: 'Smart Entry', prompt: '', description: 'Optimal entry, stop, targets, and position size.' },
+  { id: 'exit-strategy', agentId: 'exit-strategy', label: 'Exit Strategy', prompt: '', description: 'Hold, trim, scale, exit, or roll — with triggers.' },
+  { id: 'portfolio-risk', agentId: 'portfolio-risk', label: 'Portfolio Risk', prompt: '', description: 'Concentration, correlation, and macro exposure review.' },
+];
+
 function renderStructuredReply(text: string): ReactNode {
   const deskSections = new Set([
     'summary',
@@ -306,6 +313,68 @@ function renderStructuredReply(text: string): ReactNode {
     'key risk',
     'suggested action',
     'conclusion',
+    // AI Desk V2 agent report sections
+    'executive summary',
+    'confidence',
+    'bull case',
+    'bear case',
+    'catalysts',
+    'technical analysis',
+    'options analysis',
+    'macro analysis',
+    'congressional activity',
+    'risk assessment',
+    'trading plan',
+    'action items',
+    'sources used',
+    'sources unavailable',
+    'market structure',
+    'key levels',
+    'trading thesis',
+    'entry',
+    'stop',
+    'targets',
+    'position size',
+    'risk reward',
+    'expected return',
+    'probability',
+    'liquidity',
+    'greeks exposure',
+    'decay risk',
+    'volatility risk',
+    'assignment risk',
+    'risk grade',
+    'exit plan',
+    'primary catalyst',
+    'secondary catalysts',
+    'timeline',
+    'market reaction',
+    'index tape',
+    'rates & volatility',
+    'symbol in focus',
+    'major news',
+    'platform intelligence',
+    "tomorrow's catalysts",
+    'recent transactions',
+    'pattern analysis',
+    'signal or noise',
+    'trade ideas',
+    'policy read',
+    'yield curve',
+    'inflation & labor',
+    'upcoming event risk',
+    'impact on symbol',
+    'macro bias',
+    'position review',
+    'trend check',
+    'recommendation',
+    'triggers',
+    'concentration',
+    'correlation',
+    'macro exposure',
+    'volatility exposure',
+    'drawdown state',
+    'recommended adjustments',
   ]);
   const lines = text.split('\n');
   const elements: ReactNode[] = [];

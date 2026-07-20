@@ -27,9 +27,23 @@ export async function sendChatMessage(payload: {
   message: string;
   sessionId: string;
   context?: ChatContext;
+  /** Run a server-side AI Desk agent (full data package) instead of a raw prompt. */
+  agentId?: string;
 }): Promise<ChatReplyResponse> {
   const { data } = await http.post<ChatReplyResponse>('/api/chat', payload);
   return data;
+}
+
+export type AiAgentSummary = {
+  id: string;
+  label: string;
+  description: string;
+  contexts: string[];
+};
+
+export async function listAiAgents(): Promise<AiAgentSummary[]> {
+  const { data } = await http.get<{ agents: AiAgentSummary[] }>('/api/chat/agents');
+  return data.agents ?? [];
 }
 
 export async function deleteConversation(sessionId: string): Promise<void> {

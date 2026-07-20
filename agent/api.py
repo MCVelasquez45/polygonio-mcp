@@ -46,6 +46,42 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok", "service": "polygon-agent"}
 
 
+# Deterministic data endpoints for the Node AI orchestrator. These expose the
+# same tool functions the MCP agent uses so context packages can be assembled
+# server-side without relying on the LLM to invoke tools.
+@app.get("/data/capitol-trades", status_code=status.HTTP_200_OK)
+async def data_capitol_trades(ticker: str | None = None, limit: int = 10) -> dict[str, Any]:
+    from core.polygon_agent import get_capitol_trades
+
+    try:
+        result = await get_capitol_trades(n=max(1, min(limit, 50)), ticker=ticker)
+        return {"available": True, "data": result}
+    except Exception as exc:  # degrade, never 500 — the orchestrator reports the gap
+        return {"available": False, "error": str(exc)[:300]}
+
+
+@app.get("/data/fred-calendar", status_code=status.HTTP_200_OK)
+async def data_fred_calendar(limit: int = 25) -> dict[str, Any]:
+    from core.polygon_agent import get_fred_release_calendar
+
+    try:
+        result = await get_fred_release_calendar(limit=max(1, min(limit, 100)))
+        return {"available": True, "data": result}
+    except Exception as exc:
+        return {"available": False, "error": str(exc)[:300]}
+
+
+@app.get("/data/earnings", status_code=status.HTTP_200_OK)
+async def data_earnings(ticker: str, limit: int = 8) -> dict[str, Any]:
+    from core.polygon_agent import get_polygon_earnings
+
+    try:
+        result = await get_polygon_earnings(ticker=ticker, limit=max(1, min(limit, 20)))
+        return {"available": True, "data": result}
+    except Exception as exc:
+        return {"available": False, "error": str(exc)[:300]}
+
+
 class AnalysisRequest(BaseModel):
     query: str
     session_name: str | None = None
