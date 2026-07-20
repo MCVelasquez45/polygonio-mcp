@@ -56,7 +56,7 @@ export type TreasuryYieldObservation = {
 export async function getTreasuryYields(limit = 10): Promise<TreasuryYieldObservation[]> {
   const data = await massiveGet<any>(
     '/fed/v1/treasury-yields',
-    { limit },
+    { limit, sort: 'date.desc' },
     { cacheTtlMs: ECONOMY_TTL_MS, priority: REQUEST_PRIORITY.VISIBLE_UI }
   );
   const results = Array.isArray(data?.results) ? data.results : [];
@@ -85,7 +85,7 @@ export async function getLaborMarket(limit = 6): Promise<EconomySeries> {
 async function economySeries(path: string, limit: number): Promise<EconomySeries> {
   const data = await massiveGet<any>(
     path,
-    { limit },
+    { limit, sort: 'date.desc' },
     { cacheTtlMs: ECONOMY_TTL_MS, priority: REQUEST_PRIORITY.VISIBLE_UI }
   );
   const results = Array.isArray(data?.results) ? data.results : [];
