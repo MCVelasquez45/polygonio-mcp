@@ -17,6 +17,11 @@ function stripLoopbackLiterals() {
 }
 
 export default defineConfig({
+  // Build identifier baked into the bundle: Vercel injects VERCEL_GIT_COMMIT_SHA
+  // during CI builds, so window.__APP_VERSION__ always names the exact commit.
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ?? 'local-dev'),
+  },
   plugins: [react(), stripLoopbackLiterals()],
   server: {
     port: 5173,
