@@ -60,6 +60,17 @@ function setNoStore(res: any) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 }
 
+function countChainContracts(chain: any): number {
+  if (!Array.isArray(chain?.expirations)) return 0;
+  return chain.expirations.reduce((total: number, group: any) => {
+    if (!Array.isArray(group?.strikes)) return total;
+    return (
+      total +
+      group.strikes.reduce((count: number, row: any) => count + (row?.call ? 1 : 0) + (row?.put ? 1 : 0), 0)
+    );
+  }, 0);
+}
+
 // GET /api/market/aggs – high-level candle endpoint used by the chart.
 router.get('/aggs', async (req, res, next) => {
   try {
@@ -250,6 +261,27 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
       } catch (error) {
         console.warn('[MARKET] failed to persist chain snapshot', { underlyingSymbol, expirationFilter }, error);
       }
+    }
+    const expirationCount = Array.isArray(data?.expirations) ? data.expirations.length : 0;
+    const contractCount = countChainContracts(data);
+    if (expirationCount === 0 || contractCount === 0) {
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          service: 'market-route',
+          event: 'OPTIONS_CHAIN_EMPTY_RESPONSE',
+          ticker,
+          underlying: underlyingSymbol,
+          expiration: expirationFilter ?? null,
+          requestedLimit: limit,
+          effectiveLimit: clampedDesiredLimit,
+          cache: fromCache ? 'hit' : 'miss',
+          expirationCount,
+          contractCount,
+          completeness: data?.completeness ?? null,
+          metadata: data?.metadata ?? null,
+        })
+      );
     }
     res.json({ ...data, fetchedAt, cache: fromCache ? 'hit' : 'miss' });
   } catch (error) {
@@ -448,6 +480,20 @@ router.get('/options/expirations/:ticker', async (req, res, next) => {
       fetchedAt,
       cache: fromCache ? 'hit' : 'miss'
     });
+    if (!Array.isArray(data.expirations) || data.expirations.length === 0) {
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          service: 'market-route',
+          event: 'OPTIONS_EXPIRATIONS_EMPTY_RESPONSE',
+          requestedTicker,
+          underlying: underlyingTicker,
+          limit,
+          maxPages,
+          cache: fromCache ? 'hit' : 'miss',
+        })
+      );
+    }
   } catch (error) {
     next(error);
   }

@@ -340,6 +340,7 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
         {/* Expiration */}
         <div className="flex items-center gap-1.5">
           <select
+            aria-label="Expiration"
             className="appearance-none rounded-panel border border-intel-line bg-intel-panel2 px-2.5 py-1.5 font-mono text-[11px] text-intel-ink focus:border-intel-accentLine focus-visible:outline-none disabled:opacity-50"
             value={selectedExpiration ?? ''}
             onChange={event => onExpirationChange(event.target.value || null)}

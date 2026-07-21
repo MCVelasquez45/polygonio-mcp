@@ -13,9 +13,12 @@ import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
 import { TradingSidebar } from './components/layout/TradingSidebar';
 import { NavRail } from './components/layout/NavRail';
-import { MobileTabBar } from './components/layout/MobileTabBar';
+import { MobileShell } from './components/layout/MobileShell';
+import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
 import { CommandPalette } from './components/layout/CommandPalette';
+import { ChatBot } from './components/chat/ChatBot';
+import { useIsMobile } from './hooks/useMediaQuery';
 import { ChartPanel } from './components/trading/ChartPanel';
 import { GreeksPanel } from './components/options/GreeksPanel';
 import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
@@ -442,6 +445,12 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
+  // Phone companion shell: an entirely separate layout below `md`, not a
+  // squeezed workstation. Desktop state (view) is untouched by mobile tabs.
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<MobileTab>('trade');
+  const [agentLaunch, setAgentLaunch] = useState<{ agentId: string; label: string; nonce: number } | null>(null);
+
   // Keyboard-first navigation: ⌘K / Ctrl-K toggles the command palette from
   // anywhere in the workstation.
   useEffect(() => {
@@ -644,8 +653,18 @@ function App() {
       setAiRequestWarning('AI chat is disabled in Settings.');
       return;
     }
+    if (isMobile) {
+      setMobileTab('ai');
+      return;
+    }
     setIsChatOpen((prev: boolean) => !prev);
-  }, [chatAllowed]);
+  }, [chatAllowed, isMobile]);
+
+  // Quick Actions (mobile) hand an agent run to the AI tab's chat.
+  const handleMobileAgentLaunch = useCallback((agentId: string, label: string) => {
+    setAgentLaunch(prev => ({ agentId, label, nonce: (prev?.nonce ?? 0) + 1 }));
+    setMobileTab('ai');
+  }, []);
 
   const handleAiLimit = useCallback((error: any) => {
     if (error?.response?.status !== 429) return false;
@@ -1302,7 +1321,6 @@ function App() {
       setChainLoading(false);
       return;
     }
-    if (!selectionHydrated) return;
     const shouldSkipFetch =
       skipChainFetchRef.current &&
       selectedExpiration &&
@@ -1336,6 +1354,20 @@ function App() {
             setChainUnderlyingPrice(response?.underlyingPrice ?? null);
           } else {
             setChainExpirations(groups);
+            setAvailableExpirations((prev: string[]) => {
+              const merged = new Set(prev);
+              groups.forEach((group: OptionChainExpirationGroup) => {
+                if (group.expiration) merged.add(group.expiration);
+              });
+              return Array.from(merged).sort((a, b) => {
+                const tsA = getExpirationTimestamp(a);
+                const tsB = getExpirationTimestamp(b);
+                if (tsA == null && tsB == null) return 0;
+                if (tsA == null) return 1;
+                if (tsB == null) return -1;
+                return tsA - tsB;
+              });
+            });
             lastChainRef.current = {
               ticker: normalizedTicker,
               groups,
@@ -1432,14 +1464,11 @@ function App() {
       setChainUnderlyingPrice(null);
       return;
     }
-    if (!selectionHydrated) return;
     let cancelled = false;
     const controller = new AbortController();
     setChainError(null);
     setAvailableExpirations([]);
     setSelectedExpiration(null);
-    setChainExpirations([]);
-    setChainUnderlyingPrice(null);
     async function loadExpirations() {
       try {
         const payload = await marketApi.getOptionExpirations(normalizedTicker, controller.signal);
@@ -1463,8 +1492,6 @@ function App() {
         if (!cancelled && !isAbortError(error)) {
           const message = error?.response?.data?.error ?? error?.message ?? 'Failed to load expirations';
           setChainError(message);
-          setAvailableExpirations([]);
-          setSelectedExpiration(null);
         }
       }
     }
@@ -2507,13 +2534,13 @@ function App() {
   );
 
   const deskInsightPanel = (
-    <div className="rounded-panel bg-intel-panel p-3 space-y-3">
-      <div className="flex items-center justify-between border-b border-intel-divider pb-2">
+    <div className="ai-glass-panel ai-card-elevate rounded-panel p-3 space-y-3">
+      <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-label text-intel-ai">Latest Insight · AI</p>
-          <p className="text-sm text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
+          <p className="ai-section-title font-mono text-intel-ai">Latest Insight · AI</p>
+          <p className="text-sm leading-relaxed text-intel-ink2">AI desk notes for {deskInsightSymbol}</p>
           {deskInsightUpdatedLabel && (
-            <p className="text-[11px] text-intel-ink3">Last updated {deskInsightUpdatedLabel}</p>
+            <p className="ai-metadata">Last updated {deskInsightUpdatedLabel}</p>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -2521,7 +2548,7 @@ function App() {
             type="button"
             onClick={handleDeskInsightRefresh}
             disabled={deskInsightLoading || !deskInsightsAllowed}
-            className="rounded-md border border-intel-line px-2 py-0.5 font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent disabled:opacity-60"
+            className="ai-glass-button ai-focus-ring rounded-md px-3 font-mono text-[10px] font-semibold text-intel-ink2 hover:text-intel-accent disabled:opacity-60"
           >
             Refresh
           </button>
@@ -2529,7 +2556,7 @@ function App() {
             type="button"
             onClick={handleToggleChat}
             disabled={!chatAllowed}
-            className="rounded-md border border-intel-accentLine px-2 py-0.5 font-mono text-[10px] text-intel-accent hover:bg-intel-accentSoft disabled:opacity-60"
+            className="ai-glass-button ai-focus-ring rounded-md px-3 font-mono text-[10px] font-semibold text-intel-accent disabled:opacity-60"
           >
             Ask AI
           </button>
@@ -2543,9 +2570,9 @@ function App() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          <div className="rounded-md border border-intel-lineSoft bg-intel-bg/25 px-3 py-2">
-            <p className="font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ai">Summary</p>
-            <p className="mt-1 text-sm text-intel-ink whitespace-pre-line">
+          <div className="ai-glass-panel-soft rounded-md px-3 py-2 shadow-none">
+            <p className="ai-section-title font-mono text-[11px] text-intel-ai">Summary</p>
+            <p className="mt-1 text-sm leading-relaxed text-intel-ink whitespace-pre-line">
               {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
             </p>
           </div>
@@ -2579,31 +2606,32 @@ function App() {
     </div>
   );
 
-  // Main trading workspace layout (watchlist, search, chart, scanner, chain, contract analysis, order ticket).
-  const tradingView = (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
-      <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
-        {marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) && (
-          <div
-            className={`flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-panel border-l-2 bg-intel-panel px-3 py-1.5 ${marketSessionMeta.marketClosed
-              ? 'border-intel-warn text-intel-warn'
-              : 'border-intel-info text-intel-info'
-              }`}
-            title={marketSessionMeta.note ?? undefined}
-          >
-            <span className="font-mono text-[11px] font-semibold uppercase tracking-label">
-              {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
-              {marketSessionMeta.usingLastSession ? ' · Last Session' : ''}
-            </span>
-            <span className="font-mono text-[11px] text-intel-ink3">
-              {marketSessionMeta.marketClosed
-                ? 'Data reflects the last completed trading session.'
-                : 'Prices update slower during the extended session.'}{' '}
-              {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
-            </span>
-          </div>
-        )}
-        <ChartPanel
+  // Panels shared by the desktop workstation grid and the mobile companion
+  // shell — built once so props stay identical in both layouts.
+  const sessionBanner =
+    marketSessionMeta && (marketSessionMeta.marketClosed || marketSessionMeta.afterHours) ? (
+      <div
+        className={`flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-panel border-l-2 bg-intel-panel px-3 py-1.5 ${marketSessionMeta.marketClosed
+          ? 'border-intel-warn text-intel-warn'
+          : 'border-intel-info text-intel-info'
+          }`}
+        title={marketSessionMeta.note ?? undefined}
+      >
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-label">
+          {marketSessionMeta.marketClosed ? 'Market Closed' : 'After-Hours'}
+          {marketSessionMeta.usingLastSession ? ' · Last Session' : ''}
+        </span>
+        <span className="font-mono text-[11px] text-intel-ink3">
+          {marketSessionMeta.marketClosed
+            ? 'Data reflects the last completed trading session.'
+            : 'Prices update slower during the extended session.'}{' '}
+          {marketSessionMeta.nextOpen && `Next session ${formatRelativeTime(marketSessionMeta.nextOpen) ?? ''}.`}
+        </span>
+      </div>
+    ) : null;
+
+  const chartPanelEl = (
+    <ChartPanel
           ticker={displayTicker}
           chartKey={chartDataSymbol ?? displayTicker}
           timeframe={timeframe}
@@ -2628,42 +2656,73 @@ function App() {
           sessionMeta={marketSessionMeta}
           markers={tradeMarkers}
         />
+  );
+
+  const ticketPanelEl = (
+    <OrderTicketPanel
+      contract={contractDetail}
+      isLoading={false}
+      label={displayTicker}
+      spotPrice={resolvedUnderlyingPrice}
+      marketClosed={marketSessionMeta?.marketClosed}
+      afterHours={marketSessionMeta?.afterHours}
+      nextOpen={marketSessionMeta?.nextOpen ?? null}
+      onOrderSubmitted={handleOrderSubmitted}
+    />
+  );
+
+  const chainPanelEl = (
+    <>
+      {marketSessionMeta?.marketClosed && (
+        <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
+          Options quotes are paused — spreads reflect the last available snapshot.
+        </div>
+      )}
+      <OptionsChainPanel
+        ticker={displayTicker}
+        groups={chainExpirations}
+        underlyingPrice={resolvedUnderlyingPrice}
+        loading={chainLoading}
+        error={chainError}
+        availableExpirations={mergedExpirations}
+        selectedExpiration={selectedExpiration}
+        onExpirationChange={handleExpirationChange}
+        selectedContract={selectedLeg}
+        onContractSelect={handleContractSelection}
+        selectedContractDetail={contractDetail}
+        preferredSide={preferredOptionSide}
+        onRequestAnalysis={handleContractAnalysisRequest}
+        analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
+      />
+    </>
+  );
+
+  const scannerPanelEl = (
+    <OptionsScanner
+      reports={scannerReports}
+      isLoading={scannerLoading}
+      highlights={checklistHighlights}
+      highlightLoading={checklistLoading}
+      onRunScan={handleScannerRefresh}
+      runDisabled={!watchlistSymbols.length || !scannerAllowed}
+      aiDisabled={!scannerAllowed}
+      onTickerSelect={handleWorkspaceTickerSelect}
+    />
+  );
+
+  // Main trading workspace layout (watchlist, search, chart, scanner, chain, contract analysis, order ticket).
+  const tradingView = (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-24 lg:pb-8">
+      <div className="lg:col-span-2 flex flex-col gap-4 min-h-[26rem] min-w-0">
+        {sessionBanner}
+        {chartPanelEl}
       </div>
       <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-4 min-h-[26rem] min-w-0 flex flex-col gap-4">
-        <OrderTicketPanel
-          contract={contractDetail}
-          isLoading={false}
-          label={displayTicker}
-          spotPrice={resolvedUnderlyingPrice}
-          marketClosed={marketSessionMeta?.marketClosed}
-          afterHours={marketSessionMeta?.afterHours}
-          nextOpen={marketSessionMeta?.nextOpen ?? null}
-          onOrderSubmitted={handleOrderSubmitted}
-        />
+        {ticketPanelEl}
         <PriceLadder symbol={displayTicker} />
       </div>
       <div className="lg:col-span-2 min-w-0">
-        {marketSessionMeta?.marketClosed && (
-          <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
-            Options quotes are paused — spreads reflect the last available snapshot.
-          </div>
-        )}
-        <OptionsChainPanel
-          ticker={displayTicker}
-          groups={chainExpirations}
-          underlyingPrice={resolvedUnderlyingPrice}
-          loading={chainLoading}
-          error={chainError}
-          availableExpirations={mergedExpirations}
-          selectedExpiration={selectedExpiration}
-          onExpirationChange={handleExpirationChange}
-          selectedContract={selectedLeg}
-          onContractSelect={handleContractSelection}
-          selectedContractDetail={contractDetail}
-          preferredSide={preferredOptionSide}
-          onRequestAnalysis={handleContractAnalysisRequest}
-          analysisDisabled={!contractAnalysisAllowed || (!selectedLeg && !contractDetail)}
-        />
+        {chainPanelEl}
       </div>
       <div className="lg:col-span-2 min-w-0">
         {deskInsightPanel}
@@ -2684,16 +2743,7 @@ function App() {
         />
       </div>
       <div className="lg:col-span-3 min-w-0">
-        <OptionsScanner
-          reports={scannerReports}
-          isLoading={scannerLoading}
-          highlights={checklistHighlights}
-          highlightLoading={checklistLoading}
-          onRunScan={handleScannerRefresh}
-          runDisabled={!watchlistSymbols.length || !scannerAllowed}
-          aiDisabled={!scannerAllowed}
-          onTickerSelect={handleWorkspaceTickerSelect}
-        />
+        {scannerPanelEl}
       </div>
     </div>
   );
@@ -2778,6 +2828,100 @@ function App() {
       </span>
     </label>
   );
+
+  // ── Phone companion shell: a different product, not a squeezed desktop. ──
+  const mobileActiveConversation = activeConversationId
+    ? conversations.find(convo => convo.id === activeConversationId) ?? conversations[0] ?? null
+    : conversations[0] ?? null;
+
+  if (isMobile) {
+    const mobileBanners = (
+      <>
+        {marketError && (
+          <div className="mb-2 rounded-panel border border-intel-neg/30 bg-intel-neg/10 px-3 py-2 text-sm text-intel-neg">
+            {marketError}
+          </div>
+        )}
+        {aiRequestWarning && (
+          <div className="mb-2 flex items-start justify-between gap-3 rounded-panel border border-intel-warn/30 bg-intel-warn/10 px-3 py-2 text-sm text-intel-warn">
+            <span>{aiRequestWarning}</span>
+            <button type="button" onClick={() => setAiRequestWarning(null)} className="text-xs uppercase tracking-[0.2em]">
+              ✕
+            </button>
+          </div>
+        )}
+        {sessionBanner ? <div className="mb-2">{sessionBanner}</div> : null}
+      </>
+    );
+
+    const mobileChat = mobileActiveConversation ? (
+      <ChatBot
+        sessionId={mobileActiveConversation.sessionId}
+        conversationTitle={mobileActiveConversation.title || 'Market Chat'}
+        initialMessages={transcripts[mobileActiveConversation.sessionId] ?? [DEFAULT_ASSISTANT_MESSAGE]}
+        selectedTicker={displayTicker}
+        context={aiContext}
+        onAssistantReply={setLatestInsight}
+        onRequestNewChat={startNewConversation}
+        onMessagesChange={messages => handleMessagesChange(mobileActiveConversation.sessionId, messages)}
+        onConversationUpdate={handleConversationUpdate}
+        launchRequest={agentLaunch}
+      />
+    ) : (
+      <div className="flex h-full items-center justify-center text-sm text-intel-ink3">
+        Start a conversation to chat with the desk.
+      </div>
+    );
+
+    const suspenseFallback = (
+      <div className="flex items-center justify-center py-16 text-sm text-intel-ink2">Loading…</div>
+    );
+
+    return (
+      <>
+        <MobileShell
+          ticker={displayTicker}
+          price={resolvedUnderlyingPrice}
+          change={chartFallbackChange?.absolute ?? null}
+          changePercent={chartFallbackChange?.percent ?? null}
+          marketClosed={marketSessionMeta?.marketClosed}
+          onTickerSubmit={handleHeaderTickerSubmit}
+          tab={mobileTab}
+          onTabChange={setMobileTab}
+          onAgentLaunch={handleMobileAgentLaunch}
+          chartPanel={chartPanelEl}
+          insightPanel={deskInsightPanel}
+          ticketPanel={ticketPanelEl}
+          matrixPanel={chainPanelEl}
+          scannerPanel={
+            <Suspense fallback={suspenseFallback}>
+              <div className="space-y-3">
+                {sidebar}
+                {scannerPanelEl}
+              </div>
+            </Suspense>
+          }
+          portfolioPanel={
+            <Suspense fallback={suspenseFallback}>
+              <PortfolioPanel
+                aiEnabled={aiEnabled}
+                sentimentEnabled={aiPortfolioSentimentEnabled}
+                onOpenSystemOperations={() => undefined}
+              />
+            </Suspense>
+          }
+          cockpitPanel={
+            <Suspense fallback={suspenseFallback}>
+              <CockpitLayout />
+            </Suspense>
+          }
+          chat={mobileChat}
+          banners={mobileBanners}
+        />
+        <Toaster richColors position="top-center" theme="dark" />
+      </>
+    );
+  }
 
   return (
     <div className="h-screen w-full overflow-x-hidden flex flex-col bg-intel-bg text-intel-ink">
@@ -2980,7 +3124,6 @@ function App() {
         </main>
       </div>
 
-      <MobileTabBar currentView={view} onViewChange={setView} />
       <CommandPalette
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}

@@ -24,6 +24,7 @@ type CacheFetchResult<T> = {
 
 const COLLECTION_NAME = 'market_cache';
 let indexesEnsured = false;
+const inflightCacheFetches = new Map<string, Promise<CacheFetchResult<any>>>();
 
 function marketCacheCollection(): Collection<MarketCacheDocument> {
   return getCollection<MarketCacheDocument>(COLLECTION_NAME);
@@ -53,6 +54,17 @@ function createParamsHash(value: Record<string, any>): string {
   return createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
 }
 
+function logMarketCacheEvent(event: string, payload: Record<string, any>) {
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: 'market-cache',
+      event,
+      ...payload,
+    })
+  );
+}
+
 // Lazily creates the TTL + unique indexes that keep the cache bounded.
 export async function ensureMarketCacheIndexes(): Promise<void> {
   if (indexesEnsured) return;
@@ -76,40 +88,71 @@ export async function fetchWithCache<T>(
   fetcher: () => Promise<T>,
   options?: { ticker?: string }
 ): Promise<CacheFetchResult<T>> {
-  // When MongoDB is not available, bypass the cache and call the fetcher directly.
+  const normalizedParams = normalizeValue(params);
+  const key = `${type}:${createParamsHash(normalizedParams)}`;
+
+  // When MongoDB is not available, skip persistence but still deduplicate
+  // simultaneous misses inside this process.
   if (!isMongoReady()) {
-    const data = await fetcher();
-    return { data, fetchedAt: new Date(), fromCache: false };
+    const inflight = inflightCacheFetches.get(key);
+    if (inflight) {
+      logMarketCacheEvent('INFLIGHT_DEDUPED', { type, ticker: options?.ticker ?? null });
+      return inflight as Promise<CacheFetchResult<T>>;
+    }
+    const run = (async () => {
+      const data = await fetcher();
+      return { data, fetchedAt: new Date(), fromCache: false };
+    })();
+    inflightCacheFetches.set(key, run);
+    try {
+      return await run;
+    } finally {
+      inflightCacheFetches.delete(key);
+    }
   }
 
   await ensureMarketCacheIndexes();
   const now = new Date();
-  const normalizedParams = normalizeValue(params);
-  const key = `${type}:${createParamsHash(normalizedParams)}`;
   const collection = marketCacheCollection();
 
   const cachedDoc = await collection.findOne({ key, expiresAt: { $gt: now } });
   if (cachedDoc) {
+    logMarketCacheEvent('CACHE_HIT', { type, ticker: options?.ticker ?? null, ageMs: now.getTime() - cachedDoc.fetchedAt.getTime() });
     return { data: cachedDoc.data as T, fetchedAt: cachedDoc.fetchedAt, fromCache: true };
   }
 
-  const data = await fetcher();
-  const fetchedAt = new Date();
-  const expiresAt = new Date(fetchedAt.getTime() + ttlMs);
-  await collection.updateOne(
-    { key },
-    {
-      $set: {
-        key,
-        type,
-        ticker: options?.ticker,
-        params: normalizedParams,
-        data,
-        fetchedAt,
-        expiresAt
-      }
-    },
-    { upsert: true }
-  );
-  return { data, fetchedAt, fromCache: false };
+  const inflight = inflightCacheFetches.get(key);
+  if (inflight) {
+    logMarketCacheEvent('INFLIGHT_DEDUPED', { type, ticker: options?.ticker ?? null });
+    return inflight as Promise<CacheFetchResult<T>>;
+  }
+
+  const run = (async () => {
+    logMarketCacheEvent('CACHE_MISS', { type, ticker: options?.ticker ?? null, ttlMs });
+    const data = await fetcher();
+    const fetchedAt = new Date();
+    const expiresAt = new Date(fetchedAt.getTime() + ttlMs);
+    await collection.updateOne(
+      { key },
+      {
+        $set: {
+          key,
+          type,
+          ticker: options?.ticker,
+          params: normalizedParams,
+          data,
+          fetchedAt,
+          expiresAt
+        }
+      },
+      { upsert: true }
+    );
+    return { data, fetchedAt, fromCache: false };
+  })();
+  inflightCacheFetches.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inflightCacheFetches.delete(key);
+  }
 }

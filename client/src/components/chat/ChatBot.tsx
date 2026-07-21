@@ -1,7 +1,11 @@
-import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { chatApi } from '../../api';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
+import { agentIdFromText, getAgentMeta } from './agentMeta';
+import { AiReportCard, type ReportSaveState } from './AiReportCard';
+import { parseAgentReport } from './reportModel';
 import { PromptTemplates, type PromptTemplate } from './PromptTemplates';
 
 export type ChatBotProps = {
@@ -14,6 +18,10 @@ export type ChatBotProps = {
   onRequestNewChat: () => void;
   onMessagesChange: (messages: ChatMessage[]) => void;
   onConversationUpdate: (meta: ConversationPayload) => void;
+  /** Hide the desk header (the mobile shell provides its own chrome). */
+  hideHeader?: boolean;
+  /** External agent launch (mobile Quick Actions). A new nonce fires the run. */
+  launchRequest?: { agentId: string; label: string; nonce: number } | null;
 };
 
 export function ChatBot({
@@ -26,6 +34,8 @@ export function ChatBot({
   onRequestNewChat,
   onMessagesChange,
   onConversationUpdate,
+  hideHeader = false,
+  launchRequest = null,
 }: ChatBotProps) {
   const [agentTemplates, setAgentTemplates] = useState<PromptTemplate[]>(FALLBACK_AGENT_TEMPLATES);
   const [messages, setMessages] = useState<ChatMessage[]>(
@@ -33,11 +43,11 @@ export function ChatBot({
   );
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
-  const [reportStatus, setReportStatus] = useState<
-    Record<string, { state: 'idle' | 'saving' | 'saved' | 'error'; message?: string }>
-  >({});
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null);
+  const [reportStatus, setReportStatus] = useState<Record<string, ReportSaveState>>({});
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const messagesChangeRef = useRef(onMessagesChange);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     messagesChangeRef.current = onMessagesChange;
@@ -83,6 +93,16 @@ export function ChatBot({
     timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
+  // Quick Actions elsewhere in the shell hand an agent run to the chat.
+  const consumedLaunchNonce = useRef(0);
+  useEffect(() => {
+    if (!launchRequest || launchRequest.nonce === consumedLaunchNonce.current) return;
+    consumedLaunchNonce.current = launchRequest.nonce;
+    if (loading) return;
+    void sendUserMessage(`${launchRequest.label} report — ${selectedTicker}`, launchRequest.agentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchRequest]);
+
   async function sendUserMessage(text: string, agentId?: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
@@ -96,6 +116,7 @@ export function ChatBot({
 
     setMessages(prev => [...prev, userMessage]);
     setLoading(true);
+    setPendingAgentId(agentId ?? null);
 
     try {
       const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context, agentId });
@@ -104,6 +125,7 @@ export function ChatBot({
         role: 'assistant',
         content: data?.reply ?? '(no reply)',
         timestamp: Date.now(),
+        agentId,
       };
       setMessages(prev => [...prev, assistantMessage]);
       onAssistantReply?.(assistantMessage.content);
@@ -133,15 +155,20 @@ export function ChatBot({
       ]);
     } finally {
       setLoading(false);
+      setPendingAgentId(null);
     }
   }
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
+  function submitDraft() {
     if (!draft.trim() || loading) return;
     const next = draft;
     setDraft('');
-    await sendUserMessage(next);
+    void sendUserMessage(next);
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    submitDraft();
   }
 
   async function handleSaveReport(message: ChatMessage) {
@@ -166,22 +193,42 @@ export function ChatBot({
     }
   }
 
+  // Hydrated transcripts carry no agentId — recover it from the launching user
+  // message ("Fed Intelligence report — SPY") so saved reports keep their card.
+  const resolvedAgentIds = useMemo(() => {
+    const ids = new Map<string, string | null>();
+    let lastUserText = '';
+    for (const message of messages) {
+      if (message.role === 'user') {
+        lastUserText = message.content;
+      } else {
+        ids.set(message.id, message.agentId ?? agentIdFromText(lastUserText));
+      }
+    }
+    return ids;
+  }, [messages]);
+
+  const pendingMeta = pendingAgentId ? getAgentMeta(pendingAgentId) : null;
+
   return (
-    <div className="flex flex-col h-full">
-      <header className="flex flex-col gap-2 border-b border-intel-line p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-intel-ink3">GPT-5 Desk</p>
-            <p className="text-lg font-semibold">{conversationTitle}</p>
+    <div className="flex h-full min-h-0 flex-col">
+      {!hideHeader && (
+        <header className="ai-glass-panel-soft flex flex-none items-center justify-between gap-3 border-x-0 border-t-0 px-4 py-3">
+          <div className="min-w-0">
+            <p className="ai-section-title font-mono text-intel-ink3">AI Desk</p>
+            <p className="truncate text-lg font-semibold leading-tight text-intel-ink">
+              {conversationTitle}
+              <span className="ml-2 font-mono text-[11px] font-normal text-intel-ink2">{selectedTicker}</span>
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-md bg-intel-pos/10 px-1.5 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-label text-intel-pos">
+          <div className="flex flex-none items-center gap-2">
+            <span className="inline-flex min-h-[24px] items-center gap-1 rounded-md border border-intel-pos/25 bg-intel-pos/10 px-2 font-mono text-[10px] font-semibold uppercase tracking-label text-intel-pos">
               <span className="h-1.5 w-1.5 rounded-full bg-intel-pos motion-safe:animate-livering" aria-hidden="true" />
               Live
             </span>
             <button
               type="button"
-              className="rounded-md border border-intel-line px-2 py-0.5 font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-ink"
+              className="ai-glass-button ai-focus-ring rounded-md px-3 font-mono text-[10px] font-semibold text-intel-ink2 hover:text-intel-ink"
               onClick={() => {
                 onRequestNewChat();
                 setMessages([DEFAULT_ASSISTANT_MESSAGE]);
@@ -192,70 +239,62 @@ export function ChatBot({
               New chat
             </button>
           </div>
-        </div>
-        <p className="text-xs text-intel-ink3">
-          Context: watching <span className="text-intel-ink font-medium">{selectedTicker}</span>. Reference tickers, expirations, or
-          constraints when you ask a question.
-        </p>
-      </header>
+        </header>
+      )}
 
-      <div ref={timelineRef} className="flex-1 overflow-y-auto space-y-4 p-4">
-        {messages.map(message => (
-          <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse text-right' : 'text-left'}`}>
-            <div
-              className={`h-9 w-9 rounded-panel flex items-center justify-center text-sm font-semibold ${
-                message.role === 'assistant'
-                  ? 'bg-intel-accentSoft text-intel-accent'
-                  : 'bg-intel-panel2 text-intel-ink'
-              }`}
-            >
-              {message.role === 'assistant' ? 'AI' : 'You'}
+      {/* Conversation scrolls independently; composer below never moves. */}
+      <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 md:p-4">
+        {messages.map(message => {
+          if (message.role === 'user') {
+            return (
+              <div key={message.id} className="flex justify-end">
+                <p className="ai-glass-panel-soft max-w-[85%] rounded-panel px-3 py-2 text-right text-sm leading-relaxed text-white shadow-none">
+                  {message.content}
+                </p>
+              </div>
+            );
+          }
+          const agentId = resolvedAgentIds.get(message.id) ?? null;
+          const report = parseAgentReport(message.content);
+          if (agentId || report.isReport) {
+            return (
+              <AiReportCard
+                key={message.id}
+                meta={getAgentMeta(agentId)}
+                report={report}
+                rawContent={message.content}
+                ticker={selectedTicker}
+                generatedAt={message.timestamp}
+                saveState={reportStatus[message.id]}
+                onSave={() => handleSaveReport(message)}
+              />
+            );
+          }
+          return (
+            <div key={message.id} className="flex justify-start">
+              <div className="ai-glass-panel-soft ai-card-elevate max-w-[92%] rounded-panel px-3 py-2 text-sm leading-relaxed text-intel-ink">
+                {renderStructuredReply(message.content)}
+              </div>
             </div>
-            <div
-              className={`flex-1 rounded-panel border px-4 py-3 text-sm leading-relaxed ${
-                message.role === 'assistant'
-                  ? 'border-intel-line bg-intel-panel text-intel-ink'
-                  : 'border-intel-accentLine bg-intel-accentSoft text-white'
-              }`}
-            >
-              {message.role === 'assistant' ? (
-                <div className="space-y-2">
-                  <div>{renderStructuredReply(message.content)}</div>
-                  <div className="flex items-center gap-2 text-[0.65rem] text-intel-ink2">
-                    <button
-                      type="button"
-                      onClick={() => handleSaveReport(message)}
-                      className="rounded-md border border-intel-line px-1.5 py-[1px] font-mono text-[10px] text-intel-ink2 hover:border-intel-accentLine hover:text-intel-ink disabled:opacity-40"
-                      disabled={reportStatus[message.id]?.state === 'saving'}
-                    >
-                      {reportStatus[message.id]?.state === 'saving' ? 'Saving…' : 'Save report'}
-                    </button>
-                    {reportStatus[message.id]?.state === 'saved' && reportStatus[message.id]?.message && (
-                      <span className="text-intel-accent">Saved: {reportStatus[message.id]?.message}</span>
-                    )}
-                    {reportStatus[message.id]?.state === 'error' && reportStatus[message.id]?.message && (
-                      <span className="text-intel-neg">{reportStatus[message.id]?.message}</span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p>{message.content}</p>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {loading && (
-          <div className="flex items-center gap-2 text-xs text-intel-ink3">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-intel-accent" />
-            Thinking…
+          <div className="ai-glass-panel-soft flex items-center gap-2 rounded-panel px-3 py-2 text-xs text-intel-ink2">
+            <span
+              className="h-2 w-2 animate-pulse rounded-full"
+              style={{ backgroundColor: pendingMeta?.color ?? '#a98bf5' }}
+            />
+            {pendingMeta ? `${pendingMeta.label} is reading the tape…` : 'Thinking…'}
           </div>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="border-t border-intel-line p-4 flex flex-col gap-3">
+      {/* Composer — pinned, keyboard-safe; safe-area handled by the host shell. */}
+      <form onSubmit={handleSubmit} className="ai-glass-panel-strong flex flex-none flex-col gap-2 border-x-0 border-b-0 p-3 md:p-4">
         <PromptTemplates
           templates={agentTemplates}
           disabled={loading}
+          compact={isMobile}
           onSelect={template => {
             setDraft('');
             if (template.agentId) {
@@ -265,21 +304,27 @@ export function ChatBot({
             }
           }}
         />
-        <textarea
-          rows={3}
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          placeholder={`Ask the desk about ${selectedTicker} or any risk scenario.`}
-          className="w-full rounded-panel border border-intel-line bg-intel-panel p-3 text-sm text-intel-ink focus:border-intel-accentLine focus:outline-none"
-        />
-        <div className="flex items-center justify-between gap-3 text-xs text-intel-ink3">
-          <span>{loading ? 'Streaming response…' : 'Agent taps Massive + Polygon data per turn.'}</span>
+        <div className="flex items-end gap-2">
+          <textarea
+            rows={isMobile ? 1 : 2}
+            value={draft}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey && !isMobile) {
+                event.preventDefault();
+                submitDraft();
+              }
+            }}
+            placeholder={`Ask the desk about ${selectedTicker}…`}
+            aria-label={`Ask the AI desk about ${selectedTicker}`}
+            className="ai-focus-ring min-h-[48px] w-full flex-1 resize-none rounded-panel border border-white/[0.07] bg-white/[0.045] px-3 py-3 text-base leading-relaxed text-intel-ink placeholder:text-intel-ink3 transition duration-150 ease-out focus:border-intel-accentLine focus:bg-white/[0.065] md:min-h-10 md:py-2 md:text-sm"
+          />
           <button
             type="submit"
             disabled={loading || !draft.trim()}
-            className="rounded-panel bg-intel-accent px-4 py-2 text-sm font-semibold text-intel-bg disabled:bg-intel-panel2 disabled:text-intel-ink3"
+            className="ai-glass-button ai-focus-ring min-h-[48px] flex-none rounded-panel px-4 text-sm font-semibold text-intel-ink disabled:text-intel-ink3 md:min-h-10"
           >
-            {loading ? 'Sending…' : 'Send'}
+            {loading ? '…' : 'Send'}
           </button>
         </div>
       </form>
@@ -302,80 +347,9 @@ const FALLBACK_AGENT_TEMPLATES: PromptTemplate[] = [
   { id: 'portfolio-risk', agentId: 'portfolio-risk', label: 'Portfolio Risk', prompt: '', description: 'Concentration, correlation, and macro exposure review.' },
 ];
 
+// Legacy renderer for free-form (non-agent) replies: keeps **Label**: lines
+// readable without promoting them to a full report card.
 function renderStructuredReply(text: string): ReactNode {
-  const deskSections = new Set([
-    'summary',
-    'trend',
-    'momentum',
-    'support',
-    'resistance',
-    'expected move',
-    'key risk',
-    'suggested action',
-    'conclusion',
-    // AI Desk V2 agent report sections
-    'executive summary',
-    'confidence',
-    'bull case',
-    'bear case',
-    'catalysts',
-    'technical analysis',
-    'options analysis',
-    'macro analysis',
-    'congressional activity',
-    'risk assessment',
-    'trading plan',
-    'action items',
-    'sources used',
-    'sources unavailable',
-    'market structure',
-    'key levels',
-    'trading thesis',
-    'entry',
-    'stop',
-    'targets',
-    'position size',
-    'risk reward',
-    'expected return',
-    'probability',
-    'liquidity',
-    'greeks exposure',
-    'decay risk',
-    'volatility risk',
-    'assignment risk',
-    'risk grade',
-    'exit plan',
-    'primary catalyst',
-    'secondary catalysts',
-    'timeline',
-    'market reaction',
-    'index tape',
-    'rates & volatility',
-    'symbol in focus',
-    'major news',
-    'platform intelligence',
-    "tomorrow's catalysts",
-    'recent transactions',
-    'pattern analysis',
-    'signal or noise',
-    'trade ideas',
-    'policy read',
-    'yield curve',
-    'inflation & labor',
-    'upcoming event risk',
-    'impact on symbol',
-    'macro bias',
-    'position review',
-    'trend check',
-    'recommendation',
-    'triggers',
-    'concentration',
-    'correlation',
-    'macro exposure',
-    'volatility exposure',
-    'drawdown state',
-    'recommended adjustments',
-  ]);
   const lines = text.split('\n');
   const elements: ReactNode[] = [];
   let listBuffer: string[] = [];
@@ -405,22 +379,12 @@ function renderStructuredReply(text: string): ReactNode {
     flushList();
     const boldMatch = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
     if (boldMatch) {
-      const heading = boldMatch[1].trim();
-      const body = boldMatch[2].trim();
-      if (deskSections.has(heading.toLowerCase())) {
-        elements.push(
-          <div key={`section-${elements.length}`} className="rounded-md border border-intel-lineSoft bg-intel-bg/30 px-2.5 py-2">
-            <p className="font-mono text-[9px] font-semibold uppercase tracking-label text-intel-ai">{heading}</p>
-            {body ? <p className="mt-1 text-[13px] leading-relaxed text-intel-ink2">{body}</p> : null}
-          </div>
-        );
-      } else {
-        elements.push(
-          <p key={`bold-${elements.length}`}>
-            <strong>{heading}:</strong> {body}
-          </p>
-        );
-      }
+      elements.push(
+        <div key={`section-${elements.length}`} className="ai-glass-panel-soft rounded-md px-2.5 py-2 shadow-none">
+          <p className="ai-section-title font-mono text-[11px] text-intel-ai">{boldMatch[1].trim()}</p>
+          {boldMatch[2].trim() ? <p className="mt-1 text-[13px] leading-relaxed text-intel-ink2">{boldMatch[2].trim()}</p> : null}
+        </div>
+      );
     } else {
       elements.push(<p key={`p-${elements.length}`}>{trimmed}</p>);
     }

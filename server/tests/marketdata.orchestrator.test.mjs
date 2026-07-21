@@ -55,7 +55,9 @@ function referenceRow(strike, expiration) {
 
 const counts = { snapshot: 0, reference: 0, status: 0 };
 const seenSnapshotParams = [];
+const seenReferenceParams = [];
 let snapshotServesNextPage = false;
+let snapshotReturnsEmpty = false;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -70,7 +72,7 @@ const server = http.createServer((req, res) => {
     seenSnapshotParams.push(Object.fromEntries(url.searchParams));
     const body = {
       status: 'OK',
-      results: [contractRow(500, '2026-07-24'), contractRow(505, '2026-07-24')],
+      results: snapshotReturnsEmpty ? [] : [contractRow(500, '2026-07-24'), contractRow(505, '2026-07-24')],
     };
     if (snapshotServesNextPage && !url.searchParams.get('cursor')) {
       body.next_url = `http://127.0.0.1:${server.address().port}/v3/snapshot/options/SPY?cursor=PAGE2`;
@@ -80,6 +82,11 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/v3/reference/options/contracts') {
     counts.reference += 1;
+    seenReferenceParams.push(Object.fromEntries(url.searchParams));
+    if (url.searchParams.has('underlying_asset')) {
+      res.end(JSON.stringify({ status: 'OK', results: [] }));
+      return;
+    }
     res.end(JSON.stringify({ status: 'OK', results: [referenceRow(500, '2026-07-24'), referenceRow(505, '2026-07-24')] }));
     return;
   }
@@ -98,6 +105,7 @@ process.env.OPTIONS_UNDERLYING_CONTEXT_TTL_MS = '1000';
 
 const orchestrator = await import('../dist/features/marketData/optionsMarketDataOrchestrator.service.js');
 const chainCache = await import('../dist/features/marketData/optionsChainCache.service.js');
+const massive = await import('../dist/shared/data/massive.js');
 
 test('1 + integration: five concurrent identical requests → one provider operation, same result', async () => {
   chainCache.clearChainCache();
@@ -131,6 +139,38 @@ test('narrow filters are forwarded to the provider query', async () => {
   assert.equal(last['expiration_date.gte'], '2026-07-20');
   assert.equal(last['expiration_date.lte'], '2026-08-03');
   assert.equal(last['contract_type'], 'call');
+});
+
+test('reference contract queries use canonical underlying_ticker only', async () => {
+  const last = seenReferenceParams[seenReferenceParams.length - 1];
+  assert.equal(last['underlying_ticker'], 'SPY');
+  assert.equal(last['underlying_asset'], undefined);
+});
+
+test('UI chain remains populated from reference contracts when snapshot rows are empty', async () => {
+  chainCache.clearChainCache();
+  snapshotReturnsEmpty = true;
+  try {
+    const chain = await orchestrator.getOptionChainWindow({
+      underlying: 'SPY',
+      expiration: '2026-07-24',
+      limit: 500,
+    });
+    assert.equal(chain.expirations.length, 1);
+    assert.equal(chain.expirations[0].expiration, '2026-07-24');
+    assert.equal(chain.expirations[0].strikes.length, 2);
+    assert.equal(chain.expirations[0].strikes[0].call.ticker, 'O:SPY260724C00500000');
+  } finally {
+    snapshotReturnsEmpty = false;
+  }
+});
+
+test('expiration list is populated from reference contracts', async () => {
+  const payload = await massive.listOptionExpirations('SPY', { limit: 1000, maxPages: 1 });
+  assert.deepEqual(payload.expirations, ['2026-07-24']);
+  const last = seenReferenceParams[seenReferenceParams.length - 1];
+  assert.equal(last['underlying_ticker'], 'SPY');
+  assert.equal(last['underlying_asset'], undefined);
 });
 
 test('getAutomationChain narrows by DTE window, direction, and strike range', async () => {

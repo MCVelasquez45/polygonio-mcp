@@ -3,6 +3,8 @@ export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   timestamp?: number;
+  /** Desk agent that produced this reply (client-side tag; hydrated transcripts infer it). */
+  agentId?: string;
 };
 
 export type ConversationMeta = {
