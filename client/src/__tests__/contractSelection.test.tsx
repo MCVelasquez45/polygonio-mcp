@@ -149,6 +149,7 @@ vi.mock('../api/alpaca', () => ({
 }));
 
 import App from '../App';
+import { marketApi } from '../api';
 
 const SNAPSHOT_BARS = Array.from({ length: 5 }, (_, i) => ({
   t: 1_755_000_000_000 + i * 60_000,
@@ -170,6 +171,7 @@ const FIVE_MINUTE_BARS = Array.from({ length: 5 }, (_, i) => ({
 
 describe('option contract selection', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     window.localStorage.clear();
     fakeSocket.emitted = [];
   });
@@ -215,6 +217,34 @@ describe('option contract selection', () => {
     expect(screen.queryByText('Loading bars…')).not.toBeInTheDocument();
     // ...and no new candle request was issued for the unchanged underlying.
     expect(fakeSocket.emitCount('chart:focus')).toBe(focusEmitsBeforeSelection);
+  });
+
+  it('renders the options matrix before persisted selection hydration completes', async () => {
+    const releaseSelection: { current?: () => void } = {};
+    vi.mocked(marketApi.getPersistedSelection).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          releaseSelection.current = () => resolve({ selection: null });
+        })
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText('$450.00')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Expiration' })).not.toBeDisabled();
+
+    releaseSelection.current?.();
+  });
+
+  it('keeps expirations populated from chain groups if the expiration list request fails', async () => {
+    vi.mocked(marketApi.getOptionExpirations).mockRejectedValueOnce(new Error('expirations unavailable'));
+
+    render(<App />);
+
+    expect(await screen.findByText('$450.00')).toBeInTheDocument();
+    const expirationSelect = screen.getByRole('combobox', { name: 'Expiration' });
+    expect(expirationSelect).not.toBeDisabled();
+    expect(screen.queryByText('No expirations')).not.toBeInTheDocument();
   });
 
   it('switches chart timeframe without unmounting and ignores stale snapshots', async () => {

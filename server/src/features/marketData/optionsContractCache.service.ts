@@ -57,7 +57,6 @@ export async function getReferenceContracts(args: {
   const underlying = args.underlying.toUpperCase();
   const params: Record<string, any> = {
     underlying_ticker: underlying,
-    underlying_asset: underlying,
     limit: 1000,
     order: 'asc',
     sort: 'ticker',

@@ -513,6 +513,7 @@ export const TradingSidebar = memo(function TradingSidebar({
             <form onSubmit={handleAddTicker} className="rounded-panel bg-intel-panel p-2 space-y-2">
               <div className="flex items-center gap-1.5">
                 <input
+                  aria-label="Add ticker to watchlist"
                   className="min-w-0 flex-1 rounded-md border border-intel-line bg-intel-panel2 px-2 py-1.5 text-xs font-mono uppercase tracking-wide text-intel-ink placeholder:text-intel-ink3 focus:border-intel-accentLine focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"
                   placeholder="Add ticker (e.g. AMZN)"
                   value={tickerInput}

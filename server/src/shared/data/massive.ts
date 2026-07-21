@@ -48,6 +48,23 @@ const ENTITLEMENT_BLOCK_TTL_MS = Math.max(
 type EntitlementBlock = { until: number; message: string; httpStatus: number | null };
 const entitlementBlocks = new Map<string, EntitlementBlock>();
 
+// Provider 429s are usually endpoint-class limits, not single-request limits.
+// Keep a short block after final/observed 429s so the next UI/AI/chart caller
+// falls through to cache/fallback paths instead of immediately hitting Massive.
+const RATE_LIMIT_BLOCK_TTL_MS = Math.max(
+  1_000,
+  Number(process.env.MASSIVE_RATE_LIMIT_BLOCK_TTL_MS ?? 60_000)
+);
+
+type RateLimitBlock = { until: number; message: string; retryAfterMs: number | null };
+const rateLimitBlocks = new Map<string, RateLimitBlock>();
+
+const MASSIVE_LOG_THROTTLE_MS = Math.max(
+  0,
+  Number(process.env.MASSIVE_LOG_THROTTLE_MS ?? 30_000)
+);
+const massiveLogLastAt = new Map<string, number>();
+
 /** Endpoint class used for entitlement tracking: template-ish path prefix. */
 function endpointClassOf(path: string): string {
   // /v2/aggs/ticker/SPY/range/5/minute/... → /v2/aggs/:ticker/range/:mult/:timespan
@@ -73,12 +90,35 @@ export function clearEntitlementBlocks() {
   entitlementBlocks.clear();
 }
 
+export function getRateLimitBlocks(): Record<string, { until: string; message: string; retryAfterMs: number | null }> {
+  const now = Date.now();
+  const out: Record<string, { until: string; message: string; retryAfterMs: number | null }> = {};
+  for (const [key, block] of rateLimitBlocks) {
+    if (block.until > now) {
+      out[key] = {
+        until: new Date(block.until).toISOString(),
+        message: block.message,
+        retryAfterMs: block.retryAfterMs,
+      };
+    }
+  }
+  return out;
+}
+
+export function clearRateLimitBlocks() {
+  rateLimitBlocks.clear();
+}
+
 const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY;
 const MASSIVE_BASE_URL = process.env.MASSIVE_BASE_URL || 'https://api.massive.com';
 const MASSIVE_DEFAULT_CACHE_TTL_MS = Number(process.env.MASSIVE_CACHE_TTL_MS ?? 10_000);
 const MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS = Math.max(
   0,
   Number(process.env.MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS ?? 15_000)
+);
+const MASSIVE_DAILY_AGGS_CACHE_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.MASSIVE_DAILY_AGGS_CACHE_TTL_MS ?? 15 * 60 * 1000)
 );
 const MASSIVE_TIMEOUT_MS = Math.max(1_000, Number(process.env.MASSIVE_TIMEOUT_MS ?? 10_000));
 const MASSIVE_MAX_CONCURRENT = Math.max(1, Number(process.env.MASSIVE_MAX_CONCURRENT ?? 1));
@@ -174,6 +214,71 @@ function setProviderCooldown(delayMs: number): void {
   providerCooldownUntil = Math.max(providerCooldownUntil, Date.now() + delayMs);
 }
 
+function logMassiveEvent(
+  level: 'log' | 'warn' | 'error',
+  event: string,
+  payload: Record<string, any> = {},
+  throttleKey?: string
+): void {
+  const now = Date.now();
+  if (throttleKey && MASSIVE_LOG_THROTTLE_MS > 0) {
+    const key = `${event}:${throttleKey}`;
+    const lastAt = massiveLogLastAt.get(key) ?? 0;
+    if (now - lastAt < MASSIVE_LOG_THROTTLE_MS) return;
+    massiveLogLastAt.set(key, now);
+  }
+
+  const entry = {
+    timestamp: new Date(now).toISOString(),
+    service: 'massive-client',
+    event,
+    ...payload,
+  };
+  const line = JSON.stringify(entry);
+  if (level === 'error') {
+    console.error(line);
+  } else if (level === 'warn') {
+    console.warn(line);
+  } else {
+    console.log(line);
+  }
+}
+
+function registerRateLimitBlock(path: string, message: string, retryAfterMs: number | null): void {
+  const endpointClass = endpointClassOf(path);
+  const ttlMs = Math.max(RATE_LIMIT_BLOCK_TTL_MS, retryAfterMs ?? 0);
+  const until = Date.now() + ttlMs;
+  const current = rateLimitBlocks.get(endpointClass);
+  if (current && current.until >= until) return;
+  rateLimitBlocks.set(endpointClass, { until, message, retryAfterMs });
+  logMassiveEvent(
+    'warn',
+    'RATE_LIMIT_BLOCK_REGISTERED',
+    {
+      endpointClass,
+      retryAfterMs,
+      blockTtlMs: ttlMs,
+      until: new Date(until).toISOString(),
+      message,
+    },
+    endpointClass
+  );
+}
+
+function activeRateLimitBlock(endpointClass: string, now: number): RateLimitBlock | null {
+  const block = rateLimitBlocks.get(endpointClass);
+  if (!block) return null;
+  if (block.until > now) return block;
+  rateLimitBlocks.delete(endpointClass);
+  return null;
+}
+
+function clearRateLimitBlockForPath(path: string): void {
+  const endpointClass = endpointClassOf(path);
+  if (!rateLimitBlocks.delete(endpointClass)) return;
+  logMassiveEvent('log', 'RATE_LIMIT_BLOCK_CLEARED', { endpointClass }, endpointClass);
+}
+
 /**
  * Sprint 2F — read-only observability into the SINGLE shared Massive request
  * manager (queue + inflight dedup + response cache). Used by /api/system/health.
@@ -183,9 +288,11 @@ export function getMassiveRequestStats() {
   const now = Date.now();
   const cooldownUntil =
     providerCooldownUntil > now ? new Date(providerCooldownUntil).toISOString() : null;
+  const activeRateLimitBlocks = getRateLimitBlocks();
   return {
-    state: cooldownUntil ? 'COOLDOWN' : 'OK',
+    state: cooldownUntil || Object.keys(activeRateLimitBlocks).length ? 'COOLDOWN' : 'OK',
     cooldownUntil,
+    rateLimitBlocks: activeRateLimitBlocks,
     queueDepth: requestQueue.length,
     activeRequests,
     inflightDeduped: inflightRequests.size,
@@ -341,6 +448,18 @@ export async function massiveGet<T = any>(
   const now = Date.now();
   if (ttl > 0 && cachedEntry && cachedEntry.expiresAt > now) {
     requestMetrics.cacheHits += 1;
+    logMassiveEvent(
+      'log',
+      'CACHE_HIT',
+      {
+        path,
+        endpointClass: endpointClassOf(path),
+        priority: priorityName(priority),
+        ageMs: now - cachedEntry.cachedAt,
+        ttlMs: ttl,
+      },
+      cacheKey
+    );
     return cachedEntry.value;
   }
   requestMetrics.cacheMisses += 1;
@@ -348,6 +467,12 @@ export async function massiveGet<T = any>(
   // Entitlement-blocked endpoint classes fail fast without consuming queue or
   // provider capacity — a plan limitation is not a transient error.
   const endpointClass = endpointClassOf(path);
+  logMassiveEvent(
+    'log',
+    'CACHE_MISS',
+    { path, endpointClass, priority: priorityName(priority), ttlMs: ttl },
+    cacheKey
+  );
   const block = entitlementBlocks.get(endpointClass);
   if (block) {
     if (block.until > now) {
@@ -356,15 +481,59 @@ export async function massiveGet<T = any>(
     entitlementBlocks.delete(endpointClass);
   }
 
+  const rateLimitBlock = activeRateLimitBlock(endpointClass, now);
+  if (rateLimitBlock) {
+    if (cachedEntry) {
+      requestMetrics.cacheHits += 1;
+      logMassiveEvent(
+        'warn',
+        'STALE_CACHE_RETURNED_DURING_RATE_LIMIT',
+        {
+          path,
+          endpointClass,
+          priority: priorityName(priority),
+          cooldownUntil: new Date(rateLimitBlock.until).toISOString(),
+          ageMs: now - cachedEntry.cachedAt,
+        },
+        cacheKey
+      );
+      return cachedEntry.value;
+    }
+    logMassiveEvent(
+      'warn',
+      'RATE_LIMIT_BLOCKED_REQUEST',
+      {
+        path,
+        endpointClass,
+        priority: priorityName(priority),
+        cooldownUntil: new Date(rateLimitBlock.until).toISOString(),
+        message: rateLimitBlock.message,
+      },
+      cacheKey
+    );
+    const error: any = new Error('Massive rate limit cooldown active');
+    error.status = 429;
+    error.code = 'MASSIVE_RATE_LIMIT_COOLDOWN';
+    error.cooldownUntil = new Date(rateLimitBlock.until).toISOString();
+    error.response = { status: 429, headers: {} };
+    throw error;
+  }
+
   if (providerCooldownUntil > now && isBackgroundPriority(priority)) {
     if (cachedEntry) {
       requestMetrics.cacheHits += 1;
-      console.warn('[MASSIVE] serving stale cache during provider cooldown', {
-        path,
-        priority: priorityName(priority),
-        cooldownUntil: new Date(providerCooldownUntil).toISOString(),
-        ageMs: now - cachedEntry.cachedAt,
-      });
+      logMassiveEvent(
+        'warn',
+        'STALE_CACHE_RETURNED_DURING_PROVIDER_COOLDOWN',
+        {
+          path,
+          endpointClass,
+          priority: priorityName(priority),
+          cooldownUntil: new Date(providerCooldownUntil).toISOString(),
+          ageMs: now - cachedEntry.cachedAt,
+        },
+        cacheKey
+      );
       return cachedEntry.value;
     }
     requestMetrics.backgroundDropped += 1;
@@ -377,6 +546,12 @@ export async function massiveGet<T = any>(
 
   if (inflightRequests.has(cacheKey)) {
     requestMetrics.deduplicatedRequests += 1;
+    logMassiveEvent(
+      'log',
+      'INFLIGHT_DEDUPED',
+      { path, endpointClass, priority: priorityName(priority) },
+      cacheKey
+    );
     return inflightRequests.get(cacheKey)! as Promise<T>;
   }
 
@@ -394,11 +569,17 @@ export async function massiveGet<T = any>(
   } catch (error) {
     if (cachedEntry) {
       requestMetrics.cacheHits += 1;
-      console.warn('[MASSIVE] returning stale cache after failure', {
-        path,
-        ageMs: Date.now() - cachedEntry.cachedAt,
-        reason: axios.isAxiosError(error) ? error.response?.status : 'error'
-      });
+      logMassiveEvent(
+        'warn',
+        'STALE_CACHE_RETURNED_AFTER_FAILURE',
+        {
+          path,
+          endpointClass,
+          ageMs: Date.now() - cachedEntry.cachedAt,
+          reason: axios.isAxiosError(error) ? error.response?.status : (error as any)?.status ?? 'error',
+        },
+        cacheKey
+      );
       return cachedEntry.value;
     }
     throw error;
@@ -429,12 +610,17 @@ function registerEntitlementBlock(path: string, httpStatus: number | null, messa
     message,
     httpStatus,
   });
-  console.warn('[MASSIVE] endpoint class blocked by entitlement', {
-    endpointClass,
-    httpStatus,
-    blockTtlMs: ENTITLEMENT_BLOCK_TTL_MS,
-    message,
-  });
+  logMassiveEvent(
+    'warn',
+    'ENTITLEMENT_BLOCK_REGISTERED',
+    {
+      endpointClass,
+      httpStatus,
+      blockTtlMs: ENTITLEMENT_BLOCK_TTL_MS,
+      message,
+    },
+    endpointClass
+  );
 }
 
 async function executeMassiveRequest<T>(
@@ -443,7 +629,17 @@ async function executeMassiveRequest<T>(
   attempt: number = 0
 ): Promise<T> {
   try {
-    console.log('[MASSIVE] GET', path, sanitizeParamsForLog(normalizedParams), { attempt: attempt + 1 });
+    logMassiveEvent(
+      'log',
+      'REQUEST_STARTED',
+      {
+        path,
+        endpointClass: endpointClassOf(path),
+        params: sanitizeParamsForLog(normalizedParams),
+        attempt: attempt + 1,
+      },
+      `${path}:${attempt}`
+    );
     const { data } = await client.get<MassiveResponse<T>>(path, {
       params: {
         apiKey: MASSIVE_API_KEY,
@@ -460,6 +656,7 @@ async function executeMassiveRequest<T>(
       registerEntitlementBlock(path, null, message);
       throw new MassiveEntitlementError(path, null, message);
     }
+    clearRateLimitBlockForPath(path);
     return (data as any) ?? {};
   } catch (error) {
     if (error instanceof MassiveEntitlementError) throw error;
@@ -478,19 +675,27 @@ async function executeMassiveRequest<T>(
       if (status === 429) {
         requestMetrics.rateLimitResponses += 1;
         setProviderCooldown(delayMs);
+        registerRateLimitBlock(path, 'Massive returned HTTP 429; backing off endpoint class.', delayMs);
       }
-      console.warn('[MASSIVE] request failed, retrying', {
-        path,
-        status,
-        attempt: attempt + 1,
-        retryDelayMs: delayMs
-      });
+      logMassiveEvent(
+        'warn',
+        'REQUEST_RETRY_SCHEDULED',
+        {
+          path,
+          endpointClass: endpointClassOf(path),
+          status,
+          attempt: attempt + 1,
+          retryDelayMs: delayMs,
+        },
+        `${path}:${status}:${attempt}`
+      );
       await delay(delayMs);
       return executeMassiveRequest(path, normalizedParams, attempt + 1);
     }
     if (status === 429) {
       requestMetrics.rateLimitResponses += 1;
       setProviderCooldown(MASSIVE_RETRY_MAX_MS);
+      registerRateLimitBlock(path, 'Massive returned HTTP 429 after retry budget was exhausted.', null);
     }
     throw error;
   }
@@ -536,7 +741,7 @@ export async function getOptionAggregates(
     .toISOString()
     .slice(0, 10)}/${to.toISOString().slice(0, 10)}`;
   const isIntraday = timespan === 'minute' || timespan === 'hour';
-  const cacheTtlMs = isIntraday ? MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS : 60_000;
+  const cacheTtlMs = isIntraday ? MASSIVE_INTRADAY_AGGS_CACHE_TTL_MS : MASSIVE_DAILY_AGGS_CACHE_TTL_MS;
   const sortOrder = isIntraday ? 'desc' : 'asc';
   const payload = await massiveGet(
     endpoint,
@@ -722,6 +927,24 @@ type OptionContractQuery = {
   cursor?: string;
 };
 
+function applyReferenceUnderlyingFilter(params: Record<string, any>, underlying: string) {
+  // Massive's reference contracts endpoint uses `underlying_ticker`.
+  // Sending the snapshot endpoint's `underlying_asset` filter here can produce
+  // a 200 response with an empty result set on some provider paths.
+  params.underlying_ticker = underlying.toUpperCase();
+}
+
+function logOptionReferenceEmpty(event: string, payload: Record<string, any>) {
+  console.warn(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: 'massive-options-reference',
+      event,
+      ...payload,
+    })
+  );
+}
+
 /**
  * Lists option contracts with filtering/pagination. Primarily consumed when
  * building option chains server-side.
@@ -740,8 +963,7 @@ export async function listMassiveOptionContracts(options: OptionContractQuery = 
   }
   if (options.underlying) {
     const normalized = options.underlying.toUpperCase();
-    params.underlying_ticker = normalized;
-    params.underlying_asset = normalized;
+    applyReferenceUnderlyingFilter(params, normalized);
   }
   if (options.contractType === 'call' || options.contractType === 'put') {
     params.contract_type = options.contractType;
@@ -768,6 +990,17 @@ export async function listMassiveOptionContracts(options: OptionContractQuery = 
     count: results.length,
     hasNext: Boolean(payload.next_url)
   });
+  if (contracts.length === 0) {
+    logOptionReferenceEmpty('REFERENCE_CONTRACTS_EMPTY', {
+      underlying: params.underlying_ticker ?? null,
+      ticker: params.ticker ?? null,
+      contractType: params.contract_type ?? null,
+      expiration: params.expiration_date ?? null,
+      limit,
+      hasNext: Boolean(payload.next_url),
+      requestId: payload.request_id ?? null,
+    });
+  }
   return {
     results,
     nextUrl: payload.next_url ?? null,
@@ -794,17 +1027,26 @@ export async function listOptionExpirations(
 
   do {
     const params: Record<string, any> = {
-      underlying_asset: symbol,
-      underlying_ticker: symbol,
       limit,
       order: 'asc',
       sort: 'expiration_date'
     };
+    applyReferenceUnderlyingFilter(params, symbol);
     if (cursor) {
       params.cursor = cursor;
     }
     const payload = await massiveGet('/v3/reference/options/contracts', params, { cacheTtlMs: 60_000 });
     const results = Array.isArray(payload?.results) ? payload.results : [];
+    if (results.length === 0) {
+      logOptionReferenceEmpty('EXPIRATIONS_REFERENCE_PAGE_EMPTY', {
+        underlying: symbol,
+        page: pagesFetched + 1,
+        limit,
+        cursor: logHash(cursor),
+        hasNext: Boolean(payload?.next_url),
+        requestId: payload?.request_id ?? null,
+      });
+    }
     for (const contract of results) {
       const rawExpiration =
         typeof contract?.expiration_date === 'string'
@@ -820,6 +1062,15 @@ export async function listOptionExpirations(
     cursor = extractCursor(payload?.next_url);
     pagesFetched += 1;
   } while (cursor && pagesFetched < maxPages);
+
+  if (expirations.size === 0) {
+    logOptionReferenceEmpty('EXPIRATIONS_EMPTY', {
+      underlying: symbol,
+      pagesFetched,
+      limit,
+      maxPages,
+    });
+  }
 
   return {
     ticker: symbol,
@@ -1113,12 +1364,11 @@ export async function getMassiveOptionsChain(
   };
   try {
     const referenceParams: Record<string, any> = {
-      underlying_asset: normalizedUnderlying,
-      underlying_ticker: normalizedUnderlying,
       limit: clampedLimit,
       order,
       sort
     };
+    applyReferenceUnderlyingFilter(referenceParams, normalizedUnderlying);
     if (normalizedExpirationFilter) {
       referenceParams.expiration_date = normalizedExpirationFilter;
     } else {
@@ -1164,6 +1414,20 @@ export async function getMassiveOptionsChain(
         .filter(Boolean)
         .map((leg: any) => [leg.ticker, leg])
     );
+    if (contracts.length === 0) {
+      logOptionReferenceEmpty('CHAIN_REFERENCE_EMPTY', {
+        underlying: normalizedUnderlying,
+        expiration: normalizedExpirationFilter ?? null,
+        expirationGte: expirationGte ?? null,
+        expirationLte: expirationLte ?? null,
+        contractType: options.contractType ?? null,
+        strikeGte: options.strikeGte ?? null,
+        strikeLte: options.strikeLte ?? null,
+        limit: clampedLimit,
+        pagesFetched,
+        nextCursor: logHash(nextCursor),
+      });
+    }
   } catch (error) {
     console.warn('[MASSIVE] reference contracts fetch failed for', normalizedUnderlying, error);
   }
@@ -1354,6 +1618,27 @@ export async function getMassiveOptionsChain(
     snapshotPages: snapshotData?.pagesFetched ?? 0,
     referencePages: referenceStats.pagesFetched
   });
+  if (!expirations.length) {
+    console.warn(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        service: 'massive-options-chain',
+        event: 'CHAIN_EMPTY',
+        underlying: normalizedUnderlying,
+        expiration: normalizedExpirationFilter ?? null,
+        expirationGte: expirationGte ?? null,
+        expirationLte: expirationLte ?? null,
+        contractType: options.contractType ?? null,
+        strikeGte: options.strikeGte ?? null,
+        strikeLte: options.strikeLte ?? null,
+        snapshotOptions: rawOptions.length,
+        referenceContracts: referenceLegs.size,
+        snapshotPages: snapshotData?.pagesFetched ?? 0,
+        referencePages: referenceStats.pagesFetched,
+        referenceNextCursor: logHash(referenceStats.nextCursor),
+      })
+    );
+  }
 
   const coveredExpirations = expirations.map(group => group.expiration).sort();
 
