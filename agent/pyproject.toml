@@ -25,7 +25,7 @@ dependencies = [
   "opentelemetry-instrumentation-fastapi",
   "opentelemetry-exporter-otlp",
   "mcp_polygon @ git+https://github.com/polygon-io/mcp_polygon@v0.4.0",
-  "sift-cli[anthropic] @ git+https://github.com/gitfitbro/sift.git",
+  "sift-cli[anthropic]",
   "pandas>=2.0",
   "pandas_ta>=0.4.67b0",
   "numpy>=1.24",
