@@ -66,7 +66,8 @@ export function ingestAggregateEvent(args: {
       c: aggregated.close,
       v: aggregated.volume,
       isFinal,
-      source: 'live'
+      source: 'live',
+      lastUpdatedAt: Date.now()
     },
     minuteStart,
     bucketStart
@@ -178,6 +179,7 @@ function coerceNumber(value: any): number | null {
 
 function coerceTimestamp(value: any): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1_000_000_000_000_000) return Math.floor(value / 1_000_000);
     return value > AGG_TIMESTAMP_MS_THRESHOLD ? value : value * 1000;
   }
   if (typeof value === 'string') {
@@ -185,6 +187,7 @@ function coerceTimestamp(value: any): number {
     if (!Number.isNaN(parsed)) return parsed;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) {
+      if (numeric > 1_000_000_000_000_000) return Math.floor(numeric / 1_000_000);
       return numeric > AGG_TIMESTAMP_MS_THRESHOLD ? numeric : numeric * 1000;
     }
   }

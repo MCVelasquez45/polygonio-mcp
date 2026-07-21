@@ -99,6 +99,7 @@ router.post('/', async (req, res, next) => {
               symbol: symbol ?? '',
               timeframe: typeof context?.chart?.timeframe === 'string' ? context.chart.timeframe : null,
               contract: typeof context?.option?.ticker === 'string' ? context.option.ticker : null,
+              liveMarket: context?.liveMarket ?? null,
             },
             { userKey, sessionName: agentSessionName }
           )

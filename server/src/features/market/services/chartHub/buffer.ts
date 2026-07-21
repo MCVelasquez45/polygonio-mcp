@@ -11,6 +11,7 @@ export type Candle = {
   v: number;
   isFinal: boolean;
   source: CandleSource;
+  lastUpdatedAt?: number;
 };
 
 export type BufferSnapshot = {
@@ -163,7 +164,8 @@ export function upsertCandle(key: string, candle: Candle, maxBars: number) {
 export function getSnapshot(key: string): BufferSnapshot | null {
   const buffer = buffers.get(key);
   if (!buffer) return null;
-  const lastTimestamp = buffer.bars.at(-1)?.t ?? null;
+  const lastBar = buffer.bars.at(-1);
+  const lastTimestamp = lastBar?.lastUpdatedAt ?? lastBar?.t ?? null;
   return {
     bars: buffer.bars.slice(),
     health: buildHealth(buffer.healthMeta, lastTimestamp)
@@ -217,7 +219,8 @@ export function buildDataQualityMetrics(key: string): DataQualityMetrics | null 
   const buffer = buffers.get(key);
   if (!buffer) return null;
 
-  const lastTimestamp = buffer.bars.at(-1)?.t ?? null;
+  const lastBar = buffer.bars.at(-1);
+  const lastTimestamp = lastBar?.lastUpdatedAt ?? lastBar?.t ?? null;
   const lastUpdateMsAgo = lastTimestamp != null ? Date.now() - lastTimestamp : null;
 
   return {
@@ -268,4 +271,3 @@ function enforceBarLimit(bars: Candle[], maxBars: number): Candle[] {
   if (maxBars <= 0 || bars.length <= maxBars) return bars;
   return bars.slice(bars.length - maxBars);
 }
-

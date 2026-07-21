@@ -39,6 +39,7 @@ export type AgentParams = {
   symbol: string;
   timeframe?: string | null;
   contract?: string | null;
+  liveMarket?: unknown;
 };
 
 type Builder = (params: AgentParams) => Promise<ContextSection>;

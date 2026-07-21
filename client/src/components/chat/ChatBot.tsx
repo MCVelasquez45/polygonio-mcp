@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'reac
 import { chatApi } from '../../api';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
 import { useIsMobile } from '../../hooks/useMediaQuery';
+import { getLiveQuoteSnapshot, getLiveTradeSnapshot } from '../../lib/liveMarketStore';
 import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
 import { agentIdFromText, getAgentMeta } from './agentMeta';
 import { AiReportCard, type ReportSaveState } from './AiReportCard';
@@ -119,7 +120,12 @@ export function ChatBot({
     setPendingAgentId(agentId ?? null);
 
     try {
-      const data = await chatApi.sendChatMessage({ message: userMessage.content, sessionId, context, agentId });
+      const data = await chatApi.sendChatMessage({
+        message: userMessage.content,
+        sessionId,
+        context: enrichContextWithLiveMarket(context, selectedTicker),
+        agentId,
+      });
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -330,6 +336,43 @@ export function ChatBot({
       </form>
     </div>
   );
+}
+
+function compactQuote(symbol: string | null | undefined) {
+  const quote = getLiveQuoteSnapshot(symbol);
+  if (!quote) return null;
+  return {
+    bidPrice: quote.bidPrice,
+    askPrice: quote.askPrice,
+    midpoint: quote.midpoint,
+    spread: quote.spread,
+    bidSize: quote.bidSize,
+    askSize: quote.askSize,
+    timestamp: quote.timestamp,
+  };
+}
+
+function enrichContextWithLiveMarket(context: ChatContext | undefined, selectedTicker: string): ChatContext {
+  const quoteSymbol = context?.chart?.symbol ?? selectedTicker;
+  const optionSymbol = context?.option?.ticker ?? null;
+  const optionTrade = getLiveTradeSnapshot(optionSymbol);
+  return {
+    ...(context ?? {}),
+    liveMarket: {
+      quoteSymbol,
+      optionSymbol,
+      quote: compactQuote(quoteSymbol),
+      optionQuote: compactQuote(optionSymbol),
+      optionLastTrade: optionTrade
+        ? {
+            price: optionTrade.price,
+            size: optionTrade.size,
+            timestamp: optionTrade.timestamp,
+          }
+        : null,
+      readAt: Date.now(),
+    },
+  };
 }
 
 // Mirrors the server registry (GET /api/chat/agents); used until it loads or

@@ -1,6 +1,8 @@
 import { resolveAggregates } from '../../market/services/aggregatesService';
 import { getMassiveOptionQuoteSnapshot } from '../../../shared/data/massive';
 import { getAutomationChain } from '../../marketData/optionsMarketDataOrchestrator.service';
+import { acquireOptionSubscription } from '../../marketData/optionsSubscriptionManager.service';
+import { getFreshQuote } from '../../marketData/optionsQuoteCache.service';
 import type { ChainCompleteness, UnderlyingContext } from '../../marketData/optionsData.types';
 import type { AutomationStrategyConfig } from '../automation.config';
 import { getStrategyConfig, REASON } from '../automation.config';
@@ -11,6 +13,9 @@ import type { SignalDirection } from '../models/tradeCandidate.model';
 // aggregates resolver (cache + fallback + health) and the shared Options
 // Market Data Orchestrator — nothing here talks to Massive directly except
 // through those shared services.
+
+const AUTOMATION_MARK_CONSUMER = 'automation-monitor-marks';
+const automationMarkSubscriptions = new Set<string>();
 
 export type BarValidation = {
   ok: boolean;
@@ -266,7 +271,7 @@ export type HeldContractMarkResult = {
   fetchStartedAt: number;
   fetchCompletedAt: number;
   computedAgeMs: number | null;
-  source: 'contract-snapshot' | 'chain-fallback' | 'none';
+  source: 'websocket-cache' | 'contract-snapshot' | 'chain-fallback' | 'none';
   cacheStatus: 'LIVE' | 'FALLBACK' | 'NONE';
 };
 
@@ -286,12 +291,31 @@ export async function fetchHeldContractMark(
   const symbol = optionSymbol.toUpperCase();
   const underlying = underlyingFromOccSymbol(symbol);
   const fetchStartedAt = now;
+  if (!automationMarkSubscriptions.has(symbol)) {
+    if (acquireOptionSubscription(symbol, 'trades_quotes', AUTOMATION_MARK_CONSUMER).accepted) {
+      automationMarkSubscriptions.add(symbol);
+    }
+  }
 
   const midFrom = (bid: number | null, ask: number | null, mid: number | null): number | null => {
     if (mid != null && mid > 0) return mid;
     if (bid != null && ask != null && bid > 0 && ask >= bid) return Number(((bid + ask) / 2).toFixed(4));
     return null;
   };
+  const maxAgeMs = getStrategyConfig(underlying).contract.quoteMaxAgeMs;
+  const cachedQuote = getFreshQuote(symbol, maxAgeMs, fetchStartedAt);
+  if (cachedQuote) {
+    const mark = midFrom(cachedQuote.bid, cachedQuote.ask, cachedQuote.mid);
+    return {
+      mark: mark != null && mark > 0 ? mark : null,
+      providerQuoteTimestamp: cachedQuote.providerTimestamp,
+      fetchStartedAt,
+      fetchCompletedAt: fetchStartedAt,
+      computedAgeMs: cachedQuote.providerTimestamp != null ? fetchStartedAt - cachedQuote.providerTimestamp : null,
+      source: 'websocket-cache',
+      cacheStatus: 'LIVE',
+    };
+  }
 
   try {
     const quote = await getMassiveOptionQuoteSnapshot(underlying, symbol);

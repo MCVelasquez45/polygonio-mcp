@@ -21,6 +21,11 @@ export type MassiveWsState = {
   reconnectAttempts: number;
   nextReconnectAt: string | null;
   lastEventAt: string | null;
+  lastStatus: string | null;
+  lastStatusMessage: string | null;
+  lastCloseCode: number | null;
+  lastCloseReason: string | null;
+  lastErrorMessage: string | null;
   subscriptionCount: number;
 };
 
@@ -40,6 +45,11 @@ export class MassiveWsClient {
   private authenticated = false;
   private nextReconnectAt: number | null = null;
   private lastEventAt: number | null = null;
+  private lastStatus: string | null = null;
+  private lastStatusMessage: string | null = null;
+  private lastCloseCode: number | null = null;
+  private lastCloseReason: string | null = null;
+  private lastErrorMessage: string | null = null;
   private stopped = false;
 
   constructor(options: MassiveWsOptions) {
@@ -77,14 +87,27 @@ export class MassiveWsClient {
       }
     });
 
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => {
       this.connecting = false;
       this.authenticated = false;
       this.ws = null;
+      this.lastCloseCode = code;
+      this.lastCloseReason = reason.toString();
+      if (!this.stopped) {
+        console.warn('[MassiveWS] closed', {
+          code,
+          reason: this.lastCloseReason,
+          lastStatus: this.lastStatus,
+          lastStatusMessage: this.lastStatusMessage,
+          url: this.url,
+          assetClass: this.assetClass,
+        });
+      }
       this.scheduleReconnect();
     });
 
     socket.on('error', error => {
+      this.lastErrorMessage = (error as Error)?.message ?? String(error);
       this.onError?.(error);
       if (this.ws && this.ws.readyState !== WebSocket.CLOSING && this.ws.readyState !== WebSocket.CLOSED) {
         this.ws.close();
@@ -106,6 +129,9 @@ export class MassiveWsClient {
     this.connecting = false;
     this.authenticated = false;
     this.nextReconnectAt = null;
+    this.lastCloseCode = null;
+    this.lastCloseReason = null;
+    this.lastErrorMessage = null;
     this.subscriptions.clear();
   }
 
@@ -120,6 +146,11 @@ export class MassiveWsClient {
       reconnectAttempts: this.reconnectAttempts,
       nextReconnectAt: this.nextReconnectAt ? new Date(this.nextReconnectAt).toISOString() : null,
       lastEventAt: this.lastEventAt ? new Date(this.lastEventAt).toISOString() : null,
+      lastStatus: this.lastStatus,
+      lastStatusMessage: this.lastStatusMessage,
+      lastCloseCode: this.lastCloseCode,
+      lastCloseReason: this.lastCloseReason,
+      lastErrorMessage: this.lastErrorMessage,
       subscriptionCount: this.subscriptions.size,
     };
   }
@@ -131,6 +162,14 @@ export class MassiveWsClient {
   subscribe(params: string) {
     if (this.subscriptions.has(params)) return;
     this.subscriptions.add(params);
+    if (!this.authenticated) {
+      console.log('[MassiveWS] subscription queued until auth_success', {
+        params,
+        url: this.url,
+        assetClass: this.assetClass,
+      });
+      return;
+    }
     this.send({
       action: 'subscribe',
       params
@@ -140,6 +179,7 @@ export class MassiveWsClient {
   unsubscribe(params: string) {
     if (!this.subscriptions.has(params)) return;
     this.subscriptions.delete(params);
+    if (!this.authenticated) return;
     this.send({
       action: 'unsubscribe',
       params
@@ -147,6 +187,10 @@ export class MassiveWsClient {
   }
 
   private authenticate() {
+    console.log('[MassiveWS] authentication sent', {
+      url: this.url,
+      assetClass: this.assetClass,
+    });
     this.send({
       action: 'auth',
       params: this.apiKey
@@ -156,6 +200,11 @@ export class MassiveWsClient {
   private resubscribeAll() {
     if (!this.subscriptions.size) return;
     const params = Array.from(this.subscriptions).join(',');
+    console.log('[MassiveWS] resubscribing after auth_success', {
+      url: this.url,
+      assetClass: this.assetClass,
+      params,
+    });
     this.send({
       action: 'subscribe',
       params
@@ -170,7 +219,13 @@ export class MassiveWsClient {
     // NEVER permanently gives up: while consumers hold subscriptions the feed
     // must keep trying (health reporting marks the stream DEGRADED/UNAVAILABLE
     // in the meantime — see optionsDataHealth).
-    const base = Math.min(3000 * Math.pow(2, Math.min(attempt - 1, 5)), 60_000);
+    const providerBlockedDelay =
+      this.lastStatus === 'auth_failed'
+        ? 30 * 60_000
+        : this.lastStatus === 'max_connections'
+          ? 5 * 60_000
+          : null;
+    const base = providerBlockedDelay ?? Math.min(3000 * Math.pow(2, Math.min(attempt - 1, 5)), 60_000);
     const jitter = Math.round(base * (Math.random() * 0.4 - 0.2)); // ±20%
     const delayMs = Math.max(1_000, base + jitter);
     this.nextReconnectAt = Date.now() + delayMs;
@@ -193,6 +248,21 @@ export class MassiveWsClient {
   private handleEvent(event: any) {
     this.lastEventAt = Date.now();
     if (event?.ev === 'status') {
+      this.lastStatus = typeof event.status === 'string' ? event.status : null;
+      this.lastStatusMessage = typeof event.message === 'string' ? event.message : null;
+      console.log('[MassiveWS] PROVIDER_RESPONSE', {
+        assetClass: this.assetClass,
+        url: this.url,
+        response: event,
+      });
+      if (this.lastStatus && this.lastStatus !== 'connected' && this.lastStatus !== 'auth_success') {
+        console.warn('[MassiveWS] provider status', {
+          status: this.lastStatus,
+          message: this.lastStatusMessage,
+          url: this.url,
+          assetClass: this.assetClass,
+        });
+      }
       this.onStatus?.(event);
       if (event?.status === 'auth_success') {
         this.reconnectAttempts = 0;

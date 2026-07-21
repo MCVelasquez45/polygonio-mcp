@@ -810,7 +810,7 @@ export async function getMassiveTrades(optionSymbol: string, limit = 50, order: 
       id: trade.id ?? `${trade.sip_timestamp ?? index}`,
       price: trade.price,
       size: trade.size,
-      timestamp: trade.sip_timestamp ?? trade.timestamp,
+      timestamp: normalizeProviderTimestamp(trade.sip_timestamp ?? trade.timestamp),
       exchange: trade.exchange,
       conditions: trade.conditions
     }))
@@ -866,7 +866,7 @@ export async function getMassiveQuotes(optionSymbol: string, opts?: { limit?: nu
     const bidPrice = quote.bid_price ?? null;
     const askPrice = quote.ask_price ?? null;
     return {
-      timestamp: typeof quote.sip_timestamp === 'number' ? quote.sip_timestamp : quote.timestamp ?? null,
+      timestamp: normalizeProviderTimestamp(quote.sip_timestamp ?? quote.timestamp),
       bidPrice,
       askPrice,
       bidSize: quote.bid_size ?? null,
@@ -2161,6 +2161,8 @@ export async function getMassiveOptionsSnapshot(
       typeof underlyingAsset?.timeframe === 'string' ? underlyingAsset.timeframe.toUpperCase() : 'UNKNOWN',
     change,
     changePercent,
+    dayHigh: resolveNumber(underlyingDay?.high),
+    dayLow: resolveNumber(underlyingDay?.low),
     iv: resolveNumber(referenceOption?.implied_volatility),
     volume: resolveNumber(referenceOption?.day?.volume ?? referenceOption?.volume),
     openInterest: resolveNumber(referenceOption?.open_interest),
@@ -2381,6 +2383,8 @@ export async function getMassiveStockSnapshot(
     price,
     change,
     changePercent,
+    dayHigh: resolveNumber(result.h),
+    dayLow: resolveNumber(result.l),
     volume: resolveNumber(result.v),
     updated: result.t, // Timestamp of the bar's start usually
     source: 'prev_close' // Debug helper

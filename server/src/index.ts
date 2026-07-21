@@ -41,6 +41,7 @@ import {
   stopAutomationVisibilityBroadcaster,
 } from './features/portfolio/automationVisibilitySocket.service';
 import { marketDataRouter } from './features/marketData/marketData.routes';
+import { shutdownOptionsStream } from './features/marketData/optionsSubscriptionManager.service';
 import { intelligenceRouter } from './features/intelligence/intelligence.routes';
 import { optionsRouter } from './features/options/options.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
@@ -266,6 +267,7 @@ async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[SERVER] ${signal} received — stopping automation schedulers`);
+  shutdownOptionsStream();
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
   await Promise.all([

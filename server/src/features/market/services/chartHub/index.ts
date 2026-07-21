@@ -181,7 +181,8 @@ function emitSnapshotToSocket(
   timeframe: TimeframeConfig
 ) {
   const filteredBars = filterBarsForSessionMode(bars, focus.sessionMode, timeframe);
-  const health = buildHealth(getHealthMeta(getFocusKey(focus)), filteredBars.at(-1)?.t ?? null);
+  const lastBar = filteredBars.at(-1) ?? null;
+  const health = buildHealth(getHealthMeta(getFocusKey(focus)), lastBar?.lastUpdatedAt ?? lastBar?.t ?? null);
   const baseSession = sessionMetaByKey.get(getFocusKey(focus));
   const sessionNote = buildSessionNote(focus.sessionMode, timeframe);
   const noteParts = [baseSession?.note, sessionNote].filter(Boolean);
@@ -205,7 +206,7 @@ function emitSnapshotToSocket(
 function emitUpdate(key: string, candle: Candle, meta: HealthMeta, timeframe: TimeframeConfig) {
   const sockets = getSocketsForKey(key);
   if (!sockets.size) return;
-  const health = buildHealth(meta, candle.t);
+  const health = buildHealth(meta, candle.lastUpdatedAt ?? candle.t);
   sockets.forEach(socketId => {
     const focus = getFocusForSocketId(socketId);
     if (!focus) return;

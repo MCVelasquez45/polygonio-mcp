@@ -38,6 +38,7 @@ process.env.MASSIVE_TIMEOUT_MS = '100';
 process.env.MASSIVE_OPTIONS_WS_URL = `ws://127.0.0.1:${optionsWss.address().port}`;
 process.env.MASSIVE_STOCKS_WS_URL = `ws://127.0.0.1:${stocksWss.address().port}`;
 process.env.MASSIVE_SUBSCRIPTION_PROFILE = 'options-advanced';
+process.env.MASSIVE_OPTIONS_ALLOW_NON_PROD_OWNER = 'true';
 delete process.env.MASSIVE_STOCKS_WS_ENABLED;
 
 const manager = await import('../dist/features/marketData/optionsSubscriptionManager.service.js');
@@ -54,8 +55,8 @@ const waitFor = async (predicate, ms = 2000) => {
 
 test('4+5: option subscriptions are refcounted, deduped, and released when idle', async () => {
   const symbol = 'O:SPY260724C00500000';
-  assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-a'), true);
-  assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-b'), true);
+  assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-a').accepted, true);
+  assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-b').accepted, true);
   await waitFor(() => optionsFrames.some(f => f.action === 'subscribe'));
 
   const subscribes = optionsFrames.filter(
@@ -76,7 +77,9 @@ test('4+5: option subscriptions are refcounted, deduped, and released when idle'
 });
 
 test('non-option symbols are refused by the options subscription manager', () => {
-  assert.equal(manager.acquireOptionSubscription('SPY', 'trades_quotes', 'consumer-x'), false);
+  const result = manager.acquireOptionSubscription('SPY', 'trades_quotes', 'consumer-x');
+  assert.equal(result.accepted, false);
+  assert.equal(result.reason, 'invalid_option_symbol');
 });
 
 test('6: under options-advanced, a stock live subscription never opens a stocks WebSocket', async () => {

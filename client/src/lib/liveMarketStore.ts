@@ -171,3 +171,15 @@ export function useLiveQuotes(): Record<string, QuoteSnapshot> {
 export function useLiveTrades(): Record<string, TradePrint> {
   return useSyncExternalStore(subscribeMaps, () => lastTrades);
 }
+
+/** Non-reactive latest quote read, for request-time payload enrichment. */
+export function getLiveQuoteSnapshot(symbol: string | null | undefined): QuoteSnapshot | null {
+  const key = symbol?.toUpperCase();
+  return key ? quotes[key] ?? null : null;
+}
+
+/** Non-reactive latest trade read, for request-time payload enrichment. */
+export function getLiveTradeSnapshot(symbol: string | null | undefined): TradePrint | null {
+  const key = symbol?.toUpperCase();
+  return key ? lastTrades[key] ?? null : null;
+}

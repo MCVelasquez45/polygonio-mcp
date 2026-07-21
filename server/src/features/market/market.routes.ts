@@ -21,9 +21,11 @@ import {
   listOptionExchanges,
   listOptionConditions,
   getMassiveStockSnapshot,
+  normalizeProviderTimestamp,
 } from '../../shared/data/massive';
 import { REQUEST_PRIORITY } from '../../shared/data/massive';
 import { getOptionChainWindow } from '../marketData/optionsMarketDataOrchestrator.service';
+import { ingestRestQuote } from '../marketData/optionsQuoteCache.service';
 import { fetchWithCache } from './services/marketCache';
 import { getLatestSelection, saveSelection } from '../options/services/selectionStore';
 import { getCachedChainSnapshot, saveChainSnapshot } from '../options/services/optionsChainStore';
@@ -156,6 +158,14 @@ router.get('/quotes/:ticker', async (req, res, next) => {
         if (!quote) {
           throw Object.assign(new Error('Quote not found'), { status: 404 });
         }
+        ingestRestQuote({
+          symbol: ticker,
+          bid: typeof quote.bidPrice === 'number' ? quote.bidPrice : null,
+          ask: typeof quote.askPrice === 'number' ? quote.askPrice : null,
+          bidSize: typeof quote.bidSize === 'number' ? quote.bidSize : null,
+          askSize: typeof quote.askSize === 'number' ? quote.askSize : null,
+          providerTimestamp: normalizeProviderTimestamp(quote.updated ?? quote.timestamp ?? null),
+        });
         return quote;
       },
       { ticker }

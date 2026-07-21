@@ -15,6 +15,9 @@ import { formatExpirationDate } from '../../utils/expirations';
 import { deriveMarketDataStatus } from '../../lib/marketDataStatus';
 import { useNow } from '../../hooks/useNow';
 import { Sparkline } from '../intelligence/ui/charts/MicroCharts';
+import { useLiveConnection } from '../../hooks/useLiveConnection';
+import { useLiveMarketSubscriptions } from '../../hooks/useCockpitLiveSubscription';
+import { useLiveQuotes } from '../../lib/liveMarketStore';
 
 type WatchlistEntry = {
   symbol: string;
@@ -141,6 +144,9 @@ export const TradingSidebar = memo(function TradingSidebar({
     [watchlist]
   );
   const watchlistSymbolsKey = watchlistSymbols.join(',');
+  useLiveMarketSubscriptions(watchlistSymbols);
+  const liveQuotes = useLiveQuotes();
+  const { connected: liveConnected } = useLiveConnection();
 
   // Derive a flat, sortable scanner row per watchlist entry, folding in the
   // latest snapshot. Kept as a memo so sorting/heat scaling is cheap on every
@@ -148,15 +154,49 @@ export const TradingSidebar = memo(function TradingSidebar({
   const scannerRows = useMemo(() => {
     const rows = watchlist.map(stock => {
       const snapshot = snapshots[stock.symbol.toUpperCase()] ?? null;
+      const liveQuote = liveQuotes[stock.symbol.toUpperCase()] ?? null;
       const isContract = snapshot?.entryType === 'contract';
+      const livePrice =
+        liveQuote?.midpoint ??
+        (liveQuote?.bidPrice != null && liveQuote?.askPrice != null
+          ? (liveQuote.bidPrice + liveQuote.askPrice) / 2
+          : liveQuote?.bidPrice ?? liveQuote?.askPrice ?? null);
       const priceSource = isContract
         ? snapshot.mid ?? snapshot.price ?? snapshot.bid ?? snapshot.ask ?? null
         : snapshot?.price ?? null;
-      const changeValue = snapshot?.changePercent ?? snapshot?.change ?? null;
-      const price = typeof priceSource === 'number' && Number.isFinite(priceSource) ? priceSource : null;
-      const change = typeof changeValue === 'number' && Number.isFinite(changeValue) ? changeValue : null;
+      const snapshotPrice = typeof priceSource === 'number' && Number.isFinite(priceSource) ? priceSource : null;
+      const price = typeof livePrice === 'number' && Number.isFinite(livePrice) ? livePrice : snapshotPrice;
+      const snapshotChange =
+        typeof snapshot?.change === 'number' && Number.isFinite(snapshot.change) ? snapshot.change : null;
+      const snapshotChangePct =
+        typeof snapshot?.changePercent === 'number' && Number.isFinite(snapshot.changePercent)
+          ? snapshot.changePercent
+          : null;
+      const baseline =
+        snapshotPrice != null && snapshotChange != null ? snapshotPrice - snapshotChange : null;
+      const liveChangePct =
+        livePrice != null && baseline != null && baseline !== 0 ? ((livePrice - baseline) / baseline) * 100 : null;
+      const change = liveChangePct ?? snapshotChangePct ?? snapshotChange;
       const volume = typeof snapshot?.volume === 'number' && Number.isFinite(snapshot.volume) ? snapshot.volume : null;
-      return { stock, snapshot, isContract, price, change, volume };
+      const snapshotAgeMs = lastSnapshotFetchAtRef.current ? now - lastSnapshotFetchAtRef.current : null;
+      const liveAgeMs = liveQuote?.timestamp ? now - liveQuote.timestamp : null;
+      const { status: cardStatus } = deriveMarketDataStatus({
+        source: liveQuote ? 'stream' : snapshot ? 'rest' : null,
+        ageMs: liveQuote ? liveAgeMs : snapshotAgeMs,
+        connected: liveConnected,
+        staleThresholdMs: liveQuote ? undefined : WATCHLIST_STALE_MS,
+      });
+      return {
+        stock,
+        snapshot,
+        isContract,
+        price,
+        change,
+        volume,
+        cardStatus,
+        dayHigh: snapshot?.dayHigh ?? null,
+        dayLow: snapshot?.dayLow ?? null,
+      };
     });
     const maxVol = rows.reduce((m, r) => (r.volume && r.volume > m ? r.volume : m), 0);
     const maxAbsChg = rows.reduce((m, r) => (r.change != null && Math.abs(r.change) > m ? Math.abs(r.change) : m), 0);
@@ -167,7 +207,7 @@ export const TradingSidebar = memo(function TradingSidebar({
       return ((a.change ?? -Infinity) - (b.change ?? -Infinity)) * dir;
     });
     return { rows, maxVol, maxAbsChg };
-  }, [watchlist, snapshots, sortKey, sortDir]);
+  }, [watchlist, snapshots, liveQuotes, liveConnected, now, sortKey, sortDir]);
 
   const cycleSort = useCallback((key: 'change' | 'symbol' | 'last') => {
     setSortKey(prev => {
@@ -589,13 +629,7 @@ export const TradingSidebar = memo(function TradingSidebar({
                 relative-volume activity bar tinted by direction, so the eye reads
                 movers and activity before any number. */}
             <div className="divide-y divide-intel-lineSoft/60">
-              {scannerRows.rows.map(({ stock, snapshot, isContract, price, change, volume }) => {
-                const snapshotAgeMs = lastSnapshotFetchAtRef.current ? now - lastSnapshotFetchAtRef.current : null;
-                const { status: cardStatus } = deriveMarketDataStatus({
-                  source: snapshot ? 'rest' : null,
-                  ageMs: snapshotAgeMs,
-                  staleThresholdMs: WATCHLIST_STALE_MS,
-                });
+              {scannerRows.rows.map(({ stock, snapshot, isContract, price, change, volume, cardStatus, dayHigh, dayLow }) => {
                 // Bare freshness dot — the age text is redundant per-row (the
                 // whole list shares one fetch); a colored dot is enough.
                 const dotClass =
@@ -625,10 +659,14 @@ export const TradingSidebar = memo(function TradingSidebar({
                   isContract && snapshot?.entryType === 'contract' && snapshot.expiration
                     ? formatExpirationDate(snapshot.expiration)
                     : '';
+                const highLowLine =
+                  !isContract && (dayHigh != null || dayLow != null)
+                    ? `H ${dayHigh != null ? dayHigh.toFixed(2) : '—'}  L ${dayLow != null ? dayLow.toFixed(2) : '—'}`
+                    : '';
                 const secondaryLine =
                   isContract && snapshot?.entryType === 'contract'
                     ? `${snapshot?.type?.toUpperCase() ?? ''} ${snapshot?.strike ?? ''} ${formattedExpiration}`.trim()
-                    : '';
+                    : highLowLine;
                 // Relative-volume fill (0–1) drives the activity bar width.
                 const relVol = volume && scannerRows.maxVol > 0 ? Math.max(0.06, volume / scannerRows.maxVol) : 0;
                 // Change magnitude fill (0–1) drives the heat intensity of the chip.

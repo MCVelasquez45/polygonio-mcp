@@ -5,8 +5,20 @@ import { upsertAggregateBars } from './aggregatesStore';
 import {
   acquireOptionSubscription,
   addOptionsWsListener,
+  addOptionsWsStatusListener,
+  getActiveOptionSubscriptions,
+  getOptionsWsState,
   releaseOptionSubscription,
+  type OptionsSubscriptionResult,
 } from '../../marketData/optionsSubscriptionManager.service';
+import {
+  addRestQuoteCacheListener,
+  addTradeCacheListener,
+  getCachedTrade,
+  getCachedQuote,
+  type CachedOptionQuote,
+  type CachedOptionTrade,
+} from '../../marketData/optionsQuoteCache.service';
 import { stocksEntitled, SUBSCRIPTION_PROFILE } from '../../marketData/optionsDataHealth.service';
 
 type SocketSymbolMap = Map<string, Set<string>>;
@@ -79,6 +91,101 @@ function broadcast(symbol: string, event: string, payload: any) {
   ioServer.to(symbol).emit(event, payload);
 }
 
+function optionsStatusPayload(statusEvent?: any) {
+  const state = getOptionsWsState();
+  return {
+    provider: 'massive',
+    assetClass: 'options',
+    connected: Boolean(state?.connected),
+    connecting: Boolean(state?.connecting),
+    authenticated: Boolean(state?.authenticated),
+    lastStatus: statusEvent?.status ?? state?.lastStatus ?? null,
+    lastStatusMessage: statusEvent?.message ?? state?.lastStatusMessage ?? null,
+    lastEventAt: state?.lastEventAt ?? null,
+    lastMessageAt: state?.lastMessageAt ?? null,
+    reconnectAttempts: state?.reconnectAttempts ?? 0,
+    nextReconnectAt: state?.nextReconnectAt ?? null,
+    activeSubscriptions: getActiveOptionSubscriptions(),
+  };
+}
+
+function emitProviderBlockedErrors(statusEvent: any) {
+  const status = typeof statusEvent?.status === 'string' ? statusEvent.status : null;
+  if (status !== 'auth_failed' && status !== 'max_connections') return;
+  const activeSymbols = getActiveOptionSubscriptions().map(sub => sub.symbol);
+  activeSymbols.forEach(symbol => {
+    const payload = {
+      symbol,
+      message: status,
+      reason: status,
+      providerStatus: status,
+      providerMessage: typeof statusEvent?.message === 'string' ? statusEvent.message : null,
+      providerPayload: null,
+    };
+    console.warn('[LiveFeed] LIVE_SUBSCRIBE_FAILED', payload);
+    broadcast(symbol, 'live:error', payload);
+  });
+}
+
+function cachedQuotePayload(cached: CachedOptionQuote) {
+  return {
+    ev: 'Q',
+    sym: cached.symbol,
+    underlying: cached.underlying,
+    bp: cached.bid,
+    ap: cached.ask,
+    bs: cached.bidSize,
+    as: cached.askSize,
+    midpoint: cached.mid,
+    mark: cached.mark,
+    spread: cached.spread,
+    last: cached.last,
+    lastSize: cached.lastSize,
+    lastTradeTimestamp: cached.lastTradeTimestamp,
+    q: cached.sequenceNumber,
+    t: cached.providerTimestamp ?? cached.receivedAt,
+    timestamp: cached.timestamp ?? cached.providerTimestamp ?? cached.receivedAt,
+    receivedAt: cached.receivedAt,
+    source: cached.source,
+    dataMode: cached.dataMode,
+  };
+}
+
+function cachedTradePayload(cached: CachedOptionTrade) {
+  return {
+    ev: 'T',
+    sym: cached.symbol,
+    underlying: cached.underlying,
+    p: cached.price,
+    s: cached.size,
+    x: cached.exchange,
+    c: cached.conditions,
+    q: cached.sequenceNumber,
+    id: cached.id,
+    t: cached.providerTimestamp ?? cached.receivedAt,
+    timestamp: cached.providerTimestamp ?? cached.receivedAt,
+    receivedAt: cached.receivedAt,
+    source: cached.source,
+    dataMode: cached.dataMode,
+  };
+}
+
+function emitCachedOptionQuote(socket: Socket, symbol: string) {
+  if (!isOptionSymbol(symbol)) return;
+  const cached = getCachedQuote(symbol);
+  if (!cached) return;
+  socket.emit('live:quote', cachedQuotePayload(cached));
+}
+
+function emitCachedOptionTrade(socket: Socket, symbol: string) {
+  if (!isOptionSymbol(symbol)) return;
+  const cached = getCachedTrade(symbol);
+  if (!cached) return;
+  const payload = cachedTradePayload(cached);
+  socket.emit('live:trade', payload);
+  socket.emit('live:trades', payload);
+}
+
 async function persistLiveAggregate(symbol: string, event: any) {
   if (!STORE_LIVE_AGGS) return;
   const timestamp = typeof event?.s === 'number' ? event.s : typeof event?.t === 'number' ? event.t : null;
@@ -111,11 +218,42 @@ function handleWsMessage(event: any) {
     receivedAt: Date.now()
   };
   if (type === 'T' || type === 'trade' || event.ev === 'trade') {
+    if (isOptionSymbol(symbol)) {
+      console.debug('[LiveFeed] Trade received', {
+        symbol,
+        providerTimestamp: event.t,
+        sequenceNumber: event.q,
+        dataMode: event.dataMode,
+      });
+      return;
+    }
+    broadcast(symbol, 'live:trade', payload);
     broadcast(symbol, 'live:trades', payload);
+    console.debug('[LiveFeed] Trade received', {
+      symbol,
+      providerTimestamp: payload.t,
+      sequenceNumber: payload.q,
+      dataMode: payload.dataMode,
+    });
     return;
   }
   if (type === 'Q' || type === 'quote') {
+    if (isOptionSymbol(symbol)) {
+      console.debug('[LiveFeed] Quote received', {
+        symbol,
+        providerTimestamp: event.t,
+        sequenceNumber: event.q,
+        dataMode: event.dataMode,
+      });
+      return;
+    }
     broadcast(symbol, 'live:quote', payload);
+    console.debug('[LiveFeed] Quote received', {
+      symbol,
+      providerTimestamp: payload.t,
+      sequenceNumber: payload.q,
+      dataMode: payload.dataMode,
+    });
     return;
   }
   if (type === 'AM' || type === 'A') {
@@ -163,18 +301,69 @@ function ensureStocksWsClient(): MassiveWsClient | null {
 
 const LIVE_FEED_CONSUMER = 'live-feed';
 
-function subscribeSymbol(symbol: string) {
+type LiveSubscriptionResult = {
+  accepted: boolean;
+  reason: string | null;
+  providerStatus: string | null;
+  providerMessage: string | null;
+  providerPayload: string | null;
+};
+
+function accepted(providerPayload: string | null = null): LiveSubscriptionResult {
+  return {
+    accepted: true,
+    reason: null,
+    providerStatus: null,
+    providerMessage: null,
+    providerPayload,
+  };
+}
+
+function fromOptionsResult(result: OptionsSubscriptionResult): LiveSubscriptionResult {
+  return {
+    accepted: result.accepted,
+    reason: result.reason,
+    providerStatus: result.providerStatus,
+    providerMessage: result.providerMessage,
+    providerPayload: result.payload,
+  };
+}
+
+function subscribeSymbol(symbol: string): LiveSubscriptionResult {
   const sockets = getSymbolSockets(symbol);
   symbolSubscriptions.set(symbol, sockets);
 
   if (sockets.size === 1) {
     if (isOptionSymbol(symbol)) {
-      acquireOptionSubscription(symbol, 'trades_quotes', LIVE_FEED_CONSUMER);
+      return fromOptionsResult(acquireOptionSubscription(symbol, 'trades_quotes', LIVE_FEED_CONSUMER));
     } else {
       const client = ensureStocksWsClient();
-      client?.subscribe(buildStockSubscriptionParams(symbol, 'trades_quotes'));
+      const providerPayload = buildStockSubscriptionParams(symbol, 'trades_quotes');
+      if (!client) {
+        return {
+          accepted: false,
+          reason: 'stocks_ws_unavailable_or_not_entitled',
+          providerStatus: null,
+          providerMessage: null,
+          providerPayload,
+        };
+      }
+      client.subscribe(providerPayload);
+      return accepted(providerPayload);
     }
   }
+  const hasProviderRecord = isOptionSymbol(symbol)
+    ? getActiveOptionSubscriptions().some(sub => sub.symbol === symbol)
+    : Boolean(wsClientStocks);
+  return hasProviderRecord
+    ? accepted(null)
+    : {
+        accepted: false,
+        reason: 'shared_subscription_not_provider_backed',
+        providerStatus: null,
+        providerMessage: null,
+        providerPayload: null,
+      };
 }
 
 function unsubscribeSymbol(symbol: string) {
@@ -217,19 +406,49 @@ export function unsubscribeAggregateSymbol(symbol: string) {
   }
 }
 
+/** Test hook for singleton stream state. */
+export function resetLiveFeedForTest() {
+  socketSubscriptions.clear();
+  symbolSubscriptions.clear();
+  aggregateSubscriptions.clear();
+  wsClientStocks?.disconnect();
+  wsClientStocks = null;
+  ioServer = null;
+  stocksEntitlementLogged = false;
+}
+
 export function initLiveFeed(io: Server) {
   ioServer = io;
   // Options events flow through the shared subscription manager's connection.
   addOptionsWsListener(handleWsMessage);
+  addOptionsWsStatusListener(status => {
+    console.log('[LiveFeed] live:status', optionsStatusPayload(status));
+    ioServer?.emit('live:status', optionsStatusPayload(status));
+    emitProviderBlockedErrors(status);
+  });
+  addRestQuoteCacheListener(quote => {
+    broadcast(quote.symbol, 'live:quote', cachedQuotePayload(quote));
+  });
+  addTradeCacheListener(trade => {
+    const payload = cachedTradePayload(trade);
+    broadcast(trade.symbol, 'live:trade', payload);
+    broadcast(trade.symbol, 'live:trades', payload);
+  });
 }
 
 export function registerLiveFeedHandlers(socket: Socket) {
   socket.on('live:subscribe', payload => {
     const symbol = normalizeContractSymbol(payload?.symbol);
+    console.log('[LiveFeed] BACKEND_SUBSCRIBE_REQUEST', {
+      socketId: socket.id,
+      symbol,
+      rawSymbol: payload?.symbol,
+    });
     if (!symbol) {
       socket.emit('live:error', { message: 'Invalid symbol.', request: payload });
       return;
     }
+    socket.emit('live:status', optionsStatusPayload());
     socket.join(symbol);
 
     const socketSymbols = getSocketSymbols(socket.id);
@@ -240,8 +459,31 @@ export function registerLiveFeedHandlers(socket: Socket) {
     symbolSockets.add(socket.id);
     symbolSubscriptions.set(symbol, symbolSockets);
 
-    subscribeSymbol(symbol);
-    socket.emit('live:subscribed', { symbol });
+    const result = subscribeSymbol(symbol);
+    if (!result.accepted) {
+      socket.leave(symbol);
+      socketSymbols.delete(symbol);
+      if (socketSymbols.size === 0) socketSubscriptions.delete(socket.id);
+      else socketSubscriptions.set(socket.id, socketSymbols);
+      symbolSockets.delete(socket.id);
+      if (symbolSockets.size === 0) symbolSubscriptions.delete(symbol);
+      else symbolSubscriptions.set(symbol, symbolSockets);
+      const errorPayload = {
+        symbol,
+        message: result.reason ?? 'live_provider_subscription_failed',
+        reason: result.reason,
+        providerStatus: result.providerStatus,
+        providerMessage: result.providerMessage,
+        providerPayload: result.providerPayload,
+      };
+      console.warn('[LiveFeed] LIVE_SUBSCRIBE_FAILED', errorPayload);
+      socket.emit('live:error', errorPayload);
+      socket.emit('live:subscribed', { symbol, accepted: false, reason: result.reason });
+      return;
+    }
+    emitCachedOptionQuote(socket, symbol);
+    emitCachedOptionTrade(socket, symbol);
+    socket.emit('live:subscribed', { symbol, accepted: true, providerPayload: result.providerPayload });
   });
 
   socket.on('live:unsubscribe', payload => {

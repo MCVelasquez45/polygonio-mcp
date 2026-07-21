@@ -55,6 +55,15 @@ export type QuoteSnapshot = QuoteBookEntry & {
   ticker: string;
   updated?: number | null;
   quotes?: QuoteBookEntry[];
+  source?: 'websocket' | 'rest-snapshot' | 'delayed-websocket' | 'ws-cache' | 'rest-cache' | 'snapshot';
+  dataMode?: 'live' | 'delayed' | 'snapshot';
+  receivedAt?: number;
+  underlying?: string | null;
+  mark?: number | null;
+  last?: number | null;
+  lastSize?: number | null;
+  lastTradeTimestamp?: number | null;
+  sequenceNumber?: number | null;
 };
 
 export type OptionLeg = {
@@ -144,6 +153,8 @@ export type WatchlistSnapshot =
     price: number | null;
     change: number | null;
     changePercent: number | null;
+    dayHigh?: number | null;
+    dayLow?: number | null;
     iv?: number | null;
     volume?: number | null;
     openInterest?: number | null;
@@ -166,6 +177,8 @@ export type WatchlistSnapshot =
     mid: number | null;
     change: number | null;
     changePercent: number | null;
+    dayHigh?: number | null;
+    dayLow?: number | null;
     iv?: number | null;
     volume?: number | null;
     openInterest?: number | null;

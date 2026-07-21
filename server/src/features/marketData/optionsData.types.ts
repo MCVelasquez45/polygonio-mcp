@@ -72,13 +72,46 @@ export type OptionsRestStatus = 'OK' | 'DEGRADED' | 'UNAVAILABLE';
 
 export type OptionsStreamStatus = 'CONNECTED' | 'DEGRADED' | 'UNAVAILABLE' | 'DISABLED';
 
+export type OptionsComponentStatus =
+  | 'LIVE'
+  | 'CONNECTING'
+  | 'WAITING_FOR_CONTRACTS'
+  | 'WAITING_FOR_QUOTES'
+  | 'DEGRADED'
+  | 'PROVIDER_BLOCKED'
+  | 'OFFLINE';
+
 export type MarketDataHealthReport = {
   timestamp: string;
   subscriptionProfile: string;
+  service: 'options-market-data';
+  productionMode: 'live' | 'delayed' | 'snapshot';
   capabilityVerification: {
     method: string;
     verifiedAt: string;
     notes: string;
+  };
+  provider: {
+    optionsWebSocket: {
+      enabled: boolean;
+      endpoint: string;
+      dataMode: 'live' | 'delayed';
+      connected: boolean;
+      authenticated: boolean;
+      connecting: boolean;
+      lastStatus: string | null;
+      lastStatusMessage: string | null;
+      lastEventAt: string | null;
+      lastQuoteAt: string | null;
+      lastTradeAt: string | null;
+      activeContracts: number;
+      reconnectAttempts: number;
+      nextReconnectAt: string | null;
+    };
+    stocksWebSocket: {
+      enabled: boolean;
+      entitled: boolean;
+    };
   };
   optionsRest: {
     status: OptionsRestStatus;
@@ -92,15 +125,32 @@ export type MarketDataHealthReport = {
     activeSubscriptions: number;
   };
   underlyingData: {
-    source: 'options-snapshot-delayed' | 'unavailable';
-    entitlement: 'delayed-only' | 'unauthorized-realtime-intraday';
+    source: 'stocks-websocket' | 'options-snapshot-delayed' | 'unavailable';
+    entitlement: 'realtime-intraday' | 'delayed-only' | 'unauthorized-realtime-intraday';
     lastUpdate: string | null;
   };
   lastOptionUpdateAt: string | null;
+  streams: {
+    quoteStream: OptionsComponentStatus;
+    tradeStream: OptionsComponentStatus;
+    aggregateStream: OptionsComponentStatus;
+    quoteCache: OptionsComponentStatus;
+    activeSubscriptions: number;
+  };
+  components: {
+    matrix: OptionsComponentStatus;
+    depth: OptionsComponentStatus;
+    ticket: OptionsComponentStatus;
+    chain: OptionsComponentStatus;
+  };
   caches: {
     snapshotAgeMs: number | null;
     referenceAgeMs: number | null;
     chainCompleteness: ChainCompleteness | null;
+    quoteCount: number;
+    tradeCount: number;
+    freshQuoteCount: number;
+    staleQuoteCount: number;
   };
   throttle: {
     entitlementBlocks: Record<string, { until: string; message: string }>;

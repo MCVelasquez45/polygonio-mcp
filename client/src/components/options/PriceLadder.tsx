@@ -1,6 +1,5 @@
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useLiveQuote, useLiveTrade, useLiveTradeHistory } from '../../lib/liveMarketStore';
-import { LiveState } from '../shared/terminal';
 
 // Institutional price ladder (DOM) — the execution surface. A centered price
 // spine with resting size on the flanks, the inside market highlighted, the
@@ -12,6 +11,18 @@ import { LiveState } from '../shared/terminal';
 const TICK = 0.01;
 const RUNGS_EACH_SIDE = 7;
 const TAPE_ROWS = 8;
+const LIVE_QUOTE_FRESH_MS = 10_000;
+
+type DepthStatus =
+  | 'LIVE'
+  | 'CONNECTING'
+  | 'WAITING_FOR_CONTRACTS'
+  | 'WAITING_FOR_QUOTES'
+  | 'DEGRADED'
+  | 'PROVIDER_BLOCKED'
+  | 'STALE'
+  | 'MARKET_CLOSED'
+  | 'OFFLINE';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -26,7 +37,26 @@ type Rung = {
   isLast: boolean;
 };
 
-export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: string }) {
+type PriceLadderProps = {
+  symbol: string | null;
+  underlying: string;
+  contractLabel?: string | null;
+  socketConnected: boolean;
+  subscriptionActive: boolean;
+  providerUnavailable?: boolean;
+  marketClosed?: boolean;
+};
+
+export const PriceLadder = memo(function PriceLadder({
+  symbol,
+  underlying,
+  contractLabel,
+  socketConnected,
+  subscriptionActive,
+  providerUnavailable,
+  marketClosed,
+}: PriceLadderProps) {
+  const [now, setNow] = useState(() => Date.now());
   const quote = useLiveQuote(symbol);
   const lastTrade = useLiveTrade(symbol);
   const tape = useLiveTradeHistory(symbol);
@@ -58,18 +88,58 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
     return rows;
   }, [bid, ask, quote?.bidSize, quote?.askSize, lastPrice]);
 
-  const tapeRows = useMemo(() => tape.slice(-TAPE_ROWS).reverse(), [tape]);
+  const tapeRows = useMemo(() => tape.slice(0, TAPE_ROWS), [tape]);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const ageMs = quote?.timestamp != null ? now - quote.timestamp : null;
+  const hasQuote = Boolean(quote);
+  const isFresh = ageMs != null && ageMs >= 0 && ageMs <= LIVE_QUOTE_FRESH_MS;
+  const status: DepthStatus = !symbol
+    ? 'WAITING_FOR_CONTRACTS'
+    : !socketConnected
+      ? 'OFFLINE'
+      : providerUnavailable
+        ? 'PROVIDER_BLOCKED'
+      : hasQuote && quote?.dataMode === 'delayed'
+        ? 'DEGRADED'
+        : hasQuote && quote?.dataMode === 'snapshot'
+          ? 'DEGRADED'
+          : hasQuote && isFresh
+            ? 'LIVE'
+            : hasQuote
+              ? marketClosed
+                ? 'MARKET_CLOSED'
+                : 'STALE'
+              : subscriptionActive
+                ? 'WAITING_FOR_QUOTES'
+                : 'CONNECTING';
+  const statusCopy = {
+    LIVE: 'Receiving live option quotes.',
+    CONNECTING: 'Subscribing to option contracts...',
+    WAITING_FOR_CONTRACTS: 'Select an option contract to begin streaming.',
+    WAITING_FOR_QUOTES: 'Awaiting live option quotes...',
+    DEGRADED: quote?.dataMode === 'delayed' ? 'Delayed option quote displayed.' : 'Snapshot option quote displayed.',
+    PROVIDER_BLOCKED: 'Live options feed unavailable.',
+    STALE: 'Last option quote is stale.',
+    MARKET_CLOSED: 'Market closed. Showing last option quote.',
+    OFFLINE: 'Options service unavailable.',
+  }[status];
 
   return (
     <section className="flex h-full flex-col rounded-panel bg-intel-panel">
       <div className="flex items-center justify-between border-b border-intel-divider px-4 py-2.5">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <h3 className="font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">
-            Matrix · Depth
+            Matrix · Top of Book
           </h3>
-          <span className="font-mono text-[11px] font-semibold text-intel-ink">{symbol}</span>
+          <span className="truncate font-mono text-[11px] font-semibold text-intel-ink">
+            {contractLabel ?? symbol ?? `${underlying} Options`}
+          </span>
         </div>
-        <LiveState timestamp={quote?.timestamp ?? null} />
+        <DepthStatusChip status={status} />
       </div>
 
       <div className="grid grid-cols-3 px-4 py-1.5 font-mono text-[9.5px] uppercase tracking-label text-intel-ink3">
@@ -80,7 +150,7 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
 
       {rungs.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-4 py-8 text-center font-mono text-[11px] text-intel-ink3">
-          Awaiting live quotes for {symbol}
+          {statusCopy}
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
@@ -167,14 +237,14 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
                     : print.price < mid
                       ? 'text-intel-neg'
                       : 'text-intel-ink2';
-              const ts = print.timestamp != null ? new Date(print.timestamp) : null;
+              const timeLabel = formatTradeTime(print.timestamp);
               return (
                 <div
                   key={`${print.timestamp ?? idx}-${idx}`}
-                  className="grid grid-cols-[56px_1fr_auto] gap-2 font-mono text-[10.5px] tabular-nums"
+                  className="grid grid-cols-[86px_1fr_auto] gap-2 font-mono text-[10.5px] tabular-nums"
                 >
                   <span className="text-intel-ink3">
-                    {ts ? ts.toLocaleTimeString(undefined, { hour12: false }) : '—'}
+                    {timeLabel}
                   </span>
                   <span className={`font-semibold ${tone}`}>{print.price != null ? print.price.toFixed(2) : '—'}</span>
                   <span className="text-intel-ink2">×{print.size ?? '—'}</span>
@@ -187,6 +257,40 @@ export const PriceLadder = memo(function PriceLadder({ symbol }: { symbol: strin
     </section>
   );
 });
+
+function DepthStatusChip({ status }: { status: DepthStatus }) {
+  const map = {
+    LIVE: { dot: 'bg-intel-pos', text: 'text-intel-pos', label: 'LIVE', pulse: true },
+    CONNECTING: { dot: 'bg-intel-info', text: 'text-intel-info', label: 'CONNECTING', pulse: true },
+    WAITING_FOR_CONTRACTS: { dot: 'bg-intel-ink3', text: 'text-intel-ink3', label: 'WAITING', pulse: false },
+    WAITING_FOR_QUOTES: { dot: 'bg-intel-info', text: 'text-intel-info', label: 'WAITING', pulse: true },
+    DEGRADED: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'DEGRADED', pulse: false },
+    PROVIDER_BLOCKED: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'BLOCKED', pulse: false },
+    STALE: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'STALE', pulse: false },
+    MARKET_CLOSED: { dot: 'bg-intel-ink3', text: 'text-intel-ink3', label: 'CLOSED', pulse: false },
+    OFFLINE: { dot: 'bg-intel-neg', text: 'text-intel-neg', label: 'OFFLINE', pulse: false },
+  }[status];
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-label ${map.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${map.dot} ${map.pulse ? 'motion-safe:animate-heartbeat' : ''}`} />
+      {map.label}
+    </span>
+  );
+}
+
+function formatTradeTime(timestamp: number | null | undefined): string {
+  if (timestamp == null || !Number.isFinite(timestamp)) return '—';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3,
+  });
+}
 
 /** Width of the resting-size bar, scaled and capped for a compact flank. */
 function sizeBar(size: number): string {

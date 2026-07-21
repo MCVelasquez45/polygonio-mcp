@@ -30,6 +30,7 @@ import {
   type Tone,
 } from '../../lib/intelligenceFormat';
 import { useCockpitLiveSubscription } from '../../hooks/useCockpitLiveSubscription';
+import { useAutomationVisibility } from '../../hooks/useAutomationVisibility';
 import { useLiveConnection } from '../../hooks/useLiveConnection';
 import { useNow } from '../../hooks/useNow';
 import { useLiveQuote } from '../../lib/liveMarketStore';
@@ -417,6 +418,7 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
   const [contractGreeks, setContractGreeks] = useState<Record<string, { delta: number | null; gamma: number | null; theta: number | null; vega: number | null }>>({});
   const [portfolioOperations, setPortfolioOperations] = useState<PortfolioOperations | null>(null);
   const insightsAllowed = aiEnabled && sentimentEnabled;
+  const { visibility: liveVisibility, connected: portfolioStreamConnected } = useAutomationVisibility();
 
   const loadPortfolio = useCallback(async () => {
     setLoading(true);
@@ -494,6 +496,22 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
   useEffect(() => {
     void loadPortfolio();
   }, [loadPortfolio]);
+
+  useEffect(() => {
+    const account = liveVisibility?.engineStatus?.broker?.account;
+    if (!account) return;
+    const buyingPower = toOptionalNumber(account.buyingPower);
+    const equity = toOptionalNumber(account.equity);
+    const cash = toOptionalNumber(account.cash);
+    setAccountSummary(prev => ({
+      buyingPower: buyingPower ?? prev.buyingPower,
+      equity: equity ?? prev.equity,
+      cash: cash ?? prev.cash,
+    }));
+    if (liveVisibility?.generatedAt) {
+      setLastUpdated(new Date(liveVisibility.generatedAt).toLocaleTimeString());
+    }
+  }, [liveVisibility]);
 
   useEffect(() => {
     if (!insightsAllowed) {
@@ -910,7 +928,9 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
         </div>
         <div className="flex items-center gap-2">
           {lastUpdated && (
-            <span className="font-mono text-[11px] text-intel-ink3">Refreshed {lastUpdated}</span>
+            <span className={`font-mono text-[11px] ${portfolioStreamConnected ? 'text-intel-pos' : 'text-intel-ink3'}`}>
+              {portfolioStreamConnected ? 'Streaming' : 'Refreshed'} {lastUpdated}
+            </span>
           )}
           <ActionButton
             onClick={handleRefreshInsights}

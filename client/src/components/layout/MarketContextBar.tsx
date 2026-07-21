@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { getSharedSocket } from '../../lib/socket';
 import { useLiveQuote } from '../../lib/liveMarketStore';
+import { useLiveMarketSubscriptions } from '../../hooks/useCockpitLiveSubscription';
 import { LiveNumber } from '../shared/terminal';
 
 // Always-on market context ribbon. A single continuous strip — no boxed tiles —
@@ -35,6 +36,7 @@ function IndexTicker({ symbol, label }: { symbol: string; label: string }) {
 
 export const MarketContextBar = memo(function MarketContextBar() {
   const [streaming, setStreaming] = useState(false);
+  useLiveMarketSubscriptions([...INDEX_SYMBOLS]);
 
   useEffect(() => {
     let socket: ReturnType<typeof getSharedSocket> | null = null;
@@ -45,7 +47,6 @@ export const MarketContextBar = memo(function MarketContextBar() {
       setStreaming(Boolean(socket.connected));
       socket.on('connect', onConnect);
       socket.on('disconnect', onDisconnect);
-      for (const symbol of INDEX_SYMBOLS) socket.emit('live:subscribe', { symbol });
     } catch {
       /* offline / test env — degrades to OFFLINE honestly */
     }
@@ -53,7 +54,6 @@ export const MarketContextBar = memo(function MarketContextBar() {
       try {
         socket?.off('connect', onConnect);
         socket?.off('disconnect', onDisconnect);
-        for (const symbol of INDEX_SYMBOLS) socket?.emit('live:unsubscribe', { symbol });
       } catch {
         /* no-op */
       }

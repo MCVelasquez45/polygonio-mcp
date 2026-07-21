@@ -189,11 +189,13 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   }, []);
 
   const markPrice = useMemo(() => {
+    if (quote?.mark != null) return quote.mark;
     if (quote?.midpoint) return quote.midpoint;
     if (contract?.lastQuote?.bid != null && contract?.lastQuote?.ask != null) {
       return (Number(contract.lastQuote.bid) + Number(contract.lastQuote.ask)) / 2;
     }
-    if (contract?.lastTrade?.price) return contract.lastTrade.price;
+    if (quote?.last != null) return quote.last;
+    if (contract?.lastTrade?.price != null) return contract.lastTrade.price;
     if (spotPrice != null) return spotPrice;
     return null;
   }, [contract, quote, spotPrice]);
@@ -291,7 +293,8 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
   const quantityLabel =
     qtyMode === 'dollars' ? 'Dollars' : assetType === 'option' ? 'Contracts' : 'Shares';
   const symbolDisplay = contract?.ticker ?? label ?? '—';
-  const marketPriceDisplay = markPrice != null ? `$${markPrice.toFixed(2)}` : '—';
+  const lastDisplayPrice = quote?.last ?? contract?.lastTrade?.price ?? null;
+  const marketPriceDisplay = lastDisplayPrice != null ? `$${lastDisplayPrice.toFixed(2)}` : '—';
 
   // Live top-of-book for the price ladder — prefer the streaming quote, fall
   // back to the contract's last quote. The ladder is the institutional

@@ -3,6 +3,7 @@ import { Command, Menu, MessageSquare, Plus, Search, Settings, TrendingUp } from
 import { ActionButton } from '../intelligence/ui';
 import { LiveNumber, LiveState } from '../shared/terminal';
 import { useLiveQuote } from '../../lib/liveMarketStore';
+import { useLiveMarketSubscription } from '../../hooks/useCockpitLiveSubscription';
 import { modeLabel, type AppView } from './navModes';
 
 type Props = {
@@ -50,6 +51,7 @@ export const TradingHeader = memo(function TradingHeader({
   }, [selectedTicker]);
 
   const underlying = useMemo(() => underlyingOf(selectedTicker), [selectedTicker]);
+  useLiveMarketSubscription(underlying);
   const quote = useLiveQuote(underlying);
   const mid =
     quote?.midpoint ??

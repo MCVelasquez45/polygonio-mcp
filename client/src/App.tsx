@@ -57,6 +57,7 @@ import type {
 } from './types/market';
 import type { ChecklistResult, DeskInsight, WatchlistReport, ContractSelectionResult } from './api/analysis';
 import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
+import { acquireLiveMarketSubscription } from './hooks/useCockpitLiveSubscription';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
 const TIMEFRAME_MAP = {
@@ -193,7 +194,10 @@ function toAggregateBar(candle: ChartCandle | null | undefined): AggregateBar | 
     high: candle.h,
     low: candle.l,
     close: candle.c,
-    volume: candle.v
+    volume: candle.v,
+    isFinal: candle.isFinal,
+    source: candle.source,
+    lastUpdatedAt: candle.lastUpdatedAt
   };
 }
 
@@ -395,6 +399,8 @@ type ChartCandle = {
   c: number;
   v: number;
   isFinal?: boolean;
+  source?: AggregateBar['source'];
+  lastUpdatedAt?: number;
 };
 
 type ChartSnapshotPayload = {
@@ -483,6 +489,7 @@ function App() {
   const [selectedLeg, setSelectedLeg] = useState<OptionLeg | null>(null);
   const [desiredContract, setDesiredContract] = useState<string | null>(null);
   const activeContractSymbol = selectedLeg?.ticker ?? null;
+  const activeContractSymbolRef = useRef<string | null>(null);
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
@@ -559,6 +566,7 @@ function App() {
   const lastChecklistRefreshRef = useRef(0);
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
+  const [liveSubscriptionUnavailable, setLiveSubscriptionUnavailable] = useState(false);
   const liveSocketConnectedRef = useRef(false);
   const liveSubscriptionActiveRef = useRef(false);
   const marketClosedRef = useRef(false);
@@ -568,6 +576,7 @@ function App() {
   const lastLiveTradeAtRef = useRef<number | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const liveChainSymbolsRef = useRef<Set<string>>(new Set());
+  const liveChainReleaseRef = useRef<Map<string, () => void>>(new Map());
   const contractDetailCacheRef = useRef<Map<string, OptionContractDetail>>(new Map());
   const [contractSelection, setContractSelection] = useState<ContractSelectionResult | null>(null);
   const [contractSelectionLoading, setContractSelectionLoading] = useState(false);
@@ -586,7 +595,12 @@ function App() {
     liveSocketConnectedRef.current = liveSocketConnected;
     liveSubscriptionActiveRef.current = liveSubscriptionActive;
     marketClosedRef.current = Boolean(marketSessionMeta?.marketClosed);
-  }, [liveSocketConnected, liveSubscriptionActive, marketSessionMeta?.marketClosed]);
+    activeContractSymbolRef.current = activeContractSymbol?.toUpperCase() ?? null;
+  }, [liveSocketConnected, liveSubscriptionActive, marketSessionMeta?.marketClosed, activeContractSymbol]);
+
+  useEffect(() => {
+    setLiveSubscriptionUnavailable(false);
+  }, [activeContractSymbol]);
 
   // Broadcast a request to add a ticker in other components (watchlist panel).
   const addTickerToWatchlist = useCallback((symbol: string) => {
@@ -821,14 +835,27 @@ function App() {
     const handleDisconnect = () => {
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
+      setLiveSubscriptionUnavailable(false);
     };
     const handleLiveError = (payload: any) => {
       console.warn('[CLIENT] live feed error', payload);
+      const errorSymbol = normalizeLiveSymbol(payload);
+      const activeSymbol = activeContractSymbolRef.current;
+      if (errorSymbol && activeSymbol && errorSymbol === activeSymbol) {
+        setLiveSubscriptionUnavailable(true);
+      }
+    };
+    const handleLiveStatus = (payload: any) => {
+      console.debug('[CLIENT] live feed status', payload);
+      if (payload?.authenticated === true && payload?.lastStatus === 'auth_success') {
+        setLiveSubscriptionUnavailable(false);
+      }
     };
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('live:error', handleLiveError);
+    socket.on('live:status', handleLiveStatus);
     if (socket.connected) {
       setLiveSocketConnected(true);
     }
@@ -837,16 +864,17 @@ function App() {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('live:error', handleLiveError);
+      socket.off('live:status', handleLiveStatus);
       // Release everything this view subscribed to on the shared connection:
       // residual near-the-money strip symbols and the chart focus.
-      liveChainSymbolsRef.current.forEach((symbol: string) => {
-        socket.emit('live:unsubscribe', { symbol });
-      });
+      liveChainReleaseRef.current.forEach(release => release());
+      liveChainReleaseRef.current.clear();
       liveChainSymbolsRef.current = new Set();
       socket.emit('chart:focus', { symbol: null });
       socketRef.current = null;
       setLiveSocketConnected(false);
       setLiveSubscriptionActive(false);
+      setLiveSubscriptionUnavailable(false);
     };
   }, []);
 
@@ -855,9 +883,10 @@ function App() {
     const socket = socketRef.current;
     if (!socket || !liveSocketConnected) return;
     const activeSymbol = activeContractSymbol?.toUpperCase() ?? null;
-    if (!activeSymbol) {
-      setLiveSubscriptionActive(false);
-    }
+      if (!activeSymbol) {
+        setLiveSubscriptionActive(false);
+        setLiveSubscriptionUnavailable(false);
+      }
 
     const resolveSymbol = (payload: any) =>
       typeof payload === 'string' ? payload.toUpperCase() : normalizeLiveSymbol(payload);
@@ -865,7 +894,9 @@ function App() {
     const handleSubscribed = (payload: any) => {
       const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
       if (ackSymbol && activeSymbol && ackSymbol === activeSymbol) {
-        setLiveSubscriptionActive(true);
+        const accepted = payload?.accepted !== false;
+        setLiveSubscriptionActive(accepted);
+        setLiveSubscriptionUnavailable(!accepted);
       }
     };
 
@@ -873,6 +904,7 @@ function App() {
       const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
       if (ackSymbol && activeSymbol && ackSymbol === activeSymbol) {
         setLiveSubscriptionActive(false);
+        setLiveSubscriptionUnavailable(false);
       }
     };
 
@@ -885,6 +917,7 @@ function App() {
       if (activeSymbol && normalized.ticker === activeSymbol) {
         lastLiveQuoteAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
+        setLiveSubscriptionUnavailable(false);
       }
     };
 
@@ -896,18 +929,21 @@ function App() {
       if (activeSymbol && normalized.ticker === activeSymbol) {
         lastLiveTradeAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
+        setLiveSubscriptionUnavailable(false);
       }
     };
 
     socket.on('live:subscribed', handleSubscribed);
     socket.on('live:unsubscribed', handleUnsubscribed);
     socket.on('live:quote', handleQuote);
+    socket.on('live:trade', handleTrade);
     socket.on('live:trades', handleTrade);
 
     return () => {
       socket.off('live:subscribed', handleSubscribed);
       socket.off('live:unsubscribed', handleUnsubscribed);
       socket.off('live:quote', handleQuote);
+      socket.off('live:trade', handleTrade);
       socket.off('live:trades', handleTrade);
     };
   }, [activeContractSymbol, liveSocketConnected]);
@@ -2479,15 +2515,18 @@ function App() {
     }
 
     const prevSymbols = liveChainSymbolsRef.current;
+    const releases = liveChainReleaseRef.current;
     const removed: string[] = [];
     nextSymbols.forEach(symbol => {
       if (!prevSymbols.has(symbol)) {
-        socket.emit('live:subscribe', { symbol });
+        const release = acquireLiveMarketSubscription(symbol);
+        if (release) releases.set(symbol, release);
       }
     });
     prevSymbols.forEach((symbol: string) => {
       if (!nextSymbols.has(symbol)) {
-        socket.emit('live:unsubscribe', { symbol });
+        releases.get(symbol)?.();
+        releases.delete(symbol);
         removed.push(symbol);
       }
     });
@@ -2673,7 +2712,7 @@ function App() {
 
   const chainPanelEl = (
     <>
-      {marketSessionMeta?.marketClosed && (
+      {marketSessionMeta?.marketClosed && !liveSubscriptionActive && (
         <div className="mb-3 rounded-panel border border-intel-warn/30 bg-intel-warn/5 text-intel-warn px-4 py-2 text-xs">
           Options quotes are paused — spreads reflect the last available snapshot.
         </div>
@@ -2719,7 +2758,15 @@ function App() {
       </div>
       <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-4 min-h-[26rem] min-w-0 flex flex-col gap-4">
         {ticketPanelEl}
-        <PriceLadder symbol={displayTicker} />
+        <PriceLadder
+          symbol={activeContractSymbol}
+          underlying={displayTicker}
+          contractLabel={selectedLeg?.ticker ?? contractDetail?.ticker ?? null}
+          socketConnected={liveSocketConnected}
+          subscriptionActive={liveSubscriptionActive}
+          providerUnavailable={liveSubscriptionUnavailable}
+          marketClosed={marketSessionMeta?.marketClosed}
+        />
       </div>
       <div className="lg:col-span-2 min-w-0">
         {chainPanelEl}
@@ -3632,14 +3679,17 @@ function normalizeLiveQuote(event: any): QuoteSnapshot | null {
   const askPrice = coerceNumber(event.ap ?? event.askPrice);
   const bidSize = coerceNumber(event.bs ?? event.bidSize);
   const askSize = coerceNumber(event.as ?? event.askSize);
-  const timestamp = coerceTimestamp(event.t ?? event.ts ?? event.timestamp ?? event.receivedAt);
   const spread = bidPrice != null && askPrice != null ? Math.max(0, askPrice - bidPrice) : null;
   const midpoint =
-    bidPrice != null && askPrice != null ? (bidPrice + askPrice) / 2 : bidPrice ?? askPrice ?? null;
+    coerceNumber(event.midpoint ?? event.mid) ??
+    (bidPrice != null && askPrice != null ? (bidPrice + askPrice) / 2 : bidPrice ?? askPrice ?? null);
+  const providerTimestamp = coerceTimestamp(event.t ?? event.ts ?? event.timestamp ?? event.receivedAt);
+  const lastTradeTimestamp = coerceTimestampNullable(event.lastTradeTimestamp);
 
   return {
     ticker,
-    timestamp,
+    underlying: typeof event.underlying === 'string' ? event.underlying : extractUnderlyingFromOptionTicker(ticker),
+    timestamp: providerTimestamp,
     bidPrice,
     askPrice,
     bidSize,
@@ -3648,7 +3698,15 @@ function normalizeLiveQuote(event: any): QuoteSnapshot | null {
     askExchange: event.ax ?? event.askExchange ?? undefined,
     spread,
     midpoint,
-    updated: timestamp,
+    mark: coerceNumber(event.mark) ?? midpoint,
+    last: coerceNumber(event.last),
+    lastSize: coerceNumber(event.lastSize),
+    lastTradeTimestamp,
+    sequenceNumber: coerceNumber(event.q ?? event.sequenceNumber),
+    updated: providerTimestamp,
+    receivedAt: coerceTimestamp(event.receivedAt ?? providerTimestamp),
+    source: normalizeQuoteSource(event.source),
+    dataMode: normalizeDataMode(event.dataMode),
     quotes: undefined,
   };
 }
@@ -3662,7 +3720,8 @@ function normalizeLiveTrade(event: any): LiveTradePrint | null {
   const size = coerceNumber(event.s ?? event.size) ?? 0;
   const timestamp = coerceTimestamp(event.t ?? event.ts ?? event.timestamp ?? event.receivedAt);
   const exchange = event.x ?? event.exchange ?? null;
-  const idSource = event.i ?? event.id ?? `${ticker}-${timestamp}-${price}-${size}`;
+  const sequenceNumber = event.q ?? event.sequenceNumber ?? null;
+  const idSource = event.i ?? event.id ?? `${ticker}-${timestamp}-${sequenceNumber ?? 'na'}-${price}-${size}`;
   const conditionsSource = Array.isArray(event.c) ? event.c : Array.isArray(event.conditions) ? event.conditions : null;
 
   return {
@@ -3684,6 +3743,17 @@ function normalizeLiveSymbol(event: any): string | null {
   return normalized ? normalized : null;
 }
 
+function normalizeQuoteSource(value: any): QuoteSnapshot['source'] {
+  if (value === 'websocket' || value === 'rest-snapshot' || value === 'delayed-websocket') return value;
+  if (value === 'ws-cache' || value === 'rest-cache' || value === 'snapshot') return value;
+  return undefined;
+}
+
+function normalizeDataMode(value: any): QuoteSnapshot['dataMode'] {
+  if (value === 'live' || value === 'delayed' || value === 'snapshot') return value;
+  return undefined;
+}
+
 function coerceNumber(value: any): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -3694,7 +3764,12 @@ function coerceNumber(value: any): number | null {
 }
 
 function coerceTimestamp(value: any): number {
+  return coerceTimestampNullable(value) ?? Date.now();
+}
+
+function coerceTimestampNullable(value: any): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1_000_000_000_000_000) return Math.floor(value / 1_000_000);
     return value > 10_000_000_000 ? value : value * 1000;
   }
   if (typeof value === 'string') {
@@ -3704,8 +3779,9 @@ function coerceTimestamp(value: any): number {
     }
     const numeric = Number(value);
     if (Number.isFinite(numeric)) {
+      if (numeric > 1_000_000_000_000_000) return Math.floor(numeric / 1_000_000);
       return numeric > 10_000_000_000 ? numeric : numeric * 1000;
     }
   }
-  return Date.now();
+  return null;
 }

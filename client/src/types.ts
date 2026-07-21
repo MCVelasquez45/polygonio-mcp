@@ -67,5 +67,33 @@ export type ChatContext = {
     marketClosed?: boolean;
     afterHours?: boolean;
   };
+  liveMarket?: {
+    quoteSymbol?: string | null;
+    optionSymbol?: string | null;
+    quote?: {
+      bidPrice?: number | null;
+      askPrice?: number | null;
+      midpoint?: number | null;
+      spread?: number | null;
+      bidSize?: number | null;
+      askSize?: number | null;
+      timestamp?: number | null;
+    } | null;
+    optionQuote?: {
+      bidPrice?: number | null;
+      askPrice?: number | null;
+      midpoint?: number | null;
+      spread?: number | null;
+      bidSize?: number | null;
+      askSize?: number | null;
+      timestamp?: number | null;
+    } | null;
+    optionLastTrade?: {
+      price?: number | null;
+      size?: number | null;
+      timestamp?: number | null;
+    } | null;
+    readAt?: number;
+  };
   watchlist?: string[];
 };

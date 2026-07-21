@@ -57,7 +57,7 @@ async function gatherContexts(agent: AgentDefinition, params: AgentParams): Prom
     .map(name => ({ name, builder: CONTEXT_BUILDERS[name] }))
     .filter(entry => Boolean(entry.builder));
   const settled = await Promise.allSettled(builders.map(entry => entry.builder(params)));
-  return settled.map((result, index) =>
+  const sections = settled.map((result, index) =>
     result.status === 'fulfilled'
       ? result.value
       : {
@@ -67,6 +67,15 @@ async function gatherContexts(agent: AgentDefinition, params: AgentParams): Prom
           note: String((result.reason as any)?.message ?? result.reason).slice(0, 200),
         }
   );
+  if (params.liveMarket) {
+    sections.unshift({
+      source: 'client-live-market',
+      label: 'Client Live Market State',
+      status: 'ok',
+      data: params.liveMarket,
+    });
+  }
+  return sections;
 }
 
 function buildPrompt(agent: AgentDefinition, params: AgentParams, sections: ContextSection[]): string {

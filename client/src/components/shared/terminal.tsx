@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLiveQuote } from '../../lib/liveMarketStore';
+import { useLiveMarketSubscription } from '../../hooks/useCockpitLiveSubscription';
 import { freshnessOf, type QuoteFreshness } from '../../lib/marketFormat';
 
 // ── Shared terminal design language ────────────────────────────────────────
@@ -141,6 +142,7 @@ export function LivePriceTile({
   label?: string;
   compact?: boolean;
 }) {
+  useLiveMarketSubscription(symbol);
   const quote = useLiveQuote(symbol);
   const mid =
     quote?.midpoint ??
