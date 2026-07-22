@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Command, Menu, MessageSquare, Plus, Search, Settings, TrendingUp } from 'lucide-react';
 import { ActionButton } from '../intelligence/ui';
-import { LiveNumber, LiveState } from '../shared/terminal';
+import { LiveNumber } from '../shared/terminal';
 import { useLiveQuote } from '../../lib/liveMarketStore';
 import { useLiveMarketSubscription } from '../../hooks/useCockpitLiveSubscription';
 import { modeLabel, type AppView } from './navModes';
@@ -92,11 +92,13 @@ export const TradingHeader = memo(function TradingHeader({
         </div>
 
         {/* Live symbol context — a quiet inline group, not a box, that persists
-            as you work the name. */}
+            as you work the name. Freshness/connectivity live in SystemStatusBar
+            now (per-domain), not here — a bare "OFFLINE" next to the ticker
+            symbol read as a whole-app outage when it was really just this one
+            symbol's (usually the equity's, which is honestly delayed) quote age. */}
         <div className="hidden items-center gap-3 border-l border-intel-divider pl-4 lg:flex">
           <span className="font-mono text-base font-semibold tracking-wide text-intel-ink">{underlying}</span>
           <LiveNumber value={mid} className="text-sm text-intel-ink2" />
-          <LiveState timestamp={quote?.timestamp ?? null} />
         </div>
       </div>
 

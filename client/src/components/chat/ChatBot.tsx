@@ -3,6 +3,7 @@ import { chatApi } from '../../api';
 import { DEFAULT_ASSISTANT_MESSAGE } from '../../constants';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import { getLiveQuoteSnapshot, getLiveTradeSnapshot } from '../../lib/liveMarketStore';
+import { setAiStatus } from '../../lib/aiStatusStore';
 import { ChatContext, ChatMessage, ConversationPayload } from '../../types';
 import { agentIdFromText, getAgentMeta } from './agentMeta';
 import { AiReportCard, type ReportSaveState } from './AiReportCard';
@@ -118,6 +119,7 @@ export function ChatBot({
     setMessages(prev => [...prev, userMessage]);
     setLoading(true);
     setPendingAgentId(agentId ?? null);
+    setAiStatus('busy');
 
     try {
       const data = await chatApi.sendChatMessage({
@@ -138,7 +140,9 @@ export function ChatBot({
       if (data?.conversation) {
         onConversationUpdate(data.conversation);
       }
+      setAiStatus('ready');
     } catch (error: any) {
+      setAiStatus('error');
       const serverMessage = typeof error?.response?.data?.error === 'string' ? error.response.data.error : null;
       const isMaxTurnError = serverMessage?.includes('Max turns');
       const fallback =

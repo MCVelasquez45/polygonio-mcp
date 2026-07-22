@@ -16,6 +16,7 @@ import { NavRail } from './components/layout/NavRail';
 import { MobileShell } from './components/layout/MobileShell';
 import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
+import { SystemStatusBar, type ChartTone } from './components/layout/SystemStatusBar';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -2685,6 +2686,33 @@ function App() {
       </div>
     ) : null;
 
+  // Chart's own independent status (mirrors ChartPanel's healthLabel derivation)
+  // for the workspace status bar — never contributes to any other domain's state.
+  const chartHealth = marketSessionMeta?.health ?? null;
+  const chartIsStale = (chartHealth?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
+  const chartIsFrozen = chartHealth?.mode === 'FROZEN' || Boolean(marketSessionMeta?.marketClosed);
+  const chartStatusLabel: string = chartIsFrozen
+    ? 'FROZEN'
+    : chartHealth?.mode === 'BACKFILLING'
+      ? 'BACKFILLING'
+      : chartHealth?.mode === 'LIVE' && chartIsStale
+        ? 'STALE'
+        : chartHealth?.mode === 'LIVE'
+          ? 'LIVE'
+          : chartHealth?.source === 'snapshot'
+            ? 'SNAPSHOT'
+            : chartHealth?.source === 'cache'
+              ? 'CACHED'
+              : 'DEGRADED';
+  const chartStatusTone: ChartTone =
+    chartStatusLabel === 'LIVE'
+      ? 'live'
+      : chartStatusLabel === 'SNAPSHOT' || chartStatusLabel === 'CACHED' || chartStatusLabel === 'BACKFILLING'
+        ? 'snapshot'
+        : chartStatusLabel === 'STALE' || chartStatusLabel === 'FROZEN'
+          ? 'stale'
+          : 'stale';
+
   const chartPanelEl = (
     <ChartPanel
           ticker={displayTicker}
@@ -3002,6 +3030,7 @@ function App() {
         chatDisabled={!chatAllowed}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
+      <SystemStatusBar chartLabel={chartStatusLabel} chartStatusTone={chartStatusTone} />
       <MarketContextBar />
       {settingsOpen && (
         <div

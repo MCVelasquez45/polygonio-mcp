@@ -1,5 +1,4 @@
-import { memo, useEffect, useState } from 'react';
-import { getSharedSocket } from '../../lib/socket';
+import { memo } from 'react';
 import { useLiveQuote } from '../../lib/liveMarketStore';
 import { useLiveMarketSubscriptions } from '../../hooks/useCockpitLiveSubscription';
 import { LiveNumber } from '../shared/terminal';
@@ -11,6 +10,11 @@ import { LiveNumber } from '../shared/terminal';
 // Honesty (freshness contract): real mid prices only, tick-flashed; regime /
 // breadth / crypto are omitted until a real feed backs them — a blank truth
 // beats a confident guess on a trading desk.
+//
+// Socket/backend/feed connectivity used to live here as a single "STREAM /
+// OFFLINE" indicator, which conflated Socket.IO connectivity with unrelated
+// subsystems. That's now SystemStatusBar, with one independent state per
+// domain — this component is index prices only.
 
 const INDEX_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA'] as const;
 
@@ -35,30 +39,7 @@ function IndexTicker({ symbol, label }: { symbol: string; label: string }) {
 }
 
 export const MarketContextBar = memo(function MarketContextBar() {
-  const [streaming, setStreaming] = useState(false);
   useLiveMarketSubscriptions([...INDEX_SYMBOLS]);
-
-  useEffect(() => {
-    let socket: ReturnType<typeof getSharedSocket> | null = null;
-    const onConnect = () => setStreaming(true);
-    const onDisconnect = () => setStreaming(false);
-    try {
-      socket = getSharedSocket();
-      setStreaming(Boolean(socket.connected));
-      socket.on('connect', onConnect);
-      socket.on('disconnect', onDisconnect);
-    } catch {
-      /* offline / test env — degrades to OFFLINE honestly */
-    }
-    return () => {
-      try {
-        socket?.off('connect', onConnect);
-        socket?.off('disconnect', onDisconnect);
-      } catch {
-        /* no-op */
-      }
-    };
-  }, []);
 
   return (
     <div
@@ -66,20 +47,6 @@ export const MarketContextBar = memo(function MarketContextBar() {
       role="status"
       aria-label="Market context"
     >
-      {/* Stream state — the ribbon reads alive or it reads offline, never faked. */}
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            streaming ? 'bg-intel-cyan motion-safe:animate-heartbeat' : 'bg-intel-ink3'
-          }`}
-        />
-        <span className={`font-mono text-[10px] uppercase tracking-label ${streaming ? 'text-intel-cyan' : 'text-intel-ink3'}`}>
-          {streaming ? 'STREAM' : 'OFFLINE'}
-        </span>
-      </span>
-
-      <span className="h-3 w-px shrink-0 bg-intel-divider" />
-
       {INDEX_SYMBOLS.map(symbol => (
         <IndexTicker key={symbol} symbol={symbol} label={INDEX_LABELS[symbol]} />
       ))}

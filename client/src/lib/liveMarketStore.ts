@@ -30,14 +30,42 @@ const mapListeners = new Set<Listener>();
 // path never forces a render — freshness consumers poll it against a clock.
 let lastQuoteAt: number | null = null;
 
+// Options and equities are independent entitlement domains (see
+// docs/massive/README.md) — the options feed can be fully live while equities
+// are delayed/unauthorized, and neither should be inferred from the other.
+// These track each domain's own last-delivery time (+ the equity domain's
+// last-seen dataMode) so a workspace-level status bar can report them
+// separately instead of collapsing into one "OFFLINE" signal.
+let lastOptionQuoteAt: number | null = null;
+let lastEquityQuoteAt: number | null = null;
+let lastEquityDataMode: QuoteSnapshot['dataMode'] | null = null;
+
 /** Wall-clock ms of the most recent live quote/trade, or null if none yet. */
 export function getLastQuoteAt(): number | null {
   return lastQuoteAt;
 }
 
-/** Test/reset seam — clears the last-live-data stamp. */
+/** Wall-clock ms of the most recent OPTIONS quote/trade, or null if none yet. */
+export function getLastOptionQuoteAt(): number | null {
+  return lastOptionQuoteAt;
+}
+
+/** Wall-clock ms of the most recent EQUITY quote/trade, or null if none yet. */
+export function getLastEquityQuoteAt(): number | null {
+  return lastEquityQuoteAt;
+}
+
+/** dataMode of the most recent equity quote (live/delayed/snapshot), or null if none yet. */
+export function getLastEquityDataMode(): QuoteSnapshot['dataMode'] | null {
+  return lastEquityDataMode;
+}
+
+/** Test/reset seam — clears the last-live-data stamps. */
 export function resetLastQuoteAt() {
   lastQuoteAt = null;
+  lastOptionQuoteAt = null;
+  lastEquityQuoteAt = null;
+  lastEquityDataMode = null;
 }
 
 function notifySymbol(symbol: string) {
@@ -78,14 +106,27 @@ export function publishQuote(quote: QuoteSnapshot) {
   const symbol = quote.ticker?.toUpperCase();
   if (!symbol) return;
   quotes = { ...quotes, [symbol]: quote };
-  lastQuoteAt = Date.now();
+  const now = Date.now();
+  lastQuoteAt = now;
+  if (symbol.startsWith('O:')) {
+    lastOptionQuoteAt = now;
+  } else {
+    lastEquityQuoteAt = now;
+    lastEquityDataMode = quote.dataMode ?? lastEquityDataMode;
+  }
   notifySymbol(symbol);
 }
 
 export function publishTrade(trade: TradePrint & { ticker: string }) {
   const symbol = trade.ticker?.toUpperCase();
   if (!symbol) return;
-  lastQuoteAt = Date.now();
+  const now = Date.now();
+  lastQuoteAt = now;
+  if (symbol.startsWith('O:')) {
+    lastOptionQuoteAt = now;
+  } else {
+    lastEquityQuoteAt = now;
+  }
   lastTrades = { ...lastTrades, [symbol]: trade };
   const history = tradeHistories.get(symbol) ?? [];
   if (!(history.length > 0 && history[0]?.id === trade.id)) {
