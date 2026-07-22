@@ -268,7 +268,7 @@ async def _perform_extraction(transcript: str) -> dict[str, Any]:
     import asyncio
     from core.sift_router import TEMPLATES, _configure_provider, _run_extraction
 
-    _configure_provider(None, None)  # uses SIFT_PROVIDER env or defaults to anthropic
+    _configure_provider(None, None)  # OpenAI-only local extraction engine
     fields = TEMPLATES["trading-strategy"]
 
     try:

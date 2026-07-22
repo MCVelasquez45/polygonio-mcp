@@ -9,9 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-# Register the custom OpenAI provider so OPENAI_API_KEY works with sift
-from core.sift_openai_provider import register as _register_openai
-_register_openai()
+from core.sift_openai_provider import OpenAIProvider
 
 router = APIRouter(prefix="/sift", tags=["sift"])
 
@@ -225,36 +223,26 @@ TEMPLATES: dict[str, list[dict[str, str]]] = {
 # ---------------------------------------------------------------------------
 
 def _configure_provider(provider_name: str | None, model_name: str | None) -> None:
-    """Set environment variables so sift picks the right provider/model."""
-    from sift.providers import reset_provider
-    from sift.core.config_service import get_config_service
-
-    if provider_name:
-        os.environ["SIFT_PROVIDER"] = provider_name
-    elif "SIFT_PROVIDER" not in os.environ:
-        os.environ["SIFT_PROVIDER"] = "openai"
+    """Set environment variables for the active (OpenAI-only) provider/model."""
+    if provider_name and provider_name != "openai":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown provider '{provider_name}'. Available: openai",
+        )
 
     if model_name:
         os.environ["SIFT_MODEL"] = model_name
 
-    # Force sift to re-read env vars and clear cached provider
-    get_config_service().resolve(force=True)
-    reset_provider()
-
 
 def _get_provider_info() -> tuple[str, str]:
-    """Return (provider_name, model_name) from the active sift provider."""
-    from sift.providers import get_provider
-    try:
-        p = get_provider()
-        return p.name, p.model
-    except Exception:
-        return os.environ.get("SIFT_PROVIDER", "unknown"), os.environ.get("SIFT_MODEL", "unknown")
+    """Return (provider_name, model_name) for the active provider."""
+    provider = OpenAIProvider()
+    return provider.name, provider.model
 
 
 def _run_extraction(transcript: str, fields: list[dict], phase_name: str, context: str) -> dict:
-    """Synchronous wrapper around sift's extract_structured_data."""
-    from sift.engine import extract_structured_data
+    """Synchronous wrapper around the local extraction engine."""
+    from core.sift_engine import extract_structured_data
     return extract_structured_data(
         transcript=transcript,
         extraction_fields=fields,
@@ -348,18 +336,6 @@ async def sift_get_template(template_name: str) -> dict[str, Any]:
 @router.get("/providers")
 async def sift_list_providers() -> dict[str, Any]:
     """List available AI providers and their status."""
-    from sift.providers import PROVIDERS, _register_defaults, reset_provider
-
-    _register_defaults()
-    providers = []
-    for name in sorted(PROVIDERS.keys()):
-        info = SiftProviderInfo(name=name, available=False)
-        try:
-            instance = PROVIDERS[name]()
-            info.available = instance.is_available()
-            info.model = instance.model
-        except Exception:
-            pass
-        providers.append(info.model_dump())
-    reset_provider()
-    return {"providers": providers}
+    provider = OpenAIProvider()
+    info = SiftProviderInfo(name=provider.name, available=provider.is_available(), model=provider.model)
+    return {"providers": [info.model_dump()]}

@@ -26,7 +26,7 @@ class OpenAIProvider:
 
     def chat(self, system: str, user: str, max_tokens: int = 4000) -> str:
         from openai import OpenAI
-        from sift.errors import ProviderAuthError, ProviderError, ProviderModelError, ProviderQuotaError
+        from core.sift_errors import ProviderAuthError, ProviderError, ProviderModelError, ProviderQuotaError
 
         client = OpenAI(api_key=self.api_key)
 
@@ -79,13 +79,3 @@ class OpenAIProvider:
                 response_format="text",
             )
         return result if isinstance(result, str) else str(result)
-
-
-def register() -> None:
-    """Register the OpenAI provider with sift's provider registry."""
-    from sift.providers import PROVIDERS, _register_defaults
-    from sift.core.secrets import PROVIDER_KEY_ENV
-
-    _register_defaults()
-    PROVIDERS["openai"] = OpenAIProvider
-    PROVIDER_KEY_ENV["openai"] = "OPENAI_API_KEY"
