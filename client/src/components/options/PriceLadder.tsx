@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuote, useLiveTrade, useLiveTradeHistory } from '../../lib/liveMarketStore';
 
 // Institutional price ladder (DOM) — the execution surface. A centered price
@@ -97,25 +97,52 @@ export const PriceLadder = memo(function PriceLadder({
   const ageMs = quote?.timestamp != null ? now - quote.timestamp : null;
   const hasQuote = Boolean(quote);
   const isFresh = ageMs != null && ageMs >= 0 && ageMs <= LIVE_QUOTE_FRESH_MS;
+  let statusReason = '';
   const status: DepthStatus = !symbol
-    ? 'WAITING_FOR_CONTRACTS'
+    ? ((statusReason = 'no contract selected'), 'WAITING_FOR_CONTRACTS')
     : !socketConnected
-      ? 'OFFLINE'
+      ? ((statusReason = 'socketConnected=false'), 'OFFLINE')
       : providerUnavailable
-        ? 'PROVIDER_BLOCKED'
+        ? ((statusReason = 'providerUnavailable=true'), 'PROVIDER_BLOCKED')
       : hasQuote && quote?.dataMode === 'delayed'
-        ? 'DEGRADED'
+        ? ((statusReason = 'quote.dataMode=delayed'), 'DEGRADED')
         : hasQuote && quote?.dataMode === 'snapshot'
-          ? 'DEGRADED'
+          ? ((statusReason = 'quote.dataMode=snapshot'), 'DEGRADED')
           : hasQuote && isFresh
-            ? 'LIVE'
+            ? ((statusReason = `hasQuote=true, ageMs=${ageMs} <= ${LIVE_QUOTE_FRESH_MS}`), 'LIVE')
             : hasQuote
               ? marketClosed
-                ? 'MARKET_CLOSED'
-                : 'STALE'
+                ? ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=true`), 'MARKET_CLOSED')
+                : ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=false`), 'STALE')
               : subscriptionActive
-                ? 'WAITING_FOR_QUOTES'
-                : 'CONNECTING';
+                ? ((statusReason = 'hasQuote=false, subscriptionActive=true — no quote in store for this symbol key'), 'WAITING_FOR_QUOTES')
+                : ((statusReason = 'hasQuote=false, subscriptionActive=false'), 'CONNECTING');
+
+  const prevStatusRef = useRef<DepthStatus | null>(null);
+  useEffect(() => {
+    if (prevStatusRef.current === status) return;
+    // TEMPORARY: production-stabilization debug logging (see sprint task).
+    // eslint-disable-next-line no-console
+    console.debug('[DEPTH_STATE]', {
+      ts: new Date().toISOString(),
+      symbol,
+      prevStatus: prevStatusRef.current,
+      status,
+      reason: statusReason,
+      socketConnected,
+      subscriptionActive,
+      providerUnavailable,
+      marketClosed,
+      hasQuote,
+      quoteTicker: quote?.ticker ?? null,
+      quoteDataMode: quote?.dataMode ?? null,
+      quoteTimestamp: quote?.timestamp ?? null,
+      nowMs: now,
+      ageMs,
+      isFresh,
+    });
+    prevStatusRef.current = status;
+  }, [status, statusReason, symbol, socketConnected, subscriptionActive, providerUnavailable, marketClosed, hasQuote, quote, now, ageMs, isFresh]);
   const statusCopy = {
     LIVE: 'Receiving live option quotes.',
     CONNECTING: 'Subscribing to option contracts...',

@@ -893,7 +893,11 @@ function App() {
 
     const handleSubscribed = (payload: any) => {
       const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
-      if (ackSymbol && activeSymbol && ackSymbol === activeSymbol) {
+      const matches = Boolean(ackSymbol && activeSymbol && ackSymbol === activeSymbol);
+      // TEMPORARY: production-stabilization debug logging (see sprint task).
+      // eslint-disable-next-line no-console
+      console.debug('[LIVE_SUBSCRIBE_ACK]', { ts: new Date().toISOString(), activeSymbol, ackSymbol, matches, payload });
+      if (matches) {
         const accepted = payload?.accepted !== false;
         setLiveSubscriptionActive(accepted);
         setLiveSubscriptionUnavailable(!accepted);
@@ -914,7 +918,19 @@ function App() {
       // Publish into the live store: only panels rendering this symbol
       // re-render. No App state is touched on the hot tick path.
       publishQuote(normalized);
-      if (activeSymbol && normalized.ticker === activeSymbol) {
+      const matches = Boolean(activeSymbol && normalized.ticker === activeSymbol);
+      // TEMPORARY: production-stabilization debug logging (see sprint task).
+      // eslint-disable-next-line no-console
+      console.debug('[LIVE_QUOTE_RX]', {
+        ts: new Date().toISOString(),
+        activeSymbol,
+        quoteTicker: normalized.ticker,
+        matches,
+        rawSym: payload?.sym ?? payload?.symbol ?? null,
+        dataMode: normalized.dataMode,
+        providerTimestamp: normalized.timestamp,
+      });
+      if (matches) {
         lastLiveQuoteAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
         setLiveSubscriptionUnavailable(false);
