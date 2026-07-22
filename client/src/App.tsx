@@ -2526,7 +2526,7 @@ function App() {
       resolvedUnderlyingPrice,
       LIVE_CHAIN_STRIKE_ROWS
     );
-    if (activeContractSymbol?.startsWith('O:')) {
+    if (activeContractSymbol?.toUpperCase().startsWith('O:')) {
       nextSymbols.add(activeContractSymbol.toUpperCase());
     }
 

@@ -94,9 +94,13 @@ export const PriceLadder = memo(function PriceLadder({
     return () => window.clearInterval(id);
   }, []);
 
-  const ageMs = quote?.timestamp != null ? now - quote.timestamp : null;
+  // Provider (SIP) clocks and the browser clock aren't perfectly synced, so a
+  // just-arrived quote can appear to be from a few hundred ms in the future.
+  // That's freshness, not staleness — clamp to zero rather than reject it.
+  const rawAgeMs = quote?.timestamp != null ? now - quote.timestamp : null;
+  const ageMs = rawAgeMs != null ? Math.max(0, rawAgeMs) : null;
   const hasQuote = Boolean(quote);
-  const isFresh = ageMs != null && ageMs >= 0 && ageMs <= LIVE_QUOTE_FRESH_MS;
+  const isFresh = ageMs != null && ageMs <= LIVE_QUOTE_FRESH_MS;
   let statusReason = '';
   const status: DepthStatus = !symbol
     ? ((statusReason = 'no contract selected'), 'WAITING_FOR_CONTRACTS')
