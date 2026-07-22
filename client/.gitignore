@@ -6,3 +6,7 @@ dist/
 package-lock.json
 .DS_Store
 .vercel/
+test-results/
+playwright-report/
+e2e-artifacts/
+blob-report/
