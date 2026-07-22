@@ -101,26 +101,35 @@ export const PriceLadder = memo(function PriceLadder({
   const ageMs = rawAgeMs != null ? Math.max(0, rawAgeMs) : null;
   const hasQuote = Boolean(quote);
   const isFresh = ageMs != null && ageMs <= LIVE_QUOTE_FRESH_MS;
+  // Priority: real, fresh quote data always wins. `providerUnavailable` is a
+  // subscription-lifecycle flag (set when the backend rejects/errors a
+  // live:subscribe) that only ever gets CLEARED by a matching socket event —
+  // but quotes also land in the store via a REST snapshot fallback (App.tsx's
+  // loadSnapshots), which never touches that flag. If we check
+  // providerUnavailable before freshness, a stale rejection from an earlier
+  // contract can force PROVIDER_BLOCKED even while this contract's quotes are
+  // genuinely live. Data freshness is the ground truth; the flag only matters
+  // when we don't have fresh data to show instead.
   let statusReason = '';
   const status: DepthStatus = !symbol
     ? ((statusReason = 'no contract selected'), 'WAITING_FOR_CONTRACTS')
     : !socketConnected
       ? ((statusReason = 'socketConnected=false'), 'OFFLINE')
-      : providerUnavailable
-        ? ((statusReason = 'providerUnavailable=true'), 'PROVIDER_BLOCKED')
       : hasQuote && quote?.dataMode === 'delayed'
         ? ((statusReason = 'quote.dataMode=delayed'), 'DEGRADED')
         : hasQuote && quote?.dataMode === 'snapshot'
           ? ((statusReason = 'quote.dataMode=snapshot'), 'DEGRADED')
           : hasQuote && isFresh
             ? ((statusReason = `hasQuote=true, ageMs=${ageMs} <= ${LIVE_QUOTE_FRESH_MS}`), 'LIVE')
-            : hasQuote
-              ? marketClosed
-                ? ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=true`), 'MARKET_CLOSED')
-                : ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=false`), 'STALE')
-              : subscriptionActive
-                ? ((statusReason = 'hasQuote=false, subscriptionActive=true — no quote in store for this symbol key'), 'WAITING_FOR_QUOTES')
-                : ((statusReason = 'hasQuote=false, subscriptionActive=false'), 'CONNECTING');
+            : providerUnavailable
+              ? ((statusReason = 'providerUnavailable=true, no fresh quote to show instead'), 'PROVIDER_BLOCKED')
+              : hasQuote
+                ? marketClosed
+                  ? ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=true`), 'MARKET_CLOSED')
+                  : ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=false`), 'STALE')
+                : subscriptionActive
+                  ? ((statusReason = 'hasQuote=false, subscriptionActive=true — no quote in store for this symbol key'), 'WAITING_FOR_QUOTES')
+                  : ((statusReason = 'hasQuote=false, subscriptionActive=false'), 'CONNECTING');
 
   const prevStatusRef = useRef<DepthStatus | null>(null);
   useEffect(() => {

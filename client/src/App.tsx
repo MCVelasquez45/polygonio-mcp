@@ -884,10 +884,11 @@ function App() {
     const socket = socketRef.current;
     if (!socket || !liveSocketConnected) return;
     const activeSymbol = activeContractSymbol?.toUpperCase() ?? null;
-      if (!activeSymbol) {
-        setLiveSubscriptionActive(false);
-        setLiveSubscriptionUnavailable(false);
-      }
+    // Every contract selection starts clean: a previous contract's rejected
+    // subscription must never carry over as "blocked" for a newly-selected
+    // one. The handlers below re-set these as real events arrive.
+    setLiveSubscriptionActive(false);
+    setLiveSubscriptionUnavailable(false);
 
     const resolveSymbol = (payload: any) =>
       typeof payload === 'string' ? payload.toUpperCase() : normalizeLiveSymbol(payload);
