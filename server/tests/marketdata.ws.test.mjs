@@ -53,6 +53,15 @@ const waitFor = async (predicate, ms = 2000) => {
   }
 };
 
+test('startup initializes the designated options WebSocket owner before subscriptions', async () => {
+  const result = manager.initializeOptionsStreamOwner();
+  assert.equal(result.created, true);
+  assert.equal(result.skipped, false);
+  assert.equal(result.reason, null);
+  await waitFor(() => manager.getOptionsWsState()?.authenticated === true);
+  assert.equal(optionsConnections, 1, 'startup creates exactly one options connection');
+});
+
 test('4+5: option subscriptions are refcounted, deduped, and released when idle', async () => {
   const symbol = 'O:SPY260724C00500000';
   assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-a').accepted, true);

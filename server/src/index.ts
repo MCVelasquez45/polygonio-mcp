@@ -41,7 +41,10 @@ import {
   stopAutomationVisibilityBroadcaster,
 } from './features/portfolio/automationVisibilitySocket.service';
 import { marketDataRouter } from './features/marketData/marketData.routes';
-import { shutdownOptionsStream } from './features/marketData/optionsSubscriptionManager.service';
+import {
+  initializeOptionsStreamOwner,
+  shutdownOptionsStream,
+} from './features/marketData/optionsSubscriptionManager.service';
 import { intelligenceRouter } from './features/intelligence/intelligence.routes';
 import { optionsRouter } from './features/options/options.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
@@ -162,6 +165,7 @@ const io = new SocketIOServer(httpServer, {
 });
 app.set('io', io);
 initLiveFeed(io);
+initializeOptionsStreamOwner();
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 initFuturesRuntime(io);
 startAutomationVisibilityBroadcaster(io);

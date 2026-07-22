@@ -1,4 +1,5 @@
 import { MassiveWsClient, type MassiveWsState } from '../../shared/data/massiveWs';
+import { writeStructuredLog } from '../../shared/logging/safeLogging';
 import { isMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
 import { ingestWsQuote, ingestWsTrade } from './optionsQuoteCache.service';
 
@@ -66,6 +67,12 @@ export type OptionsSubscriptionResult = {
   payload: string | null;
 };
 
+type OptionsOwnerInitResult = {
+  created: boolean;
+  skipped: boolean;
+  reason: string | null;
+};
+
 type SubscriptionRecord = {
   // consumer ids per kind so the same contract can be held by the UI and
   // automation independently.
@@ -77,6 +84,56 @@ const messageListeners = new Set<(event: any) => void>();
 const statusListeners = new Set<(event: any) => void>();
 let wsClient: MassiveWsClient | null = null;
 let lastMessageAt: number | null = null;
+
+function optionsStartupContext(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    pid: process.pid,
+    environment: {
+      nodeEnv: NODE_ENV,
+      port: process.env.PORT ?? null,
+      renderServiceName: process.env.RENDER_SERVICE_NAME ?? null,
+      renderExternalHostname: process.env.RENDER_EXTERNAL_HOSTNAME ?? null,
+      renderGitCommit: process.env.RENDER_GIT_COMMIT ?? null,
+    },
+    featureFlags: {
+      massiveOptionsWsEnabledRaw: OPTIONS_WS_ENABLED_RAW ?? null,
+      optionsWsRequested: OPTIONS_WS_REQUESTED,
+      allowNonProdOwner: ALLOW_NON_PROD_OWNER,
+      optionsWsEnabled: OPTIONS_WS_ENABLED,
+      stocksWsEnabledRaw: process.env.MASSIVE_STOCKS_WS_ENABLED ?? null,
+      subscriptionProfile: process.env.MASSIVE_SUBSCRIPTION_PROFILE ?? null,
+    },
+    massiveRuntime: {
+      massiveAuthConfigured: MASSIVE_WS_KEY.length > 0,
+      endpoint: MASSIVE_WS_URL_OPTIONS,
+      dataMode: OPTIONS_DATA_MODE,
+      maxContractsPerConnection: MAX_CONTRACTS_PER_CONNECTION,
+      tradeQuoteChannels: TRADE_QUOTE_CHANNELS,
+      aggregateChannels: AGG_CHANNELS,
+    },
+    ownershipDecision: {
+      isProduction: IS_PRODUCTION,
+      requested: OPTIONS_WS_REQUESTED,
+      allowNonProdOwner: ALLOW_NON_PROD_OWNER,
+      designatedOwner: OPTIONS_WS_ENABLED,
+    },
+    ...extra,
+  };
+}
+
+function logOptionsStartup(
+  event: string,
+  severity: 'debug' | 'info' | 'warning' | 'error' = 'info',
+  context: Record<string, unknown> = {}
+): void {
+  writeStructuredLog({
+    component: 'market-data',
+    module: 'options-subscription-manager',
+    event,
+    severity,
+    context: optionsStartupContext(context),
+  });
+}
 
 function channelsFor(kind: OptionsSubscriptionKind): string[] {
   return kind === 'aggs'
@@ -149,6 +206,46 @@ function ensureClient(): MassiveWsClient | null {
     wsClient.connect();
   }
   return wsClient;
+}
+
+export function initializeOptionsStreamOwner(): OptionsOwnerInitResult {
+  logOptionsStartup('OPTIONS_WS_INIT_ENTRY');
+
+  if (!OPTIONS_WS_REQUESTED) {
+    const result = { created: false, skipped: true, reason: 'options_ws_not_requested' };
+    logOptionsStartup('OPTIONS_WS_INIT_SKIPPED', 'warning', { skipReason: result.reason });
+    logOptionsStartup('OPTIONS_WS_INIT_EXIT', 'warning', result);
+    return result;
+  }
+
+  if (!OPTIONS_WS_ENABLED) {
+    const result = { created: false, skipped: true, reason: 'options_ws_not_designated_owner' };
+    logOptionsStartup('OPTIONS_WS_INIT_SKIPPED', 'warning', { skipReason: result.reason });
+    logOptionsStartup('OPTIONS_WS_INIT_EXIT', 'warning', result);
+    return result;
+  }
+
+  if (!MASSIVE_WS_KEY) {
+    const result = { created: false, skipped: true, reason: 'missing_massive_api_key' };
+    logOptionsStartup('OPTIONS_WS_INIT_SKIPPED', 'error', { skipReason: result.reason });
+    logOptionsStartup('OPTIONS_WS_INIT_EXIT', 'error', result);
+    return result;
+  }
+
+  if (wsClient) {
+    const result = { created: false, skipped: false, reason: 'already_initialized' };
+    logOptionsStartup('OPTIONS_WS_INIT_EXIT', 'info', result);
+    return result;
+  }
+
+  const client = ensureClient();
+  const result = {
+    created: Boolean(client),
+    skipped: !client,
+    reason: client ? null : 'options_ws_unavailable',
+  };
+  logOptionsStartup(result.created ? 'OPTIONS_WS_INIT_EXIT' : 'OPTIONS_WS_INIT_SKIPPED', result.created ? 'info' : 'error', result);
+  return result;
 }
 
 /** Register a raw-event listener (e.g. the socket.io live feed broadcaster). */
