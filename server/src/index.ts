@@ -165,7 +165,6 @@ const io = new SocketIOServer(httpServer, {
 });
 app.set('io', io);
 initLiveFeed(io);
-initializeOptionsStreamOwner();
 initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAggregates: unsubscribeAggregateSymbol });
 initFuturesRuntime(io);
 startAutomationVisibilityBroadcaster(io);
@@ -235,6 +234,7 @@ async function start() {
 
   httpServer.listen(PORT, () => {
     console.log(`[SERVER] API listening on :${PORT}`);
+    scheduleOptionsStreamOwnerStartup();
   });
 
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
@@ -267,10 +267,50 @@ async function start() {
 // Graceful shutdown: release the scheduler lease so a replacement instance can
 // take ownership immediately instead of waiting for the lease to expire.
 let shuttingDown = false;
+let optionsStreamStartupTimer: NodeJS.Timeout | null = null;
+let optionsStreamStartupScheduled = false;
+
+function scheduleOptionsStreamOwnerStartup() {
+  if (optionsStreamStartupScheduled) return;
+  optionsStreamStartupScheduled = true;
+
+  const configuredDelay = process.env.MASSIVE_OPTIONS_WS_STARTUP_DELAY_MS;
+  const startupDelayMs =
+    configuredDelay != null && configuredDelay !== ''
+      ? Math.max(0, Number(configuredDelay) || 0)
+      : process.env.NODE_ENV === 'production'
+        ? 30_000
+        : 0;
+
+  if (startupDelayMs <= 0) {
+    initializeOptionsStreamOwner();
+    return;
+  }
+
+  writeStructuredLog({
+    component: 'market-data',
+    module: 'options-subscription-manager',
+    event: 'OPTIONS_WS_INIT_DEFERRED',
+    severity: 'info',
+    context: {
+      delayMs: startupDelayMs,
+      reason: 'render_zero_downtime_rollout_connection_overlap',
+    },
+  });
+  optionsStreamStartupTimer = setTimeout(() => {
+    optionsStreamStartupTimer = null;
+    initializeOptionsStreamOwner();
+  }, startupDelayMs);
+}
+
 async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[SERVER] ${signal} received — stopping automation schedulers`);
+  if (optionsStreamStartupTimer) {
+    clearTimeout(optionsStreamStartupTimer);
+    optionsStreamStartupTimer = null;
+  }
   shutdownOptionsStream();
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
