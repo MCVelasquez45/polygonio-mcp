@@ -31,6 +31,7 @@ import { getLatestSelection, saveSelection } from '../options/services/selection
 import { getCachedChainSnapshot, saveChainSnapshot } from '../options/services/optionsChainStore';
 import { resolveAggregates } from './services/aggregatesService';
 import { addWarmTickers, getWarmTickers } from './services/aggregatesWarmList';
+import { isMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
 
 const router = Router();
 const STABLE_CHAIN_MAX_AGE_MS = 10 * 60 * 1000;
@@ -51,7 +52,7 @@ function logMarketRequest(req: any) {
 }
 
 function requireOptionTicker(ticker: string, res: any) {
-  if (!ticker || !ticker.startsWith('O:')) {
+  if (!ticker || !isMassiveOptionSymbol(ticker)) {
     res.status(400).json({ error: 'Massive endpoints require option tickers prefixed with O:' });
     return false;
   }
@@ -197,7 +198,8 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
     let underlyingSymbol = ticker;
     let resolvedContractDetail: Awaited<ReturnType<typeof getMassiveOptionContract>> | null = null;
 
-    if (ticker.startsWith('O:')) {
+    const isOptionTicker = isMassiveOptionSymbol(ticker);
+    if (isOptionTicker) {
       resolvedContractDetail = await getMassiveOptionContract(ticker);
       if (!resolvedContractDetail?.underlying) {
         const err: any = new Error('Contract not found or missing underlying');
@@ -231,8 +233,8 @@ router.get('/options/chain/:ticker', async (req, res, next) => {
         // All chain fetches flow through the shared Options Market Data
         // Orchestrator (request coalescing + session-aware caching +
         // completeness metadata). The UI is a VISIBLE_UI priority consumer.
-        const chainUnderlying = ticker.startsWith('O:') ? underlyingSymbol : ticker;
-        const contractLimit = ticker.startsWith('O:') && expirationFilter ? Math.max(limit, 5000) : desiredLimit;
+        const chainUnderlying = isOptionTicker ? underlyingSymbol : ticker;
+        const contractLimit = isOptionTicker && expirationFilter ? Math.max(limit, 5000) : desiredLimit;
         const chain = await getOptionChainWindow({
           underlying: chainUnderlying,
           expiration: expirationFilter,
@@ -467,7 +469,7 @@ router.get('/options/expirations/:ticker', async (req, res, next) => {
     const maxPages = Number(req.query.maxPages ?? 5) || 5;
 
     let underlyingTicker = requestedTicker;
-    if (requestedTicker.startsWith('O:')) {
+    if (isMassiveOptionSymbol(requestedTicker)) {
       const detail = await getMassiveOptionContract(requestedTicker);
       if (!detail?.underlying) {
         return res.status(404).json({ error: 'Unable to resolve underlying for contract' });
@@ -544,7 +546,7 @@ router.get('/watchlist', async (req, res, next) => {
     const unique = Array.from(new Set(tickers)).slice(0, 25);
     const entries = await Promise.all(
       unique.map(async symbol => {
-        const isOptionContract = symbol.startsWith('O:');
+        const isOptionContract = isMassiveOptionSymbol(symbol);
         const type = isOptionContract ? 'watchlist-contract' : 'watchlist-underlying';
         try {
           const { data, fetchedAt, fromCache } = await fetchWithCache<any>(
@@ -593,7 +595,7 @@ router.get('/short-interest', async (req, res, next) => {
       return res.status(400).json({ error: 'ticker is required' });
     }
     let ticker = requestedTicker;
-    if (requestedTicker.startsWith('O:')) {
+    if (isMassiveOptionSymbol(requestedTicker)) {
       const contractDetail = await getMassiveOptionContract(requestedTicker);
       if (!contractDetail?.underlying) {
         return res.status(404).json({ error: 'Option contract missing underlying ticker' });
@@ -635,7 +637,7 @@ router.get('/short-volume', async (req, res, next) => {
       return res.status(400).json({ error: 'ticker is required' });
     }
     let ticker = requestedTicker;
-    if (requestedTicker.startsWith('O:')) {
+    if (isMassiveOptionSymbol(requestedTicker)) {
       const contractDetail = await getMassiveOptionContract(requestedTicker);
       if (!contractDetail?.underlying) {
         return res.status(404).json({ error: 'Option contract missing underlying ticker' });

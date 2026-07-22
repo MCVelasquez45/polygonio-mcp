@@ -6,6 +6,7 @@ import { BrokerOrderModel, type BrokerOrderDocument } from '../models/brokerOrde
 import { OrderIntentModel, type OrderIntentDocument } from '../models/orderIntent.model';
 import { UniverseEvaluationModel } from '../models/universeEvaluation.model';
 import type { SignalDirection } from '../models/tradeCandidate.model';
+import { optionRightFromSymbol } from '../../../shared/symbols/optionSymbol';
 import { logAutomationEvent } from './automationAudit.service';
 import { recordBrokerOrderSnapshot } from './orderIntent.service';
 import { openOrUpdateEntryPosition, type EntryLinks } from './positionManager.service';
@@ -97,8 +98,7 @@ export function classifyBrokerTransition(
 
 /** Direction from the OCC option symbol (…YYMMDD[C|P]strike). */
 function directionFromOptionSymbol(optionSymbol: string): SignalDirection {
-  const m = optionSymbol.toUpperCase().replace(/^O:/, '').match(/\d{6}([CP])\d{8}$/);
-  return m && m[1] === 'P' ? 'BEARISH' : 'BULLISH';
+  return optionRightFromSymbol(optionSymbol) === 'put' ? 'BEARISH' : 'BULLISH';
 }
 
 /** Resolve the full lifecycle lineage for a position (best-effort, never fatal). */

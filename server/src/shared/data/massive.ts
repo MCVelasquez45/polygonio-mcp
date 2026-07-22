@@ -7,6 +7,7 @@ import {
   resolveMassiveRetryDelayMs,
 } from './massiveRetry';
 import { computeDteEt } from '../time/tradingCalendar';
+import { isMassiveOptionSymbol, toInternalOptionSymbol } from '../symbols/optionSymbol';
 // Handles authenticated + rate-limited access to Massive.com's API, with caching + retry logic.
 // Retry policy is centralized in ./massiveRetry so it stays consistent with massiveProvider.ts.
 
@@ -70,7 +71,7 @@ function endpointClassOf(path: string): string {
   // /v2/aggs/ticker/SPY/range/5/minute/... → /v2/aggs/:ticker/range/:mult/:timespan
   const parts = path.split('/').filter(Boolean);
   if (parts[0] === 'v2' && parts[1] === 'aggs' && parts[2] === 'ticker') {
-    const isOption = (parts[3] ?? '').startsWith('O:');
+    const isOption = isMassiveOptionSymbol(parts[3] ?? '');
     const timespan = parts[6] ?? parts[4] ?? '';
     return `/v2/aggs/${isOption ? 'options' : 'stocks'}/${timespan}`;
   }
@@ -2206,7 +2207,7 @@ export async function getMassiveOptionQuoteSnapshot(
   contractTicker: string,
   options: { cacheTtlMs?: number; priority?: RequestPriority } = {}
 ): Promise<HeldContractQuote> {
-  const u = underlying.toUpperCase().replace(/^O:/, '');
+  const u = toInternalOptionSymbol(underlying).toUpperCase();
   const c = contractTicker.toUpperCase();
   const requestOptions = {
     cacheTtlMs: options.cacheTtlMs ?? 3_000,

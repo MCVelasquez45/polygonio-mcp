@@ -1,4 +1,5 @@
 import { MassiveWsClient, type MassiveWsState } from '../../shared/data/massiveWs';
+import { isMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
 import { ingestWsQuote, ingestWsTrade } from './optionsQuoteCache.service';
 
 // Single owner of the Massive OPTIONS WebSocket connection and its
@@ -160,7 +161,7 @@ export function addOptionsWsStatusListener(listener: (event: any) => void): void
 }
 
 export function isOptionContractSymbol(symbol: string): boolean {
-  return symbol.toUpperCase().startsWith('O:');
+  return isMassiveOptionSymbol(symbol);
 }
 
 /**

@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { writeStructuredLog } from '../logging/safeLogging';
 
 type MassiveWsOptions = {
   url?: string;
@@ -11,6 +12,9 @@ type MassiveWsOptions = {
 };
 
 type SubscriptionSet = Set<string>;
+
+let clientSequence = 0;
+let socketSequence = 0;
 
 export type MassiveWsState = {
   url: string;
@@ -31,6 +35,8 @@ export type MassiveWsState = {
 
 export class MassiveWsClient {
   private ws: WebSocket | null = null;
+  private socketId: string | null = null;
+  private readonly clientId: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private readonly url: string;
   private readonly apiKey: string;
@@ -53,6 +59,7 @@ export class MassiveWsClient {
   private stopped = false;
 
   constructor(options: MassiveWsOptions) {
+    this.clientId = `${process.pid}-${++clientSequence}`;
     this.apiKey = options.apiKey;
     this.assetClass = options.assetClass ?? 'stocks';
     this.url = options.url ?? `wss://socket.massive.com/${this.assetClass}`;
@@ -67,7 +74,9 @@ export class MassiveWsClient {
     this.stopped = false;
     this.connecting = true;
     const socket = new WebSocket(this.url);
+    this.socketId = `${process.pid}-${++socketSequence}`;
     this.ws = socket;
+    this.logLifecycle('WS_CREATED');
 
     socket.on('open', () => {
       this.connecting = false;
@@ -93,6 +102,10 @@ export class MassiveWsClient {
       this.ws = null;
       this.lastCloseCode = code;
       this.lastCloseReason = reason.toString();
+      this.logLifecycle('WS_DISCONNECTED', {
+        closeCode: code,
+        closeReason: this.lastCloseReason,
+      });
       if (!this.stopped) {
         console.warn('[MassiveWS] closed', {
           code,
@@ -122,10 +135,21 @@ export class MassiveWsClient {
       this.reconnectTimer = null;
     }
     if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
+      const socket = this.ws;
+      this.logLifecycle('WS_DESTROYED', {
+        readyState: socket.readyState,
+        reason: 'client_disconnect',
+      });
+      socket.removeAllListeners();
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
+      if (socket.readyState !== WebSocket.CLOSED) {
+        socket.terminate();
+      }
       this.ws = null;
     }
+    this.socketId = null;
     this.connecting = false;
     this.authenticated = false;
     this.nextReconnectAt = null;
@@ -267,6 +291,7 @@ export class MassiveWsClient {
       if (event?.status === 'auth_success') {
         this.reconnectAttempts = 0;
         this.authenticated = true;
+        this.logLifecycle('WS_AUTHENTICATED');
         this.onConnect?.();
         this.resubscribeAll();
       }
@@ -281,6 +306,9 @@ export class MassiveWsClient {
     }
     try {
       this.ws.send(JSON.stringify(payload));
+      if (payload?.action === 'subscribe') {
+        this.logLifecycle('WS_SUBSCRIBED', { params: payload.params });
+      }
     } catch (error) {
       const safePayload =
         payload?.action === 'auth'
@@ -288,5 +316,29 @@ export class MassiveWsClient {
           : payload;
       console.error('[MassiveWS] failed to send payload', { payload: safePayload, error });
     }
+  }
+
+  private logLifecycle(event: 'WS_CREATED' | 'WS_AUTHENTICATED' | 'WS_SUBSCRIBED' | 'WS_DISCONNECTED' | 'WS_DESTROYED', context: Record<string, unknown> = {}) {
+    writeStructuredLog({
+      component: 'market-data',
+      module: 'massive-ws',
+      event,
+      severity: event === 'WS_DISCONNECTED' ? 'warning' : 'info',
+      context: {
+        pid: process.pid,
+        environment: {
+          nodeEnv: process.env.NODE_ENV ?? 'development',
+          port: process.env.PORT ?? null,
+          renderServiceName: process.env.RENDER_SERVICE_NAME ?? null,
+          renderExternalHostname: process.env.RENDER_EXTERNAL_HOSTNAME ?? null,
+        },
+        clientId: this.clientId,
+        websocketId: this.socketId,
+        reconnectCount: this.reconnectAttempts,
+        assetClass: this.assetClass,
+        url: this.url,
+        ...context,
+      },
+    });
   }
 }

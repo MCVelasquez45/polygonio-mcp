@@ -1,5 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 import { MassiveWsClient } from '../../../shared/data/massiveWs';
+import { writeStructuredLog } from '../../../shared/logging/safeLogging';
+import { isMassiveOptionSymbol } from '../../../shared/symbols/optionSymbol';
 import { ingestLiveAggregate } from './chartHub';
 import { upsertAggregateBars } from './aggregatesStore';
 import {
@@ -30,6 +32,7 @@ const aggregateSubscriptions = new Map<string, number>();
 let ioServer: Server | null = null;
 let wsClientStocks: MassiveWsClient | null = null;
 let stocksEntitlementLogged = false;
+const stockRestOnlyLogged = new Set<string>();
 
 // Options live data is owned by the options subscription manager
 // (features/marketData/optionsSubscriptionManager.service.ts): one shared
@@ -53,7 +56,7 @@ const STORE_LIVE_AGGS =
     : STORE_LIVE_AGGS_RAW.toLowerCase() === 'true';
 
 function isOptionSymbol(symbol: string) {
-  return symbol.startsWith('O:');
+  return isMassiveOptionSymbol(symbol);
 }
 
 function normalizeContractSymbol(value?: string | null) {
@@ -268,18 +271,49 @@ function handleWsMessage(event: any) {
 
 const STOCKS_WS_FLAG_ENABLED = (process.env.MASSIVE_STOCKS_WS_ENABLED ?? 'false').toLowerCase() === 'true';
 
+function stocksStreamingAllowed() {
+  return STOCKS_WS_FLAG_ENABLED && stocksEntitled();
+}
+
+function logStockRestOnly(symbol: string, channel: 'trades_quotes' | 'aggs') {
+  const key = `${channel}:${symbol}`;
+  if (stockRestOnlyLogged.has(key)) return;
+  stockRestOnlyLogged.add(key);
+  writeStructuredLog({
+    component: 'market-data',
+    module: 'live-feed',
+    event: 'LIVE_PROVIDER_UNAVAILABLE',
+    severity: 'info',
+    context: {
+      symbol,
+      channel,
+      provider: 'massive',
+      subscriptionProfile: SUBSCRIPTION_PROFILE,
+      reason: 'stocks websocket not entitled; using REST snapshots/aggregates',
+    },
+  });
+}
+
 function ensureStocksWsClient(): MassiveWsClient | null {
   if (!MASSIVE_WS_KEY) return null;
   // Entitlement gate: Options Advanced has NO stocks WebSocket. Do not open a
   // connection that can only fail auth and burn reconnect cycles. The explicit
   // MASSIVE_STOCKS_WS_ENABLED flag AND a stocks-entitled profile are both
   // required.
-  if (!STOCKS_WS_FLAG_ENABLED || !stocksEntitled()) {
+  if (!stocksStreamingAllowed()) {
     if (!stocksEntitlementLogged) {
       stocksEntitlementLogged = true;
-      console.warn('[LiveFeed] stocks WebSocket disabled by subscription profile', {
-        profile: SUBSCRIPTION_PROFILE,
-        hint: 'set MASSIVE_SUBSCRIPTION_PROFILE to a stocks-entitled profile to enable',
+      writeStructuredLog({
+        component: 'market-data',
+        module: 'live-feed',
+        event: 'LIVE_PROVIDER_UNAVAILABLE',
+        severity: 'info',
+        context: {
+          provider: 'massive',
+          subscriptionProfile: SUBSCRIPTION_PROFILE,
+          reason: 'stocks websocket disabled by subscription profile',
+          hint: 'set MASSIVE_SUBSCRIPTION_PROFILE to a stocks-entitled profile to enable',
+        },
       });
     }
     return null;
@@ -309,10 +343,10 @@ type LiveSubscriptionResult = {
   providerPayload: string | null;
 };
 
-function accepted(providerPayload: string | null = null): LiveSubscriptionResult {
+function accepted(providerPayload: string | null = null, reason: string | null = null): LiveSubscriptionResult {
   return {
     accepted: true,
-    reason: null,
+    reason,
     providerStatus: null,
     providerMessage: null,
     providerPayload,
@@ -337,8 +371,12 @@ function subscribeSymbol(symbol: string): LiveSubscriptionResult {
     if (isOptionSymbol(symbol)) {
       return fromOptionsResult(acquireOptionSubscription(symbol, 'trades_quotes', LIVE_FEED_CONSUMER));
     } else {
-      const client = ensureStocksWsClient();
       const providerPayload = buildStockSubscriptionParams(symbol, 'trades_quotes');
+      if (!stocksStreamingAllowed()) {
+        logStockRestOnly(symbol, 'trades_quotes');
+        return accepted(null, 'equity_rest_only');
+      }
+      const client = ensureStocksWsClient();
       if (!client) {
         return {
           accepted: false,
@@ -354,9 +392,9 @@ function subscribeSymbol(symbol: string): LiveSubscriptionResult {
   }
   const hasProviderRecord = isOptionSymbol(symbol)
     ? getActiveOptionSubscriptions().some(sub => sub.symbol === symbol)
-    : Boolean(wsClientStocks);
+    : !stocksStreamingAllowed() || Boolean(wsClientStocks);
   return hasProviderRecord
-    ? accepted(null)
+    ? accepted(null, isOptionSymbol(symbol) ? null : 'equity_rest_only')
     : {
         accepted: false,
         reason: 'shared_subscription_not_provider_backed',
@@ -386,6 +424,10 @@ export function subscribeAggregateSymbol(symbol: string) {
     if (isOptionSymbol(symbol)) {
       acquireOptionSubscription(symbol, 'aggs', LIVE_FEED_CONSUMER);
     } else {
+      if (!stocksStreamingAllowed()) {
+        logStockRestOnly(symbol, 'aggs');
+        return;
+      }
       const client = ensureStocksWsClient();
       client?.subscribe(buildStockSubscriptionParams(symbol, 'aggs'));
     }
@@ -415,6 +457,7 @@ export function resetLiveFeedForTest() {
   wsClientStocks = null;
   ioServer = null;
   stocksEntitlementLogged = false;
+  stockRestOnlyLogged.clear();
 }
 
 export function initLiveFeed(io: Server) {
@@ -483,7 +526,12 @@ export function registerLiveFeedHandlers(socket: Socket) {
     }
     emitCachedOptionQuote(socket, symbol);
     emitCachedOptionTrade(socket, symbol);
-    socket.emit('live:subscribed', { symbol, accepted: true, providerPayload: result.providerPayload });
+    socket.emit('live:subscribed', {
+      symbol,
+      accepted: true,
+      reason: result.reason,
+      providerPayload: result.providerPayload,
+    });
   });
 
   socket.on('live:unsubscribe', payload => {

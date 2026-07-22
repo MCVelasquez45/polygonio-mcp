@@ -1,4 +1,5 @@
 import { normalizeProviderTimestamp } from '../../shared/data/massive';
+import { underlyingFromOptionSymbol } from '../../shared/symbols/optionSymbol';
 
 // Per-contract latest-quote cache. WebSocket `Q` events are the preferred
 // source; REST snapshots hydrate it initially and after reconnects. Every
@@ -70,11 +71,6 @@ function notifyTrade(entry: CachedOptionTrade): void {
       console.error('[OptionsTradeCache] listener failed', { error: (error as Error)?.message });
     }
   }
-}
-
-function underlyingFromOptionSymbol(symbol: string): string | null {
-  const match = symbol.match(/^O:([A-Z0-9.]+)\d{6}[CP]/);
-  return match?.[1] ?? null;
 }
 
 function numberOrNull(value: unknown): number | null {

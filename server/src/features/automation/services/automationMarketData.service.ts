@@ -1,5 +1,10 @@
 import { resolveAggregates } from '../../market/services/aggregatesService';
 import { getMassiveOptionQuoteSnapshot } from '../../../shared/data/massive';
+import {
+  optionRightFromSymbol,
+  toMassiveOptionSymbol,
+  underlyingFromOptionSymbol,
+} from '../../../shared/symbols/optionSymbol';
 import { getAutomationChain } from '../../marketData/optionsMarketDataOrchestrator.service';
 import { acquireOptionSubscription } from '../../marketData/optionsSubscriptionManager.service';
 import { getFreshQuote } from '../../marketData/optionsQuoteCache.service';
@@ -242,9 +247,7 @@ export async function fetchOptionChain(
 
 /** Parsed underlying root of an OCC option symbol (O:SPY260724P00756000 → SPY). */
 export function underlyingFromOccSymbol(optionSymbol: string): string {
-  const bare = optionSymbol.toUpperCase().replace(/^O:/, '');
-  const m = bare.match(/^([A-Z]+)\d{6}[CP]\d{8}$/);
-  return m ? m[1] : bare;
+  return underlyingFromOptionSymbol(optionSymbol) ?? optionSymbol.toUpperCase();
 }
 
 /**
@@ -288,7 +291,7 @@ export async function fetchHeldContractMark(
   optionSymbol: string,
   now: number = Date.now()
 ): Promise<HeldContractMarkResult> {
-  const symbol = optionSymbol.toUpperCase();
+  const symbol = toMassiveOptionSymbol(optionSymbol) ?? optionSymbol.toUpperCase();
   const underlying = underlyingFromOccSymbol(symbol);
   const fetchStartedAt = now;
   if (!automationMarkSubscriptions.has(symbol)) {
@@ -335,7 +338,7 @@ export async function fetchHeldContractMark(
     // when the direct snapshot is unavailable. Never the default hot path.
     try {
       const config = getStrategyConfig(underlying);
-      const direction: SignalDirection = symbol.replace(/^O:/, '').match(/\d{6}P\d{8}$/)
+      const direction: SignalDirection = optionRightFromSymbol(symbol) === 'put'
         ? 'BEARISH'
         : 'BULLISH';
       const chain = await fetchOptionChain(config, direction, null, now);

@@ -21,6 +21,7 @@ import type {
 } from '../automation.types';
 import { logAutomationEvent, maskAccountId } from './automationAudit.service';
 import { mapBrokerStatus, type PaperBrokerAdapter } from './brokerAdapter';
+import { toMongoOptionSymbolKey } from '../../../shared/symbols/optionSymbol';
 
 // Alpaca PAPER adapter. This file is the only place in features/automation
 // that touches the Alpaca-backed service module, and it structurally refuses
@@ -217,8 +218,8 @@ export function createAlpacaPaperBrokerAdapter(): PaperBrokerAdapter {
 
     async getPosition(symbol: string): Promise<BrokerPosition | null> {
       const positions = await this.listPositions();
-      const target = symbol.toUpperCase().replace(/^O:/, '');
-      return positions.find(pos => pos.symbol.toUpperCase().replace(/^O:/, '') === target) ?? null;
+      const target = toMongoOptionSymbolKey(symbol);
+      return positions.find(pos => toMongoOptionSymbolKey(pos.symbol) === target) ?? null;
     },
 
     async closePosition(symbol: string, reason: string): Promise<BrokerOrder> {

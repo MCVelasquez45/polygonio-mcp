@@ -4,6 +4,7 @@ import { agentChat } from '../assistant/agentClient';
 import { AI_AGENTS } from '../assistant/orchestrator/agents';
 import { runAgent } from '../assistant/orchestrator/orchestrator.service';
 import { resolveAiUserKey } from '../../shared/ai/controls';
+import { isOptionSymbol } from '../../shared/symbols/optionSymbol';
 import { appendMessages } from './services/conversationStore';
 
 // Handles `/api/chat` requests and persists transcripts for later retrieval.
@@ -22,7 +23,7 @@ function normalizeChatSymbol(context: any): string | null {
   for (const value of candidates) {
     if (typeof value === 'string' && value.trim()) {
       const normalized = value.trim().toUpperCase();
-      return normalized.startsWith('O:') && typeof context?.option?.underlying === 'string'
+      return isOptionSymbol(normalized) && typeof context?.option?.underlying === 'string'
         ? context.option.underlying.trim().toUpperCase()
         : normalized;
     }

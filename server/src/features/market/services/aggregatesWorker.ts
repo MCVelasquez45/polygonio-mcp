@@ -3,6 +3,7 @@ import { upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot } from './marketStatus';
 import { getWarmTickers } from './aggregatesWarmList';
 import { stocksEntitled } from '../../marketData/optionsDataHealth.service';
+import { isMassiveOptionSymbol } from '../../../shared/symbols/optionSymbol';
 
 // Optional worker that periodically hydrates local aggregate caches so the UI
 // can instantly render without waiting for Massive.
@@ -106,7 +107,7 @@ function entitledTickers(tickers: Set<string>): Set<string> {
   const filtered = new Set<string>();
   const dropped: string[] = [];
   for (const ticker of tickers) {
-    if (ticker.startsWith('O:')) filtered.add(ticker);
+    if (isMassiveOptionSymbol(ticker)) filtered.add(ticker);
     else dropped.push(ticker);
   }
   if (dropped.length) {

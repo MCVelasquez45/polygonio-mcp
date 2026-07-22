@@ -1,5 +1,6 @@
 import { agentAnalyze, type AiRequestMeta } from '../assistant/agentClient';
 import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume, REQUEST_PRIORITY } from '../../shared/data/massive';
+import { isOptionSymbol } from '../../shared/symbols/optionSymbol';
 import { getRecentAggregateBars } from '../market/services/aggregatesStore';
 
 type SentimentSnapshot = {
@@ -154,7 +155,7 @@ async function buildDeskContext(symbol: string): Promise<DeskContext> {
   const shortTicker =
     snapshot && 'underlying' in snapshot && typeof snapshot.underlying === 'string'
       ? snapshot.underlying.toUpperCase()
-      : symbol.startsWith('O:')
+      : isOptionSymbol(symbol)
         ? null
         : symbol;
   const [shortInterestPayload, shortVolumePayload] = shortTicker

@@ -2,6 +2,7 @@
 // (agent service) but falls back to deterministic Massive snapshots when the
 // agent is offline.
 import { getMassiveOptionsSnapshot, getMassiveShortInterest, getMassiveShortVolume, REQUEST_PRIORITY } from '../../../shared/data/massive';
+import { isOptionSymbol } from '../../../shared/symbols/optionSymbol';
 
 // Watchlist refreshes are decoration: they must yield provider capacity to
 // automation decisions and never trigger high-priority fetch storms.
@@ -127,15 +128,15 @@ function summarizeShortVolume(payload: { results: any[] } | null): ShortVolumeSn
 async function buildWatchlistContext(tickers: string[]): Promise<WatchlistContext[]> {
   return Promise.all(
     tickers.map(async symbol => {
-      const isOptionSymbol = symbol.startsWith('O:');
+      const isOptionContract = isOptionSymbol(symbol);
       const [snapshot, dailyBars, minuteBars, shortInterestPayload, shortVolumePayload] = await Promise.all([
         getMassiveOptionsSnapshot(symbol, WATCHLIST_SNAPSHOT_OPTS).catch(() => null),
         getRecentAggregateBars(symbol, 1, 'day', 10).catch(() => []),
         getRecentAggregateBars(symbol, 5, 'minute', 20).catch(() => []),
-        isOptionSymbol
+        isOptionContract
           ? Promise.resolve(null)
           : getMassiveShortInterest({ ticker: symbol, limit: 2, sort: 'settlement_date', order: 'desc' }).catch(() => null),
-        isOptionSymbol
+        isOptionContract
           ? Promise.resolve(null)
           : getMassiveShortVolume({ ticker: symbol, limit: 12, sort: 'date', order: 'desc' }).catch(() => null)
       ]);

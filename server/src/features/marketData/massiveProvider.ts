@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { isRetryableMassiveError, resolveMassiveRetryDelayMs } from '../../shared/data/massiveRetry';
+import { toMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
 
 export type MassiveTimespan = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
 
@@ -82,8 +83,11 @@ function stripWhitespace(value: string) {
 }
 
 function normalizeOptionTicker(ticker: string) {
-  const normalized = stripWhitespace(ticker).toUpperCase();
-  return normalized.startsWith('O:') ? normalized : `O:${normalized}`;
+  const normalized = toMassiveOptionSymbol(stripWhitespace(ticker));
+  if (!normalized) {
+    throw new Error('valid option ticker is required.');
+  }
+  return normalized;
 }
 
 function normalizeTicker(ticker: string) {

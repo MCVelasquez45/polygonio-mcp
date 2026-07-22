@@ -89,6 +89,38 @@ test('stock stream fails closed when only the stock WS flag is set', async () =>
   liveFeed.unsubscribeAggregateSymbol('SPY');
 });
 
+test('equity live:subscribe is accepted as REST-only under options-only entitlement', async () => {
+  const handlers = new Map();
+  const emitted = [];
+  const joined = [];
+  const left = [];
+  const socket = {
+    id: 'socket-equity-a',
+    on: (event, handler) => handlers.set(event, handler),
+    emit: (event, payload) => emitted.push({ event, payload }),
+    join: room => joined.push(room),
+    leave: room => left.push(room),
+  };
+
+  liveFeed.registerLiveFeedHandlers(socket);
+  handlers.get('live:subscribe')({ symbol: 'SPY' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  assert.deepEqual(joined, ['SPY']);
+  assert.equal(stockConnections, 0);
+  assert.ok(!emitted.some(entry => entry.event === 'live:error'));
+  assert.ok(emitted.some(entry =>
+    entry.event === 'live:subscribed'
+    && entry.payload.symbol === 'SPY'
+    && entry.payload.accepted === true
+    && entry.payload.reason === 'equity_rest_only'
+    && entry.payload.providerPayload == null
+  ));
+
+  handlers.get('disconnect')();
+  assert.deepEqual(left, ['SPY']);
+});
+
 test('live:subscribe replays cached option quote to the subscribing socket', async () => {
   const symbol = 'O:SPY260724C00500000';
   const providerTimestamp = Date.now() - 250;

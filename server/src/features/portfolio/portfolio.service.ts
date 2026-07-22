@@ -33,7 +33,11 @@ import {
   getMassiveOptionQuoteSnapshot,
   getMassiveOptionContractSnapshot,
 } from '../../shared/data/massive';
-import { underlyingFromOccSymbol } from '../automation/services/automationMarketData.service';
+import {
+  expirationFromOptionSymbol,
+  toMongoOptionSymbolKey,
+  underlyingFromOptionSymbol,
+} from '../../shared/symbols/optionSymbol';
 import { computeDteEt } from '../../shared/time/tradingCalendar';
 import { listWatchlistWithLiveStatus } from '../watchlist/watchlist.service';
 import {
@@ -46,10 +50,7 @@ import {
 
 /** Extract the ISO expiration (YYYY-MM-DD) encoded in an OCC option symbol. */
 export function expirationFromOccSymbol(optionSymbol: string | null | undefined): string | null {
-  if (!optionSymbol) return null;
-  const bare = optionSymbol.toUpperCase().replace(/^O:/, '');
-  const m = bare.match(/^[A-Z]+(\d{2})(\d{2})(\d{2})[CP]\d{8}$/);
-  return m ? `20${m[1]}-${m[2]}-${m[3]}` : null;
+  return expirationFromOptionSymbol(optionSymbol);
 }
 
 /**
@@ -66,7 +67,9 @@ async function fetchHeldNbbo(optionSymbol: string): Promise<{
   spreadPct: number | null;
 } | null> {
   try {
-    const quote = await getMassiveOptionQuoteSnapshot(underlyingFromOccSymbol(optionSymbol), optionSymbol);
+    const underlying = underlyingFromOptionSymbol(optionSymbol);
+    if (!underlying) return null;
+    const quote = await getMassiveOptionQuoteSnapshot(underlying, optionSymbol);
     const bid = Number.isFinite(quote.bid as number) ? (quote.bid as number) : null;
     const ask = Number.isFinite(quote.ask as number) ? (quote.ask as number) : null;
     const mid =
@@ -87,7 +90,7 @@ async function fetchHeldNbbo(optionSymbol: string): Promise<{
 // automation-owned only when such a link exists; everything else is manual.
 
 function normalizeSymbol(symbol: string): string {
-  return symbol.toUpperCase().replace(/^O:/, '');
+  return toMongoOptionSymbolKey(symbol);
 }
 
 function adapter(): PaperBrokerAdapter {

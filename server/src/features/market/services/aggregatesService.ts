@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { getMassiveOptionsSnapshot, getOptionAggregates } from '../../../shared/data/massive';
 import { MassiveEntitlementError } from '../../../shared/data/massiveRetry';
+import { isOptionSymbol, underlyingFromOptionSymbol } from '../../../shared/symbols/optionSymbol';
 import { getRecentAggregateBars, StoredAggregateBar, upsertAggregateBars } from './aggregatesStore';
 import { getMarketStatusSnapshot, MarketStatusSnapshot } from './marketStatus';
 
@@ -585,7 +586,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
     }
 
     if (!selectedBars.length) {
-      const snapshotSymbol = ticker.startsWith('O:') ? extractUnderlyingSymbol(ticker) : ticker;
+      const snapshotSymbol = isOptionSymbol(ticker) ? extractUnderlyingSymbol(ticker) : ticker;
       if (snapshotSymbol) {
         const snapshotBar = await buildSnapshotFallbackBar(snapshotSymbol);
         if (snapshotBar) {
@@ -649,12 +650,7 @@ export async function resolveAggregates(params: AggregatesParams): Promise<Aggre
 }
 
 function extractUnderlyingSymbol(optionTicker: string): string | null {
-  const match = optionTicker.toUpperCase().match(/^O:([A-Z0-9\.]+)\d{6}[CP]/);
-  if (match) return match[1];
-  if (optionTicker?.startsWith('O:')) {
-    return optionTicker.slice(2).replace(/\d.*$/, '');
-  }
-  return optionTicker?.startsWith('O:') ? optionTicker.slice(2) : optionTicker;
+  return underlyingFromOptionSymbol(optionTicker) ?? optionTicker;
 }
 
 async function buildSnapshotFallbackBar(underlying: string): Promise<StoredAggregateBar | null> {
