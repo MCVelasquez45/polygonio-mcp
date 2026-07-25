@@ -58,6 +58,7 @@ const seenSnapshotParams = [];
 const seenReferenceParams = [];
 let snapshotServesNextPage = false;
 let snapshotReturnsEmpty = false;
+const FUTURE_EXPIRATION = '2026-08-21';
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -72,7 +73,7 @@ const server = http.createServer((req, res) => {
     seenSnapshotParams.push(Object.fromEntries(url.searchParams));
     const body = {
       status: 'OK',
-      results: snapshotReturnsEmpty ? [] : [contractRow(500, '2026-07-24'), contractRow(505, '2026-07-24')],
+      results: snapshotReturnsEmpty ? [] : [contractRow(500, FUTURE_EXPIRATION), contractRow(505, FUTURE_EXPIRATION)],
     };
     if (snapshotServesNextPage && !url.searchParams.get('cursor')) {
       body.next_url = `http://127.0.0.1:${server.address().port}/v3/snapshot/options/SPY?cursor=PAGE2`;
@@ -87,7 +88,7 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ status: 'OK', results: [] }));
       return;
     }
-    res.end(JSON.stringify({ status: 'OK', results: [referenceRow(500, '2026-07-24'), referenceRow(505, '2026-07-24')] }));
+    res.end(JSON.stringify({ status: 'OK', results: [referenceRow(500, FUTURE_EXPIRATION), referenceRow(505, FUTURE_EXPIRATION)] }));
     return;
   }
   res.end(JSON.stringify({ status: 'OK', results: [] }));
@@ -113,8 +114,8 @@ test('1 + integration: five concurrent identical requests → one provider opera
   const request = {
     underlying: 'SPY',
     contractType: 'call',
-    expirationGte: '2026-07-20',
-    expirationLte: '2026-08-03',
+    expirationGte: '2026-08-17',
+    expirationLte: '2026-08-31',
     limit: 250,
   };
   const results = await Promise.all(
@@ -130,14 +131,14 @@ test('1 + integration: five concurrent identical requests → one provider opera
   assert.equal(first.underlyingContext.timeframe, 'DELAYED', 'delayed underlying must be labeled');
   assert.ok(first.underlyingContext.lastUpdated > 0, 'provider timestamp preserved');
   assert.equal(first.completeness.complete, true);
-  assert.equal(first.expirations[0].expiration, '2026-07-24');
+  assert.equal(first.expirations[0].expiration, FUTURE_EXPIRATION);
   assert.equal(first.expirations[0].dte >= 0, true, 'no negative DTE in a served chain');
 });
 
 test('narrow filters are forwarded to the provider query', async () => {
   const last = seenSnapshotParams[seenSnapshotParams.length - 1];
-  assert.equal(last['expiration_date.gte'], '2026-07-20');
-  assert.equal(last['expiration_date.lte'], '2026-08-03');
+  assert.equal(last['expiration_date.gte'], '2026-08-17');
+  assert.equal(last['expiration_date.lte'], '2026-08-31');
   assert.equal(last['contract_type'], 'call');
 });
 
@@ -153,13 +154,13 @@ test('UI chain remains populated from reference contracts when snapshot rows are
   try {
     const chain = await orchestrator.getOptionChainWindow({
       underlying: 'SPY',
-      expiration: '2026-07-24',
+      expiration: FUTURE_EXPIRATION,
       limit: 500,
     });
     assert.equal(chain.expirations.length, 1);
-    assert.equal(chain.expirations[0].expiration, '2026-07-24');
+    assert.equal(chain.expirations[0].expiration, FUTURE_EXPIRATION);
     assert.equal(chain.expirations[0].strikes.length, 2);
-    assert.equal(chain.expirations[0].strikes[0].call.ticker, 'O:SPY260724C00500000');
+    assert.equal(chain.expirations[0].strikes[0].call.ticker, 'O:SPY260821C00500000');
   } finally {
     snapshotReturnsEmpty = false;
   }
@@ -167,7 +168,7 @@ test('UI chain remains populated from reference contracts when snapshot rows are
 
 test('expiration list is populated from reference contracts', async () => {
   const payload = await massive.listOptionExpirations('SPY', { limit: 1000, maxPages: 1 });
-  assert.deepEqual(payload.expirations, ['2026-07-24']);
+  assert.deepEqual(payload.expirations, [FUTURE_EXPIRATION]);
   const last = seenReferenceParams[seenReferenceParams.length - 1];
   assert.equal(last['underlying_ticker'], 'SPY');
   assert.equal(last['underlying_asset'], undefined);
@@ -194,7 +195,7 @@ test('getAutomationChain narrows by DTE window, direction, and strike range', as
 
 test('2+3: snapshot refreshes do NOT re-fetch cached reference contracts', async () => {
   chainCache.clearChainCache();
-  const request = { underlying: 'SPY', contractType: 'call', expirationGte: '2026-07-20', expirationLte: '2026-08-03', limit: 250 };
+  const request = { underlying: 'SPY', contractType: 'call', expirationGte: '2026-08-17', expirationLte: '2026-08-31', limit: 250 };
   await orchestrator.getOptionChainWindow(request);
   const snapAfterFirst = counts.snapshot;
   const refAfterFirst = counts.reference;
@@ -214,8 +215,8 @@ test('10: pagination past the page budget is marked incomplete/truncated', async
     const chain = await orchestrator.getOptionChainWindow({
       underlying: 'SPY',
       contractType: 'call',
-      expirationGte: '2026-07-20',
-      expirationLte: '2026-08-04', // distinct key from prior tests
+      expirationGte: '2026-08-17',
+      expirationLte: '2026-09-01', // distinct key from prior tests
       limit: 250,
     });
     assert.equal(chain.completeness.complete, false);
