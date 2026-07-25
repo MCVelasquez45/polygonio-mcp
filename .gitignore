@@ -96,10 +96,14 @@ scripts/
 # Re-include required tooling files that the broad rules above would ignore.
 # (server/scripts is needed by the `predev` port guard; .python-version pins
 #  the screener's Python runtime — both must be in the repo.)
+!scripts/
+!scripts/install-precommit-hook.mjs
 !server/scripts/
 !server/scripts/assert-port-free.js
+!server/package-lock.json
 !client/scripts/
 !client/scripts/assert-no-backend-url.mjs
+!client/package-lock.json
 !python-screener-service/.python-version
 # client/src/lib is frontend source (shared socket, stores), not a Python
 # build dir — exempt it from the packaging `lib/` rule above.

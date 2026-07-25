@@ -114,9 +114,15 @@ async function visibleText(page: Page): Promise<string> {
 async function revealWatchlist(page: Page): Promise<void> {
   const toggle = page.getByRole('button', { name: /toggle watchlist/i }).first();
   if ((await toggle.count()) && await toggle.isVisible()) {
-    await toggle.click();
-    await page.waitForTimeout(1000);
-    return;
+    try {
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1000);
+      return;
+    } catch {
+      // Continue to workspace-specific fallbacks below; tablet breakpoints can
+      // visually expose this icon while another control owns the pointer hitbox.
+    }
   }
 
   const scannerTab = page.getByRole('button', { name: /^scanner$/i }).first();
@@ -126,14 +132,85 @@ async function revealWatchlist(page: Page): Promise<void> {
   }
 }
 
+async function clickFirstVisibleButton(page: Page, names: RegExp[], timeoutMs = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const name of names) {
+      const button = page.getByRole('button', { name }).first();
+      if ((await button.count()) && await button.isVisible()) {
+        await button.click();
+        return true;
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+async function openPortfolio(page: Page): Promise<void> {
+  const clicked = await clickFirstVisibleButton(page, [/^positions\b/i, /^portfolio$/i]);
+  expect(clicked, 'portfolio workspace navigation is reachable').toBeTruthy();
+  await expect(page.getByText(/Open Positions|Buying Power|Alpaca Paper/i).first()).toBeVisible({ timeout: 20_000 });
+}
+
+async function openAutomation(page: Page): Promise<void> {
+  const clicked = await clickFirstVisibleButton(page, [/^automation\b/i, /^cockpit$/i]);
+  expect(clicked, 'automation workspace navigation is reachable').toBeTruthy();
+  await expect(page.getByText(/Active Trade|Pending Orders|Recent Actions/i).first()).toBeVisible({ timeout: 20_000 });
+}
+
+async function openAiDesk(page: Page): Promise<void> {
+  const clicked = await clickFirstVisibleButton(page, [/toggle ai chat/i, /^AI$/i]);
+  expect(clicked, 'AI workspace navigation is reachable').toBeTruthy();
+  const composer = page.locator('textarea').first();
+  await expect(composer, 'AI desk composer is available').toBeVisible({ timeout: 20_000 });
+}
+
+async function openMobileTradeMatrix(page: Page): Promise<void> {
+  const tradeTab = page.getByRole('button', { name: /^trade$/i }).first();
+  if ((await tradeTab.count()) && await tradeTab.isVisible()) {
+    await tradeTab.click();
+    const matrixSection = page.getByRole('button', { name: /^matrix\b/i }).first();
+    if ((await matrixSection.count()) && await matrixSection.isVisible()) {
+      await matrixSection.click();
+    }
+  }
+}
+
 async function selectWatchlistSymbol(page: Page, symbol: string): Promise<boolean> {
   await revealWatchlist(page);
-  const row = page.getByRole('button', { name: new RegExp(`^${symbol}\\b`, 'i') }).first();
-  if (!(await row.count())) return false;
-  await row.scrollIntoViewIfNeeded();
-  await row.click({ timeout: 10_000 });
-  await page.waitForTimeout(5000);
-  return true;
+  const rows = page.getByRole('button', { name: new RegExp(`^${symbol}\\b`, 'i') });
+  const count = await rows.count();
+  if (!count) return false;
+  const viewport = page.viewportSize();
+  for (let index = 0; index < count; index += 1) {
+    const row = rows.nth(index);
+    const box = await row.boundingBox();
+    if (
+      box &&
+      box.width > 0 &&
+      box.height > 0 &&
+      (!viewport || (
+        box.x >= 0 &&
+        box.y >= 0 &&
+        box.x + box.width <= viewport.width &&
+        box.y + box.height <= viewport.height
+      ))
+    ) {
+      await page.mouse.click(box.x + Math.min(24, box.width / 2), box.y + Math.min(12, box.height / 2));
+      await page.waitForTimeout(5000);
+      return true;
+    }
+  }
+  const row = rows.first();
+  try {
+    await row.scrollIntoViewIfNeeded();
+    await row.click({ timeout: 5_000 });
+    await page.waitForTimeout(5000);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 test.describe('Production application shell', () => {
@@ -188,27 +265,24 @@ test.describe('Watchlist', () => {
 });
 
 test.describe('Options Matrix / Depth / Time & Sales', () => {
-  test('selecting SOFI surfaces chain, depth status, and trade tape', async ({ page }) => {
+  test('selecting a watchlist symbol surfaces chain, depth status, and trade tape', async ({ page }) => {
     const evidence = attachEvidenceCollectors(page);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
 
-    await selectWatchlistSymbol(page, 'SOFI');
+    let selectedSymbol: string | null = null;
+    for (const symbol of ['XLE', 'CVX', 'SPY', 'QQQ', 'XOM', 'TSLA', 'SOFI']) {
+      if (await selectWatchlistSymbol(page, symbol)) {
+        selectedSymbol = symbol;
+        break;
+      }
+    }
+    expect(selectedSymbol, 'a real watchlist symbol can be selected').not.toBeNull();
+    await openMobileTradeMatrix(page);
 
-    const bodyText = await page.locator('body').innerText();
-    const depthStates = [
-      'Awaiting live option quotes',
-      'Receiving live option quotes',
-      'Subscribing to option contracts',
-      'Select an option contract',
-      'Last option quote is stale',
-      'Delayed option quote displayed',
-      'Snapshot option quote displayed',
-      'Options service unavailable',
-      'Market closed',
-    ];
-    const matchedState = depthStates.find((s) => bodyText.includes(s));
-    console.log('Depth status observed:', matchedState ?? 'NONE MATCHED');
+    await expect(page.getByTestId('price-ladder'), 'top-of-book ladder is visible').toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('time-sales'), 'time and sales surface is visible').toBeVisible({ timeout: 20_000 });
+    console.log('Options surface observed:', (await page.getByTestId('time-sales').textContent())?.slice(0, 80) ?? 'visible');
 
     await waitForApiRequestsToSettle(evidence);
     reportEvidence('options-matrix-depth', evidence);
@@ -223,11 +297,7 @@ test.describe('Portfolio', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
 
-    const portfolioNav = page.getByRole('button', { name: /portfolio/i }).first();
-    if (await portfolioNav.count()) {
-      await portfolioNav.click();
-      await page.waitForTimeout(8000);
-    }
+    await openPortfolio(page);
 
     await waitForApiRequestsToSettle(evidence);
     reportEvidence('portfolio', evidence);
@@ -242,15 +312,7 @@ test.describe('Automation / Cockpit', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
 
-    const cockpitNav = page.getByRole('button', { name: /cockpit/i }).first();
-    if (await cockpitNav.count()) {
-      await cockpitNav.click();
-      await page.waitForTimeout(8000);
-    }
-
-    const cockpitWorkspace = page.locator('[data-testid="cockpit-workspace"]');
-    const hasWorkspace = await cockpitWorkspace.count();
-    console.log('cockpit-workspace testid present:', hasWorkspace > 0);
+    await openAutomation(page);
 
     await waitForApiRequestsToSettle(evidence);
     reportEvidence('automation-cockpit', evidence);
@@ -265,15 +327,11 @@ test.describe('AI Desk', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
 
-    const aiNav = page.getByRole('button', { name: /\bai\b|desk/i }).first();
-    if (await aiNav.count()) {
-      await aiNav.click();
-      await page.waitForTimeout(1500);
-    }
+    await openAiDesk(page);
 
     const chatInput = page.locator('textarea').first();
-    const hasInput = await chatInput.count();
-    console.log('AI Desk textarea present:', hasInput > 0);
+    const hasInput = await chatInput.isVisible();
+    console.log('AI Desk textarea present:', hasInput);
 
     if (hasInput && testInfo.project.name === 'desktop-chromium') {
       await chatInput.fill('What is the current setup on SOFI?');

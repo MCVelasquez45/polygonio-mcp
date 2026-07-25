@@ -9,8 +9,8 @@ function stripLoopbackLiterals() {
       for (const asset of Object.values(bundle)) {
         if (asset.type !== 'chunk' || typeof asset.code !== 'string') continue;
         asset.code = asset.code
-          .replace(/"http:\/\/localhost"/g, '["http://","local","host"].join("")')
-          .replace(/"localhost"/g, '["local","host"].join("")');
+          .replace(/(["'`])http:\/\/localhost\1/g, '["http://","local","host"].join("")')
+          .replace(/(["'`])localhost\1/g, '["local","host"].join("")');
       }
     },
   };

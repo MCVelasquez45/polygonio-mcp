@@ -18,7 +18,7 @@ requests to `http://localhost:4000`.
 
 | Variable | Description |
 | --- | --- |
-| `VITE_API_URL` | Base URL for the backend (defaults to `http://localhost:4000`). |
+| `VITE_API_BASE_URL` | Optional backend origin for non-standard hosted deployments. Local development uses the Vite proxy, and standard Vercel production uses same-origin rewrites. |
 
 ## Architecture
 

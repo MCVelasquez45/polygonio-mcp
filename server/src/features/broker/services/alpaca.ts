@@ -1,4 +1,4 @@
-import Alpaca from '@alpacahq/alpaca-trade-api';
+import axios, { type AxiosRequestConfig } from 'axios';
 import {
   isOptionSymbol,
   toAlpacaOptionSymbol,
@@ -30,16 +30,17 @@ function normalizeBaseUrl(url?: string | null) {
   return trimmed;
 }
 
-const alpaca = new Alpaca({
-  keyId: alpacaKey,
-  secretKey: alpacaSecret,
-  baseUrl:
-    normalizeBaseUrl(process.env.ALPACA_API_BASE ?? process.env.ALPACA_BASE_URL ?? process.env.APCA_API_BASE_URL) ??
-    undefined,
-  dataBaseUrl: process.env.ALPACA_DATA_BASE_URL ?? process.env.APCA_DATA_BASE_URL,
-  paper: (process.env.ALPACA_PAPER ?? 'true').toLowerCase() !== 'false',
-  feed: process.env.ALPACA_DATA_FEED,
-  optionFeed: process.env.ALPACA_OPTION_FEED
+const alpacaBaseUrl =
+  normalizeBaseUrl(process.env.ALPACA_API_BASE ?? process.env.ALPACA_BASE_URL ?? process.env.APCA_API_BASE_URL) ??
+  'https://paper-api.alpaca.markets';
+
+const alpacaHttp = axios.create({
+  baseURL: `${alpacaBaseUrl}/v2`,
+  timeout: Number(process.env.ALPACA_HTTP_TIMEOUT_MS ?? 15_000),
+  headers: {
+    'APCA-API-KEY-ID': alpacaKey,
+    'APCA-API-SECRET-KEY': alpacaSecret,
+  },
 });
 
 async function sendOptionsRequest<T>(
@@ -48,7 +49,14 @@ async function sendOptionsRequest<T>(
   body?: any,
   method: 'GET' | 'POST' | 'DELETE' | 'PATCH' = 'GET'
 ): Promise<T> {
-  return alpaca.sendRequest(endpoint, params ?? null, body ?? null, method);
+  const config: AxiosRequestConfig = {
+    url: endpoint,
+    method,
+    params: params ?? undefined,
+    data: body ?? undefined,
+  };
+  const response = await alpacaHttp.request<T>(config);
+  return response.data;
 }
 
 export type AlpacaOrderLeg = {
@@ -75,15 +83,15 @@ export type AlpacaOptionsOrderRequest = {
 };
 
 export async function getAlpacaAccount() {
-  return alpaca.getAccount();
+  return sendOptionsRequest('/account');
 }
 
 export async function getAlpacaClock() {
-  return alpaca.getClock();
+  return sendOptionsRequest('/clock');
 }
 
 export async function listAlpacaPositions() {
-  return alpaca.getPositions();
+  return sendOptionsRequest('/positions');
 }
 
 export async function listAlpacaOptionPositions() {
@@ -200,12 +208,10 @@ export async function closeAlpacaPosition(symbol: string) {
  * on any non-paper configuration. Never returns credentials.
  */
 export function getAlpacaEnvironment(): { paper: boolean; baseUrl: string | null; hasCredentials: boolean } {
-  const config: any = (alpaca as any).configuration ?? {};
-  const baseUrl: string | null = typeof config.baseUrl === 'string' ? config.baseUrl : null;
   const paperFlag = (process.env.ALPACA_PAPER ?? 'true').toLowerCase() !== 'false';
   return {
     paper: paperFlag,
-    baseUrl,
+    baseUrl: alpacaBaseUrl,
     hasCredentials: Boolean(alpacaKey && alpacaSecret),
   };
 }
@@ -219,7 +225,7 @@ function isOptionPosition(pos: any) {
 }
 
 async function listOptionPositionsFromAll() {
-  const positions: any[] = await alpaca.getPositions();
+  const positions: any[] = await listAlpacaPositions() as any[];
   if (!Array.isArray(positions)) return [];
   const filtered = positions.filter(pos => isOptionPosition(pos));
   const now = Date.now();

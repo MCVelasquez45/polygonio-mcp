@@ -100,6 +100,7 @@ type Props = {
   onWatchlistChange?: (symbols: string[]) => void;
   onRequestAutoSelect?: () => void;
   autoSelectDisabled?: boolean;
+  initialSymbols?: string[];
 };
 
 // memo: the sidebar runs its own 60s snapshot poll; the rest of the app's
@@ -111,6 +112,7 @@ export const TradingSidebar = memo(function TradingSidebar({
   onWatchlistChange,
   onRequestAutoSelect,
   autoSelectDisabled,
+  initialSymbols,
 }: Props) {
   // Local UI mode (watchlist vs intel alerts).
   const [view, setView] = useState<'watchlist' | 'intel'>('watchlist');
@@ -118,7 +120,10 @@ export const TradingSidebar = memo(function TradingSidebar({
   const [feedback, setFeedback] = useState<string | null>(null);
   // The watchlist is loaded from the server (single source of truth); it starts
   // empty and is populated by loadWatchlist() on mount and after every mutation.
-  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() =>
+    (initialSymbols ?? []).map(symbol => hydrateWatchlistEntry(symbol))
+  );
+  const [watchlistLoaded, setWatchlistLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -144,6 +149,10 @@ export const TradingSidebar = memo(function TradingSidebar({
     [watchlist]
   );
   const watchlistSymbolsKey = watchlistSymbols.join(',');
+  const initialSymbolsKey = useMemo(
+    () => (initialSymbols ?? []).map(symbol => symbol.toUpperCase()).join(','),
+    [initialSymbols]
+  );
   useLiveMarketSubscriptions(watchlistSymbols);
   const liveQuotes = useLiveQuotes();
   const { connected: liveConnected } = useLiveConnection();
@@ -225,8 +234,10 @@ export const TradingSidebar = memo(function TradingSidebar({
     try {
       const items = await listWatchlist();
       setWatchlist(items.map(item => hydrateWatchlistEntry(item.symbol)));
+      setWatchlistLoaded(true);
       setWatchlistError(null);
     } catch {
+      setWatchlistLoaded(true);
       setWatchlistError('Failed to load watchlist');
     }
   }, []);
@@ -234,6 +245,11 @@ export const TradingSidebar = memo(function TradingSidebar({
   useEffect(() => {
     void loadWatchlist();
   }, [loadWatchlist]);
+
+  useEffect(() => {
+    if (watchlistLoaded || !initialSymbolsKey || watchlistSymbolsKey === initialSymbolsKey) return;
+    setWatchlist(initialSymbolsKey.split(',').filter(Boolean).map(symbol => hydrateWatchlistEntry(symbol)));
+  }, [initialSymbolsKey, watchlistLoaded, watchlistSymbolsKey]);
 
   // Adds a new ticker to the SERVER watchlist (research-visible, automation
   // opt-in defaults to false server-side), then reloads from the server.
@@ -477,8 +493,8 @@ export const TradingSidebar = memo(function TradingSidebar({
   }, [watchlistSymbolsKey, refreshSnapshots]);
 
   useEffect(() => {
-    onWatchlistChange?.(watchlistSymbols);
-  }, [watchlistSymbolsKey, watchlistSymbols, onWatchlistChange]);
+    onWatchlistChange?.(watchlistSymbolsKey ? watchlistSymbolsKey.split(',') : []);
+  }, [watchlistSymbolsKey, onWatchlistChange]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -760,7 +776,12 @@ export const TradingSidebar = memo(function TradingSidebar({
                   </div>
                 );
               })}
-              {scannerRows.rows.length === 0 && !watchlistError && (
+              {scannerRows.rows.length === 0 && !watchlistError && !watchlistLoaded && (
+                <p className="px-2 py-4 text-center font-mono text-[11px] text-intel-ink3">
+                  Loading watchlist…
+                </p>
+              )}
+              {scannerRows.rows.length === 0 && !watchlistError && watchlistLoaded && (
                 <p className="px-2 py-4 text-center font-mono text-[11px] text-intel-ink3">
                   Empty universe — add a ticker to begin.
                 </p>

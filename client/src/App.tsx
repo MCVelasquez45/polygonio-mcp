@@ -41,6 +41,7 @@ const CockpitLayout = lazy(() => import('./components/cockpit/CockpitLayout').th
 const TradingIntelligencePage = lazy(() => import('./components/intelligence/TradingIntelligencePage').then(m => ({ default: m.TradingIntelligencePage })));
 const SystemOperationsPage = lazy(() => import('./components/operations/SystemOperationsPage').then(m => ({ default: m.SystemOperationsPage })));
 import { analysisApi, chatApi, marketApi } from './api';
+import { listWatchlist as fetchWatchlistItems } from './api/watchlist';
 import {
   LEGACY_SUBMISSION_DISABLED_MESSAGE,
   classifyOrderHistoryError,
@@ -631,7 +632,23 @@ function App() {
 
   // Track watchlist changes pushed from sidebar/watchlist component.
   const handleWatchlistChange = useCallback((symbols: string[]) => {
-    setWatchlistSymbols(symbols);
+    const next = symbols.map(symbol => symbol.toUpperCase());
+    setWatchlistSymbols(prev => (prev.join(',') === next.join(',') ? prev : next));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchWatchlistItems()
+      .then(items => {
+        if (cancelled) return;
+        setWatchlistSymbols(items.map(item => item.symbol.toUpperCase()));
+      })
+      .catch(() => {
+        if (!cancelled) setWatchlistSymbols([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleDeskInsightRefresh = useCallback(() => {
@@ -2297,6 +2314,7 @@ function App() {
       onWatchlistChange={handleWatchlistChange}
       onRequestAutoSelect={handleContractSelectionRequest}
       autoSelectDisabled={contractSelectionLoading || !chainExpirations.length || !contractSelectionAllowed}
+      initialSymbols={watchlistSymbols}
     />
   );
 
@@ -2856,6 +2874,26 @@ function App() {
     </>
   );
 
+  const priceLadderEl = (
+    <PriceLadder
+      symbol={activeContractSymbol}
+      underlying={displayTicker}
+      contractLabel={selectedLeg?.ticker ?? contractDetail?.ticker ?? null}
+      socketConnected={liveSocketConnected}
+      subscriptionActive={liveSubscriptionActive}
+      providerUnavailable={liveSubscriptionUnavailable}
+      subscriptionFailed={liveSubscriptionAckTimedOut}
+      marketClosed={marketSessionMeta?.marketClosed}
+    />
+  );
+
+  const mobileMatrixPanelEl = (
+    <div className="flex min-h-0 flex-col gap-3">
+      <div className="min-h-[18rem]">{priceLadderEl}</div>
+      {chainPanelEl}
+    </div>
+  );
+
   const scannerPanelEl = (
     <OptionsScanner
       reports={scannerReports}
@@ -2878,16 +2916,7 @@ function App() {
       </div>
       <div className="lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:row-span-4 min-h-[26rem] min-w-0 flex flex-col gap-4">
         {ticketPanelEl}
-        <PriceLadder
-          symbol={activeContractSymbol}
-          underlying={displayTicker}
-          contractLabel={selectedLeg?.ticker ?? contractDetail?.ticker ?? null}
-          socketConnected={liveSocketConnected}
-          subscriptionActive={liveSubscriptionActive}
-          providerUnavailable={liveSubscriptionUnavailable}
-          subscriptionFailed={liveSubscriptionAckTimedOut}
-          marketClosed={marketSessionMeta?.marketClosed}
-        />
+        {priceLadderEl}
       </div>
       <div className="lg:col-span-2 min-w-0">
         {chainPanelEl}
@@ -3060,7 +3089,7 @@ function App() {
           chartPanel={chartPanelEl}
           insightPanel={deskInsightPanel}
           ticketPanel={ticketPanelEl}
-          matrixPanel={chainPanelEl}
+          matrixPanel={mobileMatrixPanelEl}
           scannerPanel={
             <Suspense fallback={suspenseFallback}>
               <div className="space-y-3">

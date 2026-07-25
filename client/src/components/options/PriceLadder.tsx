@@ -186,7 +186,7 @@ export const PriceLadder = memo(function PriceLadder({
   }[status];
 
   return (
-    <section className="flex h-full flex-col rounded-panel bg-intel-panel">
+    <section className="flex h-full flex-col rounded-panel bg-intel-panel" data-testid="price-ladder">
       <div className="flex items-center justify-between border-b border-intel-divider px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <h3 className="font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">
@@ -206,7 +206,10 @@ export const PriceLadder = memo(function PriceLadder({
       </div>
 
       {rungs.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-4 py-8 text-center font-mono text-[11px] text-intel-ink3">
+        <div
+          className="flex flex-1 items-center justify-center px-4 py-8 text-center font-mono text-[11px] text-intel-ink3"
+          data-testid="price-ladder-status"
+        >
           {statusCopy}
         </div>
       ) : (
@@ -281,9 +284,9 @@ export const PriceLadder = memo(function PriceLadder({
       {/* Time & sales — the most recent real prints, newest first. Direction
           is judged against the concurrent mid: at/above ask lifts (green),
           at/below bid hits (red), between prints neutral. */}
-      {tapeRows.length > 0 && (
-        <div className="border-t border-intel-divider px-4 py-2">
-          <div className="mb-1 font-mono text-[9.5px] uppercase tracking-label text-intel-ink3">Time &amp; Sales</div>
+      <div className="border-t border-intel-divider px-4 py-2" data-testid="time-sales">
+        <div className="mb-1 font-mono text-[9.5px] uppercase tracking-label text-intel-ink3">Time &amp; Sales</div>
+        {tapeRows.length > 0 ? (
           <div className="flex flex-col gap-[2px]">
             {tapeRows.map((print, idx) => {
               const tone =
@@ -309,8 +312,10 @@ export const PriceLadder = memo(function PriceLadder({
               );
             })}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="font-mono text-[10.5px] text-intel-ink3">No recent prints.</div>
+        )}
+      </div>
     </section>
   );
 });

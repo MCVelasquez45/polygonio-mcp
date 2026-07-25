@@ -156,13 +156,15 @@ Output directory: client/dist
 
 Required Vercel environment variables by name:
 
-- `VITE_API_URL`
+- `VITE_API_BASE_URL` only for non-standard hosted environments that cannot use
+  the same-origin Vercel rewrites
 - `VITE_AUTH_TOKEN` only if using the local/dev token flow
 - `VITE_AUTH_ROLE` only if using the local/dev token flow
 
-For production, `VITE_API_URL` must be the Render backend URL. Do not use a
-localhost URL in Vercel. The backend `CORS_ORIGINS`/`FRONTEND_ORIGIN` values must
-include the Vercel frontend origin.
+For the standard Vercel deployment, the production bundle uses same-origin
+`/api/*`, `/health`, and `/socket.io/*` rewrites. Do not embed the Render backend
+or a localhost URL in the frontend bundle. The backend `CORS_ORIGINS` and
+`FRONTEND_ORIGIN` values must include the Vercel frontend origin.
 
 ## Massive Entitlement Status
 

@@ -6,13 +6,16 @@ or the supporting APIs.
 
 ## Data Sources
 
-1. **Massive snapshots** – `/api/market/watchlist` returns per-symbol snapshots
+1. **Authoritative watchlist** – `/api/watchlist` returns the server-side symbol
+   universe from MongoDB. This is the single source of truth for the operator
+   sidebar, scanner inputs, research, and automation universe.
+2. **Massive snapshots** – `/api/market/watchlist` returns per-symbol snapshots
    (price, change, greeks, reference contract). The client sidebar relies on this
    for live prices and name updates.
-2. **Options analytics** – the Node server calls `getMassiveOptionsSnapshot` and
+3. **Options analytics** – the Node server calls `getMassiveOptionsSnapshot` and
    `getRecentAggregateBars` to build structured context for the watchlist report
    generator.
-3. **Agent service (optional)** – when `AGENT_API_URL` is configured, the server
+4. **Agent service (optional)** – when `AGENT_API_URL` is configured, the server
    asks the FastAPI MCP service to summarize the watchlist context into desk
    notes. If the agent is offline, the code falls back to deterministic Massive
    snapshots so the UI still shows notes.
@@ -37,18 +40,20 @@ Environment variables:
 ## Client Modules
 
 - `client/src/components/layout/TradingSidebar.tsx`
-  - Hydrates the user-defined watchlist from `localStorage` and seeds it with
-    default symbols until live data arrives.
+  - Hydrates the user-defined watchlist from `/api/watchlist`; no localStorage
+    watchlist copy and no hardcoded symbol seed are used.
+  - Accepts app-preloaded server symbols so late-mounted mobile scanner views
+    render the authoritative universe immediately while the richer sidebar data
+    finishes loading.
   - Calls `marketApi.getWatchlistSnapshots()` whenever the watchlist changes to
     refresh prices/names.
-  - Persists the list back to `localStorage` so tabs retain the user’s symbols.
   - Emits `onWatchlistChange` so higher-level components can respond (for
     example, enabling manual scans in `OptionsScanner` when the list updates).
 
 ## Typical Flow
 
-1. User adds/removes symbols in the sidebar. The component stores the new list
-   locally and fires `onWatchlistChange`.
+1. User adds/removes symbols in the sidebar. The component writes through
+   `/api/watchlist`, reloads from the server, and fires `onWatchlistChange`.
 2. The Scanner view offers a manual “Run AI scan” button, which triggers
    `/api/analysis/watchlist` and `/api/analysis/checklist` when enabled in
    Settings.
@@ -61,10 +66,7 @@ Environment variables:
 - **New analytics**: add a helper to `watchlistReports.ts` so the agent prompt
   includes additional metrics (e.g., IV rank, unusual volume) and update the
   fallback builder accordingly.
-- **Alternate storage**: if you need multi-user watchlists, replace the
-  localStorage logic with API calls from the sidebar. The component is already
-  structured around `onWatchlistChange`, so swapping the persistence layer is
-  straightforward.
-- **Alerts**: the `alerts` array in `TradingSidebar.tsx` is just placeholder
-  data. Replace it with real signals by wiring up another API call or websocket
-  feed.
+- **Multi-user watchlists**: add user/account scoping to the server watchlist
+  routes and preserve the same `onWatchlistChange` contract in the sidebar.
+- **Alerts**: the current intel tab is static operator context. Replace it with
+  persisted signal or news events before treating it as production alerting.

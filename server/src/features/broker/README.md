@@ -9,7 +9,7 @@ endpoints via env vars in the future.
 | File | Purpose |
 | --- | --- |
 | `broker.routes.ts` | Express router exposing `/alpaca/account`, `/alpaca/options/positions`, `/alpaca/options/orders`. Includes lightweight caching to limit Alpaca calls. |
-| `services/alpaca.ts` | Wrapper around `@alpacahq/alpaca-trade-api`; exports helper functions apt for both paper and (future) live usage. |
+| `services/alpaca.ts` | Minimal Alpaca REST wrapper built on the server's shared `axios` dependency; exports helper functions for paper account, clock, positions, orders, and governed options order actions. |
 
 ## Environment Variables
 
@@ -17,13 +17,13 @@ endpoints via env vars in the future.
 | --- | --- |
 | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Primary credentials. Legacy names `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` still work. |
 | `ALPACA_API_BASE` | Overrides the base URL. Defaults to paper (`https://paper-api.alpaca.markets`). Set to `https://api.alpaca.markets` for live trading. |
-| `ALPACA_DATA_BASE_URL`, `ALPACA_PAPER`, `ALPACA_DATA_FEED`, `ALPACA_OPTION_FEED` | Optional overrides passed directly to the Alpaca SDK. |
+| `ALPACA_PAPER`, `ALPACA_HTTP_TIMEOUT_MS` | Paper/live runtime assertion and REST timeout. |
 
 ## Paper vs Live
 
-The SDK is instantiated once per process. When it's time to support live
-accounts, set `ALPACA_PAPER=false` and `ALPACA_API_BASE=https://api.alpaca.markets`.
-No code changes are required—the wrapper simply points at the new base URL.
+The production automation path is certified for Alpaca paper trading only.
+`getAlpacaEnvironment()` exposes the paper flag and base URL without credentials
+so automation can reject non-paper configuration before any broker submission.
 
 ## Error Handling
 
@@ -32,6 +32,6 @@ global Express error middleware, so the UI receives consistent error messages.
 
 ## Future Enhancements
 
-- Add stock order support (using `alpaca.createOrder`).
+- Add stock order support through the same governed REST wrapper.
 - Wire up WebSocket `trade_updates` so the client sees fills in real time.
 - Harden payload validation before hitting Alpaca (e.g., using zod or yup).
