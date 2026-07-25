@@ -48,6 +48,11 @@ function forwardGet(path: string): RequestHandler {
 // "can the AI actually run" signal — not the outcome of the last user chat.
 // Kept on a short timeout so a hung agent never stalls the badge.
 const AGENT_HEALTH_TIMEOUT_MS = Number(process.env.AGENT_HEALTH_TIMEOUT_MS ?? 4_000);
+const AGENT_HEALTH_CACHE_TTL_MS = Math.max(1_000, Number(process.env.AGENT_HEALTH_CACHE_TTL_MS ?? 15_000));
+const AGENT_HEALTH_STALE_OK_MS = Math.max(
+  AGENT_HEALTH_CACHE_TTL_MS,
+  Number(process.env.AGENT_HEALTH_STALE_OK_MS ?? 120_000)
+);
 type AiHealthSnapshot = {
   status: 'unknown' | 'ok' | 'degraded' | 'down';
   agentReachable: boolean | null;
@@ -56,6 +61,9 @@ type AiHealthSnapshot = {
   latencyMs: number | null;
   checkedAt: string | null;
   error: string | null;
+  cached: boolean;
+  stale: boolean;
+  cacheAgeMs: number | null;
 };
 
 let lastAiHealthSnapshot: AiHealthSnapshot = {
@@ -66,45 +74,123 @@ let lastAiHealthSnapshot: AiHealthSnapshot = {
   latencyMs: null,
   checkedAt: null,
   error: null,
+  cached: false,
+  stale: false,
+  cacheAgeMs: null,
 };
+let lastSuccessfulAiHealthSnapshot: AiHealthSnapshot | null = null;
+let aiHealthProbeInFlight: Promise<AiHealthSnapshot> | null = null;
 
 export function getAiHealthSnapshot(): AiHealthSnapshot {
   return { ...lastAiHealthSnapshot };
 }
 
-router.get('/health', async (_req, res) => {
+function snapshotAgeMs(snapshot: AiHealthSnapshot | null, now = Date.now()): number | null {
+  if (!snapshot?.checkedAt) return null;
+  const checkedAt = Date.parse(snapshot.checkedAt);
+  if (!Number.isFinite(checkedAt)) return null;
+  return Math.max(0, now - checkedAt);
+}
+
+function withCacheMetadata(snapshot: AiHealthSnapshot, cached: boolean, stale: boolean, cacheAgeMs: number | null): AiHealthSnapshot {
+  return { ...snapshot, cached, stale, cacheAgeMs };
+}
+
+function getFreshSuccessfulSnapshot(now = Date.now()): AiHealthSnapshot | null {
+  const ageMs = snapshotAgeMs(lastSuccessfulAiHealthSnapshot, now);
+  if (ageMs == null || ageMs > AGENT_HEALTH_CACHE_TTL_MS || !lastSuccessfulAiHealthSnapshot) return null;
+  return withCacheMetadata(lastSuccessfulAiHealthSnapshot, true, false, ageMs);
+}
+
+function getStaleSuccessfulSnapshot(now = Date.now()): AiHealthSnapshot | null {
+  const ageMs = snapshotAgeMs(lastSuccessfulAiHealthSnapshot, now);
+  if (ageMs == null || ageMs > AGENT_HEALTH_STALE_OK_MS || !lastSuccessfulAiHealthSnapshot) return null;
+  return withCacheMetadata(lastSuccessfulAiHealthSnapshot, true, true, ageMs);
+}
+
+async function probeAgentHealth(): Promise<AiHealthSnapshot> {
+  if (aiHealthProbeInFlight) return aiHealthProbeInFlight;
   const startedAt = Date.now();
   const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
-  try {
-    const response = await axios.get(agentEndpoint('/health'), {
-      timeout: AGENT_HEALTH_TIMEOUT_MS,
-      validateStatus: () => true,
-    });
-    const agentReachable = response.status >= 200 && response.status < 300;
-    const payload: AiHealthSnapshot = {
-      status: agentReachable && openaiConfigured ? 'ok' : 'degraded',
-      agentReachable,
-      openaiConfigured,
-      agentStatus: response.status,
-      latencyMs: Date.now() - startedAt,
-      checkedAt: new Date().toISOString(),
-      error: null,
-    };
-    lastAiHealthSnapshot = payload;
-    res.status(agentReachable ? 200 : 503).json(payload);
-  } catch (error: any) {
-    const payload: AiHealthSnapshot = {
-      status: 'down',
-      agentReachable: false,
-      openaiConfigured,
-      agentStatus: null,
-      error: error?.code || error?.message || 'agent_unreachable',
-      latencyMs: Date.now() - startedAt,
-      checkedAt: new Date().toISOString(),
-    };
-    lastAiHealthSnapshot = payload;
-    res.status(503).json(payload);
+
+  aiHealthProbeInFlight = (async () => {
+    try {
+      const response = await axios.get(agentEndpoint('/health'), {
+        timeout: AGENT_HEALTH_TIMEOUT_MS,
+        validateStatus: () => true,
+      });
+      const agentReachable = response.status >= 200 && response.status < 300;
+      const payload: AiHealthSnapshot = {
+        status: agentReachable && openaiConfigured ? 'ok' : 'degraded',
+        agentReachable,
+        openaiConfigured,
+        agentStatus: response.status,
+        latencyMs: Date.now() - startedAt,
+        checkedAt: new Date().toISOString(),
+        error: null,
+        cached: false,
+        stale: false,
+        cacheAgeMs: null,
+      };
+      if (agentReachable) lastSuccessfulAiHealthSnapshot = payload;
+      const stale = agentReachable ? null : getStaleSuccessfulSnapshot();
+      lastAiHealthSnapshot = stale ?? payload;
+      return lastAiHealthSnapshot;
+    } catch (error: any) {
+      const stale = getStaleSuccessfulSnapshot();
+      if (stale) {
+        lastAiHealthSnapshot = stale;
+        return stale;
+      }
+      const payload: AiHealthSnapshot = {
+        status: 'down',
+        agentReachable: false,
+        openaiConfigured,
+        agentStatus: null,
+        error: error?.code || error?.message || 'agent_unreachable',
+        latencyMs: Date.now() - startedAt,
+        checkedAt: new Date().toISOString(),
+        cached: false,
+        stale: false,
+        cacheAgeMs: null,
+      };
+      lastAiHealthSnapshot = payload;
+      return payload;
+    } finally {
+      aiHealthProbeInFlight = null;
+    }
+  })();
+
+  return aiHealthProbeInFlight;
+}
+
+export function resetAiHealthForTests(): void {
+  lastAiHealthSnapshot = {
+    status: 'unknown',
+    agentReachable: null,
+    openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    agentStatus: null,
+    latencyMs: null,
+    checkedAt: null,
+    error: null,
+    cached: false,
+    stale: false,
+    cacheAgeMs: null,
+  };
+  lastSuccessfulAiHealthSnapshot = null;
+  aiHealthProbeInFlight = null;
+}
+
+router.get('/health', async (_req, res) => {
+  const cached = getFreshSuccessfulSnapshot();
+  if (cached) {
+    lastAiHealthSnapshot = cached;
+    res.status(200).json(cached);
+    return;
   }
+
+  const payload = await probeAgentHealth();
+  res.status(200).json(payload);
 });
 
 router.post('/extract-strategy-async', forwardPost('/extract-strategy-async'));

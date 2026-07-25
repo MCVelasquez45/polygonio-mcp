@@ -39,6 +39,8 @@ const EQUITY_SNAPSHOT_GRACE_MS = 90_000;
 const CHART_STALE_MS = 10 * 60_000;
 const BACKEND_POLL_MS = 20_000;
 const AI_HEALTH_POLL_MS = 20_000;
+const BACKEND_HEALTH_TIMEOUT_MS = 15_000;
+const AI_HEALTH_TIMEOUT_MS = 15_000;
 const BACKEND_SLOW_MS = 1_500;
 const CLOCK_TICK_MS = 1_000;
 
@@ -50,7 +52,7 @@ function useBackendStatus(): BackendStatus {
     const probe = async () => {
       const started = Date.now();
       try {
-        await http.get('/health', { timeout: 5_000 });
+        await http.get('/health', { timeout: BACKEND_HEALTH_TIMEOUT_MS });
         if (cancelled) return;
         setStatus(Date.now() - started > BACKEND_SLOW_MS ? 'DEGRADED' : 'ONLINE');
       } catch {
@@ -198,7 +200,7 @@ function useAiHealth(): 'ok' | 'down' {
     let cancelled = false;
     const probe = async () => {
       try {
-        const res = await http.get('/api/agent/health', { timeout: 6_000 });
+        const res = await http.get('/api/agent/health', { timeout: AI_HEALTH_TIMEOUT_MS });
         if (!cancelled) setHealth(res?.data?.agentReachable === false ? 'down' : 'ok');
       } catch {
         if (!cancelled) setHealth('down');

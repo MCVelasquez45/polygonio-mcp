@@ -43,7 +43,11 @@ app.add_middleware(
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health_check() -> dict[str, str]:
-    return {"status": "ok", "service": "polygon-agent"}
+    return {
+        "status": "ok",
+        "service": "polygon-agent",
+        "commit": os.getenv("RENDER_GIT_COMMIT", os.getenv("GIT_COMMIT", "unknown")),
+    }
 
 
 # Deterministic data endpoints for the Node AI orchestrator. These expose the

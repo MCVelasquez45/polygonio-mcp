@@ -168,6 +168,19 @@ function isLegacyBrokerSubmissionDisabled(error: any): boolean {
   );
 }
 
+function isStatusProbe(config: any): boolean {
+  const method = String(config?.method ?? 'GET').toUpperCase();
+  if (method !== 'GET') return false;
+  const path = (() => {
+    try {
+      return new URL(config?.url ?? '', config?.baseURL ?? getActiveBaseUrl()).pathname;
+    } catch {
+      return String(config?.url ?? '');
+    }
+  })();
+  return path === '/health' || path === '/api/agent/health' || path === '/api/system/health';
+}
+
 function createCorrelationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -296,7 +309,7 @@ http.interceptors.response.use(
       });
       return Promise.reject(error);
     }
-    const logHttpFailure = error?.response?.status && error.response.status < 500 ? console.warn : console.error;
+    const logHttpFailure = isStatusProbe(error?.config) || (error?.response?.status && error.response.status < 500) ? console.warn : console.error;
     logHttpFailure('[CLIENT] HTTP failure', {
       message: error?.message,
       method: String(error?.config?.method ?? 'GET').toUpperCase(),
