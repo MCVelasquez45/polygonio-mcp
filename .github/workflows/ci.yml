@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install root tooling
+        run: npm ci
+      - name: Install server dependencies
+        run: npm ci --prefix server
+      - name: Install client dependencies
+        run: npm ci --prefix client
+      - name: Lint
+        run: npm run lint
+      - name: Build server
+        run: npm --prefix server run build
+      - name: Test server
+        run: node --test server/tests/*.test.mjs
+      - name: Build client
+        run: npm --prefix client run build
+      - name: Test client
+        run: npm --prefix client test

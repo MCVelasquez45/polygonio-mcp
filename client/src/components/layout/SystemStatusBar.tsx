@@ -44,8 +44,19 @@ function aiTone(status: string): Tone {
 function automationTone(status: string): Tone {
   return status === 'RUNNING' ? 'good' : status === 'PAUSED' ? 'warn' : status === 'ERROR' ? 'bad' : 'neutral';
 }
-function chartTone(tone: ChartTone): Tone {
-  return tone === 'live' ? 'good' : tone === 'delayed' || tone === 'snapshot' ? 'warn' : 'neutral';
+function chartFeedTone(status: string): Tone {
+  if (status === 'LIVE') return 'good';
+  if (status === 'SNAPSHOT') return 'warn';
+  if (status === 'STALE') return 'bad';
+  return 'neutral'; // CONNECTING / CLOSED
+}
+
+/** Compact "updated N ago" suffix for the chart snapshot badge. */
+function formatAge(seconds: number | null): string {
+  if (seconds == null) return '';
+  if (seconds < 60) return `${seconds}S`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}M`;
+  return `${Math.round(seconds / 3600)}H`;
 }
 
 function StatusItem({ label, value, tone }: { label: string; value: string; tone: Tone }) {
@@ -60,15 +71,21 @@ function StatusItem({ label, value, tone }: { label: string; value: string; tone
   );
 }
 
-export type ChartTone = 'live' | 'delayed' | 'snapshot' | 'stale';
-
 type Props = {
-  chartLabel: string;
-  chartStatusTone: ChartTone;
+  /** From the chart's market-session meta — drives CLOSED vs live snapshot state. */
+  marketClosed?: boolean;
+  /** True when the chart data fetch is currently failing (marketError set). */
+  chartErrored?: boolean;
 };
 
-export const SystemStatusBar = memo(function SystemStatusBar({ chartLabel, chartStatusTone }: Props) {
-  const status = useSystemStatus();
+export const SystemStatusBar = memo(function SystemStatusBar({ marketClosed, chartErrored }: Props) {
+  const status = useSystemStatus({ marketClosed, chartErrored });
+
+  const chartAge = formatAge(status.chart.ageSeconds);
+  const chartValue =
+    (status.chart.status === 'SNAPSHOT' || status.chart.status === 'LIVE') && chartAge
+      ? `${status.chart.status} ${chartAge}`
+      : status.chart.status;
 
   return (
     <div
@@ -79,8 +96,8 @@ export const SystemStatusBar = memo(function SystemStatusBar({ chartLabel, chart
       <StatusItem label="Backend" value={status.backend} tone={backendTone(status.backend)} />
       <StatusItem label="Socket.IO" value={status.socket} tone={socketTone(status.socket)} />
       <StatusItem label="Options Feed" value={status.optionsFeed} tone={optionsFeedTone(status.optionsFeed)} />
-      <StatusItem label="Equity Feed" value={status.equityFeed} tone={equityFeedTone(status.equityFeed)} />
-      <StatusItem label="Chart" value={chartLabel} tone={chartTone(chartStatusTone)} />
+      <StatusItem label="Equity Data" value={status.equityFeed} tone={equityFeedTone(status.equityFeed)} />
+      <StatusItem label="Chart" value={chartValue} tone={chartFeedTone(status.chart.status)} />
       <StatusItem label="AI" value={status.ai === 'ready' ? 'READY' : status.ai === 'busy' ? 'BUSY' : 'ERROR'} tone={aiTone(status.ai)} />
       <StatusItem label="Automation" value={status.automation} tone={automationTone(status.automation)} />
     </div>

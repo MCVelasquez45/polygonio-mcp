@@ -296,7 +296,8 @@ http.interceptors.response.use(
       });
       return Promise.reject(error);
     }
-    console.error('[CLIENT] HTTP failure', {
+    const logHttpFailure = error?.response?.status && error.response.status < 500 ? console.warn : console.error;
+    logHttpFailure('[CLIENT] HTTP failure', {
       message: error?.message,
       method: String(error?.config?.method ?? 'GET').toUpperCase(),
       url: fullRequestUrl(error?.config),

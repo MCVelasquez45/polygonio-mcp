@@ -40,6 +40,14 @@ let lastOptionQuoteAt: number | null = null;
 let lastEquityQuoteAt: number | null = null;
 let lastEquityDataMode: QuoteSnapshot['dataMode'] | null = null;
 
+// Whether the backend has an acknowledged, accepted live:subscribe for the
+// active option contract right now (set by App.tsx's subscribe/unsubscribe
+// handlers). This is the "is the pipe alive" signal — independent of quote
+// recency, so a quiet contract with a healthy subscription isn't mistaken
+// for a dead feed just because its NBBO hasn't ticked in a while.
+let optionsSubscriptionActive = false;
+let optionsSubscriptionActiveSince: number | null = null;
+
 /** Wall-clock ms of the most recent live quote/trade, or null if none yet. */
 export function getLastQuoteAt(): number | null {
   return lastQuoteAt;
@@ -60,12 +68,60 @@ export function getLastEquityDataMode(): QuoteSnapshot['dataMode'] | null {
   return lastEquityDataMode;
 }
 
+// The equity domain is snapshot-only by design (no equity WS entitlement). This
+// marks the underlying-equity snapshot pipeline as having just delivered, so the
+// status bar reads "SNAPSHOT" while data flows and only degrades if it genuinely
+// stops — never a hardcoded label. Distinct from publishQuote so it can't be
+// blocked by the stale-snapshot write-guard (which compares market timestamps,
+// not fetch freshness).
+export function markEquitySnapshot(dataMode: QuoteSnapshot['dataMode'] = 'snapshot') {
+  lastEquityQuoteAt = Date.now();
+  lastEquityDataMode = dataMode;
+}
+
+// Chart = underlying-equity aggregate feed. Track when the client last received
+// a chart delivery (snapshot/update) plus the server's last health mode, so the
+// Chart badge reflects delivery freshness (SNAPSHOT/LIVE) and only reads STALE
+// on a genuine, prolonged gap — not on entitlement-limited data age.
+let lastChartActivityAt: number | null = null;
+let lastChartMode: string | null = null;
+export function markChartActivity(mode?: string | null) {
+  lastChartActivityAt = Date.now();
+  if (typeof mode === 'string' && mode) lastChartMode = mode;
+}
+export function getLastChartActivityAt(): number | null {
+  return lastChartActivityAt;
+}
+export function getLastChartMode(): string | null {
+  return lastChartMode;
+}
+
+/** Whether the active contract's live:subscribe is currently acknowledged+accepted. */
+export function getOptionsSubscriptionActive(): boolean {
+  return optionsSubscriptionActive;
+}
+
+/** Wall-clock ms the current subscription became active, or null if inactive. */
+export function getOptionsSubscriptionActiveSince(): number | null {
+  return optionsSubscriptionActiveSince;
+}
+
+export function setOptionsSubscriptionActive(active: boolean) {
+  if (active === optionsSubscriptionActive) return;
+  optionsSubscriptionActive = active;
+  optionsSubscriptionActiveSince = active ? Date.now() : null;
+}
+
 /** Test/reset seam — clears the last-live-data stamps. */
 export function resetLastQuoteAt() {
   lastQuoteAt = null;
   lastOptionQuoteAt = null;
   lastEquityQuoteAt = null;
   lastEquityDataMode = null;
+  optionsSubscriptionActive = false;
+  optionsSubscriptionActiveSince = null;
+  lastChartActivityAt = null;
+  lastChartMode = null;
 }
 
 function notifySymbol(symbol: string) {
@@ -102,9 +158,25 @@ function subscribeMaps(listener: Listener): () => void {
 
 // ---- writers (socket handlers / REST fallback) ----
 
+/**
+ * A REST/snapshot-sourced quote must never clobber a newer (or equally
+ * fresh) websocket-sourced one — mirrors the identical guard the server's
+ * options quote cache already applies (optionsQuoteCache.service.ts
+ * ingestRestQuote). Websocket ticks are trusted to arrive in order and are
+ * never rejected here; only a snapshot arriving after a live tick is.
+ */
+function isStaleSnapshotOverride(existing: QuoteSnapshot, incoming: QuoteSnapshot): boolean {
+  const incomingIsSnapshot = incoming.source === 'rest-snapshot' || incoming.source === 'snapshot';
+  if (!incomingIsSnapshot) return false;
+  if (existing.timestamp == null || incoming.timestamp == null) return false;
+  return incoming.timestamp <= existing.timestamp;
+}
+
 export function publishQuote(quote: QuoteSnapshot) {
   const symbol = quote.ticker?.toUpperCase();
   if (!symbol) return;
+  const existing = quotes[symbol];
+  if (existing && isStaleSnapshotOverride(existing, quote)) return;
   quotes = { ...quotes, [symbol]: quote };
   const now = Date.now();
   lastQuoteAt = now;

@@ -11,8 +11,17 @@ import {
 
 const axiosErr = (status, extra = {}) => ({ isAxiosError: true, response: { status, headers: {}, ...extra } });
 
-test('429 is retryable (the P1 bug: it used to be excluded)', () => {
-  assert.equal(isRetryableMassiveError(axiosErr(429), 0, 3), true);
+test('429 is retried ONLY when the provider sent Retry-After', () => {
+  // A bare 429 (no Retry-After) is a per-minute endpoint-class quota: retrying
+  // it on sub-second backoff only amplifies the throttle. The wrapper's 60s
+  // endpoint-class cooldown + stale-cache fallback handles it instead.
+  assert.equal(isRetryableMassiveError(axiosErr(429), 0, 3), false);
+  // A 429 WITH Retry-After is provider-directed and safe to retry.
+  assert.equal(
+    isRetryableMassiveError(axiosErr(429, { headers: { 'retry-after': '2' } }), 0, 3),
+    true
+  );
+  // 429 is still classified as a rate-limit status for telemetry/backoff.
   assert.ok(MASSIVE_RETRYABLE_STATUS.has(429));
 });
 

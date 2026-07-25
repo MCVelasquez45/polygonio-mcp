@@ -20,12 +20,87 @@ type Props = {
   refreshIntervalMs?: number;
 };
 
+type RuntimeHealth = {
+  runtime?: {
+    broker?: {
+      adapterResolved?: boolean;
+      streamState?: string;
+      truthCurrent?: boolean;
+      lastRestReconciliationAt?: string | null;
+      unresolvedContradictions?: number;
+    };
+    mongo?: {
+      connected?: boolean;
+      readyState?: number;
+      host?: string | null;
+      name?: string | null;
+    };
+    market?: {
+      queueDepth?: number;
+      activeRequests?: number;
+      inflightDeduped?: number;
+      responseCacheEntries?: number;
+      heartbeatAgeMs?: number | null;
+      lastSnapshotAt?: string | null;
+      lastOptionTickAt?: string | null;
+      lastOptionTradeAt?: string | null;
+    };
+    ai?: {
+      status?: string;
+      agentReachable?: boolean | null;
+      openaiConfigured?: boolean;
+      latencyMs?: number | null;
+      checkedAt?: string | null;
+      error?: string | null;
+    };
+    automation?: {
+      ready?: boolean;
+      heartbeat?: {
+        schedulerAgeMs?: number | null;
+        monitorAgeMs?: number | null;
+      };
+      scheduler?: {
+        state?: string;
+        lastTickAt?: string | null;
+        candidateCount?: number | null;
+        watchlistCount?: number | null;
+      };
+      monitor?: {
+        state?: string;
+        lastTickAt?: string | null;
+        positionsMonitored?: number;
+        exitsTriggered?: number;
+      };
+      recentDecisions?: Array<{
+        automationSessionId?: string;
+        evaluated?: boolean;
+        skippedReason?: string | null;
+        approvedIntentId?: string | null;
+        windowKey?: string;
+      }>;
+    };
+  };
+};
+
 function formatMsAgo(ms: number | null): string {
   if (ms == null) return 'N/A';
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
   return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return 'N/A';
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Date(parsed).toLocaleTimeString();
+}
+
+function compactBool(value: boolean | null | undefined): string {
+  if (value === true) return 'YES';
+  if (value === false) return 'NO';
+  return 'N/A';
 }
 
 function getModeColor(mode: string): string {
@@ -44,18 +119,37 @@ function getQualityColor(score: number): string {
   return '#f87171';                   // intel-neg
 }
 
+function RuntimeCard({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+  return (
+    <div className="runtime-card">
+      <div className="runtime-title">{title}</div>
+      <div className="runtime-rows">
+        {rows.map(([label, value]) => (
+          <div className="runtime-row" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs = 5000 }: Props) {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [systemHealth, setSystemHealth] = useState<RuntimeHealth | null>(null);
 
   const fetchHealth = async () => {
     try {
-      const { data } = await apiClient.get('/api/chart/health', {
-        baseURL: apiBase
-      });
-      setMetrics(data.metrics ?? []);
+      const [chartResponse, systemResponse] = await Promise.all([
+        apiClient.get('/api/chart/health', { baseURL: apiBase }),
+        apiClient.get('/api/system/health', { baseURL: apiBase, validateStatus: () => true }),
+      ]);
+      setMetrics(chartResponse.data.metrics ?? []);
+      setSystemHealth(systemResponse.data ?? null);
       setError(null);
       setLastFetch(new Date());
     } catch (err: any) {
@@ -74,13 +168,15 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
   const averageScore = metrics.length > 0
     ? Math.round(metrics.reduce((sum, m) => sum + m.qualityScore, 0) / metrics.length)
     : 0;
+  const runtime = systemHealth?.runtime;
+  const recentDecisions = runtime?.automation?.recentDecisions?.slice(0, 3) ?? [];
 
   return (
     <div className="data-health-panel">
       <header className="panel-header">
         <div className="header-title">
           <h2>Data Health Monitor</h2>
-          <p className="header-subtitle">Real-time chart data quality metrics</p>
+          <p className="header-subtitle">Runtime telemetry from backend, broker, market data, AI, and automation.</p>
         </div>
         <div className="header-stats">
           <div className="stat">
@@ -98,7 +194,73 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
 
       {error && (
         <div className="error-banner">
-          ⚠️ Failed to fetch health data: {error}
+          Failed to fetch health data: {error}
+        </div>
+      )}
+
+      <div className="runtime-grid">
+        <RuntimeCard
+          title="Broker"
+          rows={[
+            ['Adapter', compactBool(runtime?.broker?.adapterResolved)],
+            ['Stream', runtime?.broker?.streamState ?? 'N/A'],
+            ['Truth Current', compactBool(runtime?.broker?.truthCurrent)],
+            ['REST Sync', formatTimestamp(runtime?.broker?.lastRestReconciliationAt)],
+            ['Contradictions', String(runtime?.broker?.unresolvedContradictions ?? 0)],
+          ]}
+        />
+        <RuntimeCard
+          title="MongoDB"
+          rows={[
+            ['Connected', compactBool(runtime?.mongo?.connected)],
+            ['Ready State', String(runtime?.mongo?.readyState ?? 'N/A')],
+            ['Host', runtime?.mongo?.host ?? 'N/A'],
+            ['DB', runtime?.mongo?.name ?? 'N/A'],
+          ]}
+        />
+        <RuntimeCard
+          title="Market"
+          rows={[
+            ['Queue Depth', String(runtime?.market?.queueDepth ?? 'N/A')],
+            ['Active Requests', String(runtime?.market?.activeRequests ?? 'N/A')],
+            ['Heartbeat', formatMsAgo(runtime?.market?.heartbeatAgeMs ?? null)],
+            ['Last Snapshot', formatTimestamp(runtime?.market?.lastSnapshotAt)],
+            ['Last Option Tick', formatTimestamp(runtime?.market?.lastOptionTickAt)],
+            ['Last Trade', formatTimestamp(runtime?.market?.lastOptionTradeAt)],
+          ]}
+        />
+        <RuntimeCard
+          title="AI"
+          rows={[
+            ['Status', runtime?.ai?.status?.toUpperCase() ?? 'UNKNOWN'],
+            ['Agent', compactBool(runtime?.ai?.agentReachable)],
+            ['OpenAI', compactBool(runtime?.ai?.openaiConfigured)],
+            ['Latency', runtime?.ai?.latencyMs == null ? 'N/A' : `${runtime.ai.latencyMs}ms`],
+            ['Checked', formatTimestamp(runtime?.ai?.checkedAt)],
+          ]}
+        />
+        <RuntimeCard
+          title="Automation"
+          rows={[
+            ['Ready', compactBool(runtime?.automation?.ready)],
+            ['Scheduler', runtime?.automation?.scheduler?.state ?? 'N/A'],
+            ['Scheduler HB', formatMsAgo(runtime?.automation?.heartbeat?.schedulerAgeMs ?? null)],
+            ['Monitor', runtime?.automation?.monitor?.state ?? 'N/A'],
+            ['Monitor HB', formatMsAgo(runtime?.automation?.heartbeat?.monitorAgeMs ?? null)],
+            ['Positions', String(runtime?.automation?.monitor?.positionsMonitored ?? 0)],
+          ]}
+        />
+      </div>
+
+      {recentDecisions.length > 0 && (
+        <div className="recent-decisions">
+          <div className="recent-title">Recent Decisions</div>
+          {recentDecisions.map((decision, index) => (
+            <div className="decision-row" key={`${decision.automationSessionId ?? 'session'}-${decision.windowKey ?? index}`}>
+              <span>{decision.evaluated ? 'EVALUATED' : decision.skippedReason ?? 'SKIPPED'}</span>
+              <span>{decision.approvedIntentId ? `Intent ${decision.approvedIntentId}` : decision.windowKey ?? 'N/A'}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -106,7 +268,6 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
         <div className="loading-state">Loading health metrics...</div>
       ) : metrics.length === 0 ? (
         <div className="empty-state">
-          <span className="empty-icon">📊</span>
           <p>No active chart feeds</p>
           <span className="empty-hint">Open a chart to start monitoring</span>
         </div>
@@ -161,7 +322,7 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
               </div>
 
               {metric.providerThrottled && (
-                <div className="throttle-warning">⚠️ Provider throttled</div>
+                <div className="throttle-warning">Provider throttled</div>
               )}
             </div>
           ))}
@@ -236,6 +397,74 @@ export function DataHealthPanel({ apiBase = getApiBaseUrl(), refreshIntervalMs =
           margin: 1rem;
           border-radius: 0.5rem;
           font-size: 0.85rem;
+        }
+
+        .runtime-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+          gap: 0.75rem;
+          padding: 1rem;
+          border-bottom: 1px solid #1e293b;
+        }
+
+        .runtime-card {
+          border: 1px solid #1e293b;
+          border-radius: 8px;
+          background: #111a2b;
+          padding: 0.85rem;
+          min-width: 0;
+        }
+
+        .runtime-title {
+          margin-bottom: 0.55rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #94a3b8;
+        }
+
+        .runtime-rows {
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+        }
+
+        .runtime-row,
+        .decision-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.75rem;
+          min-width: 0;
+          font-size: 0.78rem;
+          color: #94a3b8;
+        }
+
+        .runtime-row strong,
+        .decision-row span:last-child {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          text-align: right;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 0.74rem;
+          color: #e9edf6;
+        }
+
+        .recent-decisions {
+          margin: 0 1rem 1rem;
+          border: 1px solid #1e293b;
+          border-radius: 8px;
+          background: #020617;
+          padding: 0.85rem;
+        }
+
+        .recent-title {
+          margin-bottom: 0.5rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #94a3b8;
         }
 
         .loading-state, .empty-state {

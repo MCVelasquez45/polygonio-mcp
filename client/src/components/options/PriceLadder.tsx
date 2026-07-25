@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { debugLog } from '../../lib/debugLog';
 import { useLiveQuote, useLiveTrade, useLiveTradeHistory } from '../../lib/liveMarketStore';
 
 // Institutional price ladder (DOM) — the execution surface. A centered price
@@ -12,6 +13,11 @@ const TICK = 0.01;
 const RUNGS_EACH_SIDE = 7;
 const TAPE_ROWS = 8;
 const LIVE_QUOTE_FRESH_MS = 10_000;
+// A quiet contract with a healthy, acknowledged subscription can legitimately
+// go well past LIVE_QUOTE_FRESH_MS between NBBO prints — the last quote is
+// still accurate, not stale. Only fall back to STALE once an actively
+// subscribed contract has gone this long without a print.
+const SUBSCRIBED_QUIET_GRACE_MS = 60_000;
 
 type DepthStatus =
   | 'LIVE'
@@ -20,6 +26,7 @@ type DepthStatus =
   | 'WAITING_FOR_QUOTES'
   | 'DEGRADED'
   | 'PROVIDER_BLOCKED'
+  | 'SUBSCRIPTION_FAILED'
   | 'STALE'
   | 'MARKET_CLOSED'
   | 'OFFLINE';
@@ -44,6 +51,7 @@ type PriceLadderProps = {
   socketConnected: boolean;
   subscriptionActive: boolean;
   providerUnavailable?: boolean;
+  subscriptionFailed?: boolean;
   marketClosed?: boolean;
 };
 
@@ -54,6 +62,7 @@ export const PriceLadder = memo(function PriceLadder({
   socketConnected,
   subscriptionActive,
   providerUnavailable,
+  subscriptionFailed,
   marketClosed,
 }: PriceLadderProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -101,6 +110,11 @@ export const PriceLadder = memo(function PriceLadder({
   const ageMs = rawAgeMs != null ? Math.max(0, rawAgeMs) : null;
   const hasQuote = Boolean(quote);
   const isFresh = ageMs != null && ageMs <= LIVE_QUOTE_FRESH_MS;
+  // An actively subscribed (acknowledged-live) contract that has simply gone
+  // quiet is not stale — the last NBBO printed is still the accurate one.
+  // Only demote to STALE once it's been quiet for much longer than a normal
+  // print gap would ever take.
+  const isQuietButActive = ageMs != null && subscriptionActive && ageMs <= SUBSCRIBED_QUIET_GRACE_MS;
   // Priority: real, fresh quote data always wins. `providerUnavailable` is a
   // subscription-lifecycle flag (set when the backend rejects/errors a
   // live:subscribe) that only ever gets CLEARED by a matching socket event —
@@ -121,23 +135,24 @@ export const PriceLadder = memo(function PriceLadder({
           ? ((statusReason = 'quote.dataMode=snapshot'), 'DEGRADED')
           : hasQuote && isFresh
             ? ((statusReason = `hasQuote=true, ageMs=${ageMs} <= ${LIVE_QUOTE_FRESH_MS}`), 'LIVE')
-            : providerUnavailable
-              ? ((statusReason = 'providerUnavailable=true, no fresh quote to show instead'), 'PROVIDER_BLOCKED')
-              : hasQuote
-                ? marketClosed
-                  ? ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=true`), 'MARKET_CLOSED')
-                  : ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=false`), 'STALE')
-                : subscriptionActive
-                  ? ((statusReason = 'hasQuote=false, subscriptionActive=true — no quote in store for this symbol key'), 'WAITING_FOR_QUOTES')
-                  : ((statusReason = 'hasQuote=false, subscriptionActive=false'), 'CONNECTING');
+            : hasQuote && isQuietButActive
+              ? ((statusReason = `hasQuote=true, ageMs=${ageMs}, subscriptionActive=true (quiet contract, not stale)`), 'LIVE')
+              : !hasQuote && subscriptionFailed
+                ? ((statusReason = 'subscriptionFailed=true — no ack or quote arrived before timeout'), 'SUBSCRIPTION_FAILED')
+                : providerUnavailable
+                  ? ((statusReason = 'providerUnavailable=true, no fresh quote to show instead'), 'PROVIDER_BLOCKED')
+                  : hasQuote
+                    ? marketClosed
+                      ? ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=true`), 'MARKET_CLOSED')
+                      : ((statusReason = `hasQuote=true, ageMs=${ageMs} (stale) marketClosed=false`), 'STALE')
+                    : subscriptionActive
+                    ? ((statusReason = 'hasQuote=false, subscriptionActive=true — no quote in store for this symbol key'), 'WAITING_FOR_QUOTES')
+                    : ((statusReason = 'hasQuote=false, subscriptionActive=false'), 'CONNECTING');
 
   const prevStatusRef = useRef<DepthStatus | null>(null);
   useEffect(() => {
     if (prevStatusRef.current === status) return;
-    // TEMPORARY: production-stabilization debug logging (see sprint task).
-    // eslint-disable-next-line no-console
-    console.debug('[DEPTH_STATE]', {
-      ts: new Date().toISOString(),
+    debugLog('depth', '[DEPTH_STATE]', {
       symbol,
       prevStatus: prevStatusRef.current,
       status,
@@ -153,9 +168,10 @@ export const PriceLadder = memo(function PriceLadder({
       nowMs: now,
       ageMs,
       isFresh,
+      subscriptionFailed,
     });
     prevStatusRef.current = status;
-  }, [status, statusReason, symbol, socketConnected, subscriptionActive, providerUnavailable, marketClosed, hasQuote, quote, now, ageMs, isFresh]);
+  }, [status, statusReason, symbol, socketConnected, subscriptionActive, providerUnavailable, subscriptionFailed, marketClosed, hasQuote, quote, now, ageMs, isFresh]);
   const statusCopy = {
     LIVE: 'Receiving live option quotes.',
     CONNECTING: 'Subscribing to option contracts...',
@@ -163,6 +179,7 @@ export const PriceLadder = memo(function PriceLadder({
     WAITING_FOR_QUOTES: 'Awaiting live option quotes...',
     DEGRADED: quote?.dataMode === 'delayed' ? 'Delayed option quote displayed.' : 'Snapshot option quote displayed.',
     PROVIDER_BLOCKED: 'Live options feed unavailable.',
+    SUBSCRIPTION_FAILED: 'Subscription failed — no response from live feed.',
     STALE: 'Last option quote is stale.',
     MARKET_CLOSED: 'Market closed. Showing last option quote.',
     OFFLINE: 'Options service unavailable.',
@@ -306,6 +323,7 @@ function DepthStatusChip({ status }: { status: DepthStatus }) {
     WAITING_FOR_QUOTES: { dot: 'bg-intel-info', text: 'text-intel-info', label: 'WAITING', pulse: true },
     DEGRADED: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'DEGRADED', pulse: false },
     PROVIDER_BLOCKED: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'BLOCKED', pulse: false },
+    SUBSCRIPTION_FAILED: { dot: 'bg-intel-neg', text: 'text-intel-neg', label: 'SUB FAILED', pulse: false },
     STALE: { dot: 'bg-intel-warn', text: 'text-intel-warn', label: 'STALE', pulse: false },
     MARKET_CLOSED: { dot: 'bg-intel-ink3', text: 'text-intel-ink3', label: 'CLOSED', pulse: false },
     OFFLINE: { dot: 'bg-intel-neg', text: 'text-intel-neg', label: 'OFFLINE', pulse: false },

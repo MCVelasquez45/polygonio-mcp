@@ -9,9 +9,11 @@ import {
 import { getSchedulerStatus } from '../automation/services/schedulerController.service';
 import { getMonitorStatus } from '../automation/services/monitorController.service';
 import { isAutomationReady, getAutomationRuntime } from '../automation/services/sessionRecovery.service';
-import { isBrokerTruthCurrent } from '../automation/services/orderReconciliation.service';
+import { getBrokerStreamHealth, isBrokerTruthCurrent } from '../automation/services/orderReconciliation.service';
 import { buildMarketDataHealthReport } from '../marketData/optionsDataHealth.service';
 import { getAutomationUniverse, getAutomationUniverseRefreshTtlMs } from '../watchlist/automationUniverseProvider.service';
+import { getAiHealthSnapshot } from '../assistant/agentProxy.routes';
+import { getAllDataQualityMetrics } from '../market/services/chartHub/buffer';
 
 // Sprint 2F — /api/system/health. A single composite health surface for every
 // core component. Fast + read-only: it composes in-process signals and last-known
@@ -55,15 +57,17 @@ systemHealthRouter.get('/health', async (_req: Request, res: Response) => {
 
   // Broker + execution (last-known truth; no fresh network call here)
   const adapter = getAutomationRuntime().adapter;
+  const brokerHealth = getBrokerStreamHealth();
   set('broker', adapter ? 'GREEN' : 'YELLOW', adapter ? 'paper adapter resolved' : 'adapter not resolved');
   set('execution', 'GREEN', 'single execution gateway (broker adapter)');
   const truthCurrent = isBrokerTruthCurrent(now);
   set('alpaca', adapter ? (truthCurrent ? 'GREEN' : 'YELLOW') : 'YELLOW', `brokerTruthCurrent=${truthCurrent}`);
 
   // Massive market data + request manager
+  let marketDataReport: ReturnType<typeof buildMarketDataHealthReport> | null = null;
   try {
-    const md = buildMarketDataHealthReport();
-    const rest = (md as any)?.optionsRest?.status ?? 'UNKNOWN';
+    marketDataReport = buildMarketDataHealthReport();
+    const rest = (marketDataReport as any)?.optionsRest?.status ?? 'UNKNOWN';
     set('massive', rest === 'OK' ? 'GREEN' : rest === 'UNKNOWN' ? 'YELLOW' : 'RED', `optionsRest=${rest}`);
   } catch (e: any) {
     set('massive', 'YELLOW', String(e?.message ?? e));
@@ -86,10 +90,95 @@ systemHealthRouter.get('/health', async (_req: Request, res: Response) => {
   }
   set('websocket', 'GREEN', 'shared live feed (single subscription manager per symbol)');
 
+  const chartMetrics = getAllDataQualityMetrics();
+  const latestChartMetric = chartMetrics
+    .slice()
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0] ?? null;
+  const aiHealth = getAiHealthSnapshot();
+  const schedHeartbeatAgeMs = Number.isFinite(schedAge) ? schedAge : null;
+  const monitorHeartbeatAgeMs = Number.isFinite(monAge) ? monAge : null;
+  const heartbeatAgeCandidates = [schedHeartbeatAgeMs, monitorHeartbeatAgeMs].filter(
+    (value): value is number => typeof value === 'number'
+  );
+
   const overall: Level = (Object.values(components).map((c) => c.status).reduce<Level>((worst, s) => (RANK[s] > RANK[worst] ? s : worst), 'GREEN'));
   res.status(overall === 'RED' ? 503 : 200).json({
     status: overall,
     timestamp: new Date(now).toISOString(),
     components,
+    runtime: {
+      backend: {
+        status: overall,
+        pid: process.pid,
+        uptimeSec: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+      },
+      socketIo: {
+        status: 'configured',
+        detail: 'Socket.IO server attached to shared HTTP server',
+      },
+      broker: {
+        adapterResolved: Boolean(adapter),
+        streamState: brokerHealth.state,
+        streamEnabled: brokerHealth.streamEnabled,
+        truthCurrent: brokerHealth.truthCurrent,
+        lastEventAt: brokerHealth.lastEventAt ? brokerHealth.lastEventAt.toISOString() : null,
+        lastRestReconciliationAt: brokerHealth.lastRestReconciliationAt
+          ? brokerHealth.lastRestReconciliationAt.toISOString()
+          : null,
+        unresolvedContradictions: brokerHealth.unresolvedContradictions,
+      },
+      mongo: {
+        readyState: mongoose.connection?.readyState ?? 0,
+        connected: mongoUp,
+        host: mongoose.connection?.host ?? null,
+        name: mongoose.connection?.name ?? null,
+      },
+      market: {
+        queueDepth: q.queueDepth,
+        activeRequests: q.activeRequests,
+        inflightDeduped: q.inflightDeduped,
+        responseCacheEntries: q.responseCacheEntries,
+        pendingRequestsByPriority: marketDataReport?.throttle?.pendingRequestsByPriority ?? {},
+        heartbeatAgeMs: heartbeatAgeCandidates.length ? Math.min(...heartbeatAgeCandidates) : null,
+        lastSnapshotAt: marketDataReport?.underlyingData?.lastUpdate ?? null,
+        lastOptionTickAt: marketDataReport?.lastOptionUpdateAt ?? null,
+        lastOptionTradeAt: marketDataReport?.provider?.optionsWebSocket?.lastTradeAt ?? null,
+      },
+      chart: {
+        activeFeeds: chartMetrics.length,
+        lastSnapshot: latestChartMetric
+          ? {
+              symbol: latestChartMetric.symbol,
+              timeframe: latestChartMetric.timeframe,
+              mode: latestChartMetric.mode,
+              source: latestChartMetric.source,
+              updatedAt: new Date(latestChartMetric.updatedAt).toISOString(),
+              lastUpdateMsAgo: latestChartMetric.lastUpdateMsAgo,
+              lastTimestamp: latestChartMetric.lastTimestamp
+                ? new Date(latestChartMetric.lastTimestamp).toISOString()
+                : null,
+            }
+          : null,
+      },
+      ai: {
+        status: aiHealth.status,
+        agentReachable: aiHealth.agentReachable,
+        openaiConfigured: aiHealth.openaiConfigured,
+        latencyMs: aiHealth.latencyMs,
+        checkedAt: aiHealth.checkedAt,
+        error: aiHealth.error,
+      },
+      automation: {
+        ready: isAutomationReady(),
+        heartbeat: {
+          schedulerAgeMs: schedHeartbeatAgeMs,
+          monitorAgeMs: monitorHeartbeatAgeMs,
+        },
+        scheduler: sched,
+        monitor: mon,
+        recentDecisions: sched.lastTick?.sessions ?? [],
+      },
+    },
   });
 });

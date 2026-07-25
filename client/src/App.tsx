@@ -8,6 +8,9 @@ import {
   publishTrade,
   replaceTradeHistory,
   removeSymbols as removeLiveSymbols,
+  setOptionsSubscriptionActive,
+  markChartActivity,
+  markEquitySnapshot,
 } from './lib/liveMarketStore';
 import type { UTCTimestamp, SeriesMarker } from 'lightweight-charts';
 import { TradingHeader } from './components/layout/TradingHeader';
@@ -16,7 +19,7 @@ import { NavRail } from './components/layout/NavRail';
 import { MobileShell } from './components/layout/MobileShell';
 import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
-import { SystemStatusBar, type ChartTone } from './components/layout/SystemStatusBar';
+import { SystemStatusBar } from './components/layout/SystemStatusBar';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -26,6 +29,7 @@ import { OrderTicketPanel } from './components/trading/OrderTicketPanel';
 import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { PriceLadder } from './components/options/PriceLadder';
 import { ChatDock } from './components/chat/ChatDock';
+import { debugLog } from './lib/debugLog';
 
 // Route-level code splitting: the heavy switchable views load on demand, so the
 // initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
@@ -77,6 +81,10 @@ const SMA_WINDOW = 50;
 const MAX_TRADE_HISTORY = 200;
 const LIVE_STALE_TTL_MS = 60_000;
 const LIVE_HEALTH_CHECK_INTERVAL_MS = 30_000;
+// How long a freshly-selected contract may wait for a subscription ack (or a
+// quote/trade that implies one) before we stop calling it "connecting" and
+// surface an explicit failure instead of silently spinning forever.
+const SUBSCRIPTION_ACK_TIMEOUT_MS = 8_000;
 const LIVE_CHAIN_STRIKE_ROWS = 3;
 const DESK_INSIGHT_DEBOUNCE_MS = 500;
 const DESK_INSIGHT_TTL_MS = 30 * 60 * 1000;
@@ -568,8 +576,19 @@ function App() {
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [liveSubscriptionActive, setLiveSubscriptionActive] = useState(false);
   const [liveSubscriptionUnavailable, setLiveSubscriptionUnavailable] = useState(false);
+  // True only when a contract has been armed for SUBSCRIPTION_ACK_TIMEOUT_MS
+  // with neither a subscribe ack nor a quote/trade for it — a genuine pipe
+  // failure, distinct from "still connecting" or "provider rejected it."
+  const [liveSubscriptionAckTimedOut, setLiveSubscriptionAckTimedOut] = useState(false);
   const liveSocketConnectedRef = useRef(false);
   const liveSubscriptionActiveRef = useRef(false);
+  // Mirror this component's per-contract subscription-ack state into the
+  // shared store so the workspace-level status bar (useSystemStatus, which
+  // has no access to App's local state) can tell "pipe is alive but contract
+  // is quiet" apart from "subscription never came up."
+  useEffect(() => {
+    setOptionsSubscriptionActive(liveSubscriptionActive);
+  }, [liveSubscriptionActive]);
   const marketClosedRef = useRef(false);
   // Tick timestamps are refs, not state: only the fallback logic reads them,
   // and holding them as state re-rendered the whole app on every market tick.
@@ -639,7 +658,7 @@ function App() {
     handleScannerRefresh();
 
     const intervalId = setInterval(() => {
-      console.log('[CLIENT] Auto-triggering scanner refresh...');
+      debugLog('scanner', '[CLIENT] Auto-triggering scanner refresh...', {});
       handleScannerRefresh();
     }, 300000); // 5 minutes
 
@@ -847,7 +866,7 @@ function App() {
       }
     };
     const handleLiveStatus = (payload: any) => {
-      console.debug('[CLIENT] live feed status', payload);
+      debugLog('live', '[CLIENT] live feed status', payload);
       if (payload?.authenticated === true && payload?.lastStatus === 'auth_success') {
         setLiveSubscriptionUnavailable(false);
       }
@@ -889,6 +908,24 @@ function App() {
     // one. The handlers below re-set these as real events arrive.
     setLiveSubscriptionActive(false);
     setLiveSubscriptionUnavailable(false);
+    setLiveSubscriptionAckTimedOut(false);
+
+    const subscribeArmedAt = Date.now();
+    let ackOrQuoteReceived = false;
+    debugLog('live', '[LIVE_LIFECYCLE] contract armed, awaiting subscription ack', { symbol: activeSymbol });
+    // If neither an ack nor a quote/trade shows up in time, the pipe is
+    // genuinely broken for this contract — surface that explicitly instead
+    // of leaving the UI to spin on CONNECTING forever.
+    const ackTimeout = activeSymbol
+      ? window.setTimeout(() => {
+          if (ackOrQuoteReceived) return;
+          debugLog('live', '[LIVE_LIFECYCLE] SUBSCRIPTION_FAILED — no ack or quote before timeout', {
+            symbol: activeSymbol,
+            waitedMs: Date.now() - subscribeArmedAt,
+          });
+          setLiveSubscriptionAckTimedOut(true);
+        }, SUBSCRIPTION_ACK_TIMEOUT_MS)
+      : null;
 
     const resolveSymbol = (payload: any) =>
       typeof payload === 'string' ? payload.toUpperCase() : normalizeLiveSymbol(payload);
@@ -896,13 +933,13 @@ function App() {
     const handleSubscribed = (payload: any) => {
       const ackSymbol = resolveSymbol(payload?.symbol ?? payload?.sym ?? payload);
       const matches = Boolean(ackSymbol && activeSymbol && ackSymbol === activeSymbol);
-      // TEMPORARY: production-stabilization debug logging (see sprint task).
-      // eslint-disable-next-line no-console
-      console.debug('[LIVE_SUBSCRIBE_ACK]', { ts: new Date().toISOString(), activeSymbol, ackSymbol, matches, payload });
+      debugLog('live', '[LIVE_SUBSCRIBE_ACK]', { activeSymbol, ackSymbol, matches, payload });
       if (matches) {
+        ackOrQuoteReceived = true;
         const accepted = payload?.accepted !== false;
         setLiveSubscriptionActive(accepted);
         setLiveSubscriptionUnavailable(!accepted);
+        setLiveSubscriptionAckTimedOut(false);
       }
     };
 
@@ -921,21 +958,22 @@ function App() {
       // re-render. No App state is touched on the hot tick path.
       publishQuote(normalized);
       const matches = Boolean(activeSymbol && normalized.ticker === activeSymbol);
-      // TEMPORARY: production-stabilization debug logging (see sprint task).
-      // eslint-disable-next-line no-console
-      console.debug('[LIVE_QUOTE_RX]', {
-        ts: new Date().toISOString(),
-        activeSymbol,
-        quoteTicker: normalized.ticker,
-        matches,
-        rawSym: payload?.sym ?? payload?.symbol ?? null,
-        dataMode: normalized.dataMode,
-        providerTimestamp: normalized.timestamp,
-      });
       if (matches) {
+        if (!ackOrQuoteReceived) {
+          debugLog('live', '[LIVE_LIFECYCLE] first websocket quote received for active contract', {
+            symbol: activeSymbol,
+            waitedMs: Date.now() - subscribeArmedAt,
+            providerTimestamp: normalized.timestamp,
+            sequenceNumber: normalized.sequenceNumber,
+            source: normalized.source,
+            browserReceivedAt: Date.now(),
+          });
+        }
+        ackOrQuoteReceived = true;
         lastLiveQuoteAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
         setLiveSubscriptionUnavailable(false);
+        setLiveSubscriptionAckTimedOut(false);
       }
     };
 
@@ -945,9 +983,11 @@ function App() {
       if (!normalized.ticker) return;
       publishTrade(normalized);
       if (activeSymbol && normalized.ticker === activeSymbol) {
+        ackOrQuoteReceived = true;
         lastLiveTradeAtRef.current = Date.now();
         setLiveSubscriptionActive(true);
         setLiveSubscriptionUnavailable(false);
+        setLiveSubscriptionAckTimedOut(false);
       }
     };
 
@@ -958,6 +998,7 @@ function App() {
     socket.on('live:trades', handleTrade);
 
     return () => {
+      if (ackTimeout != null) window.clearTimeout(ackTimeout);
       socket.off('live:subscribed', handleSubscribed);
       socket.off('live:unsubscribed', handleUnsubscribed);
       socket.off('live:quote', handleQuote);
@@ -988,6 +1029,11 @@ function App() {
       setMarketSessionMeta(payload.session ?? null);
       setMarketError(null);
       setChartLoading(false);
+      // A chart delivery is a fresh underlying-equity snapshot: stamp both the
+      // chart-feed freshness (drives the Chart badge) and the equity-snapshot
+      // pipeline (drives the Equity Data badge → SNAPSHOT while flowing).
+      markChartActivity(payload.session?.health?.mode ?? null);
+      markEquitySnapshot('snapshot');
     };
 
     const handleUpdate = (payload: ChartUpdatePayload) => {
@@ -1006,6 +1052,8 @@ function App() {
         setMarketSessionMeta((prev: MarketSessionMeta | null) => (prev ? { ...prev, health: payload.health } : prev));
       }
       setChartLoading(false);
+      markChartActivity(payload.health?.mode ?? null);
+      markEquitySnapshot('snapshot');
     };
 
     const handleError = (payload: { message?: string }) => {
@@ -1329,10 +1377,24 @@ function App() {
           setTicker(selection.ticker);
         }
         const normalizedContract = selection?.contract ? selection.contract.toUpperCase() : null;
-        pendingSelectionRef.current.contract = normalizedContract;
-        pendingSelectionRef.current.expiration = selection?.expiration ?? null;
-        if (normalizedContract) {
-          setDesiredContract(normalizedContract);
+        const persistedExpiration =
+          selection?.expiration ?? parseOptionExpirationFromTicker(normalizedContract);
+        const persistedDte = computeExpirationDte(persistedExpiration);
+        if (normalizedContract && persistedDte != null && persistedDte < 0) {
+          // Never restore an expired contract selection — the server also
+          // filters this, but a stale local/session cache from before this
+          // fix could still hand us one.
+          console.warn('[LIVE_LIFECYCLE] discarding expired persisted contract selection', {
+            contract: normalizedContract,
+            expiration: persistedExpiration,
+            dte: persistedDte,
+          });
+        } else {
+          pendingSelectionRef.current.contract = normalizedContract;
+          pendingSelectionRef.current.expiration = selection?.expiration ?? null;
+          if (normalizedContract) {
+            setDesiredContract(normalizedContract);
+          }
         }
       } catch (error) {
         console.warn('Failed to hydrate option selection', error);
@@ -1387,7 +1449,6 @@ function App() {
     let cancelled = false;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     let hasRetried = false;
-    const controller = new AbortController();
     async function loadChain() {
       setChainLoading(true);
       setChainError(null);
@@ -1396,7 +1457,7 @@ function App() {
           ticker: normalizedTicker,
           limit: selectedExpiration ? 200 : 150,
           expiration: selectedExpiration ?? undefined
-        }, controller.signal);
+        });
         if (!cancelled) {
           const groups = Array.isArray(response.expirations) ? response.expirations : [];
           if (!groups.length) {
@@ -1435,6 +1496,10 @@ function App() {
               response?.underlyingPrice ??
               (snapshotTicker === normalizedTicker ? underlyingSnapshotRef.current?.price ?? null : null);
             setChainUnderlyingPrice(fallbackUnderlying);
+            // Underlying price on the chain response is a fresh equity snapshot;
+            // stamp it so the Equity Data badge reads SNAPSHOT immediately on
+            // symbol select, before the first chart socket delivery lands.
+            if (typeof fallbackUnderlying === 'number') markEquitySnapshot('snapshot');
           }
         }
       } catch (error: any) {
@@ -1476,7 +1541,6 @@ function App() {
     loadChain();
     return () => {
       cancelled = true;
-      controller.abort();
       if (retryTimeout) {
         clearTimeout(retryTimeout);
       }
@@ -1519,13 +1583,12 @@ function App() {
       return;
     }
     let cancelled = false;
-    const controller = new AbortController();
     setChainError(null);
     setAvailableExpirations([]);
     setSelectedExpiration(null);
     async function loadExpirations() {
       try {
-        const payload = await marketApi.getOptionExpirations(normalizedTicker, controller.signal);
+        const payload = await marketApi.getOptionExpirations(normalizedTicker);
         if (cancelled) return;
         const expirations = Array.isArray(payload?.expirations) ? payload.expirations : [];
         setAvailableExpirations(expirations);
@@ -1552,7 +1615,6 @@ function App() {
     loadExpirations();
     return () => {
       cancelled = true;
-      controller.abort();
     };
   }, [normalizedTicker, selectionHydrated]);
 
@@ -1564,6 +1626,38 @@ function App() {
     if (selectedLeg?.ticker?.toUpperCase() === desiredContract.toUpperCase()) return;
     const matching = findLegByTicker(chainExpirations, desiredContract);
     if (matching) {
+      const dte = computeExpirationDte(matching.expiration);
+      if (dte != null && dte < 0) {
+        // Reject the expired contract outright — manual re-selection, AI
+        // auto-select, and persisted-selection restore all funnel through
+        // `desiredContract`, so this is the single chokepoint that must
+        // enforce it. Fall back to the nearest valid expiration's best ATM
+        // leg instead of leaving an expired contract selected.
+        console.warn('[LIVE_LIFECYCLE] rejected expired contract selection', {
+          ticker: matching.ticker,
+          expiration: matching.expiration,
+          dte,
+        });
+        pendingSelectionRef.current.contract = null;
+        pendingSelectionRef.current.expiration = null;
+        const validGroups = chainExpirations.filter(group => {
+          const groupDte = group.dte ?? computeExpirationDte(group.expiration);
+          return groupDte == null || groupDte >= 0;
+        });
+        // No underlying-price weighting here (that value isn't computed yet
+        // this early in the component) — delta/spread/OI scoring in
+        // findPreferredLeg is still a reasonable ATM proxy on its own.
+        const fallback = findPreferredLeg(validGroups, null, null, null);
+        selectionSourceRef.current = 'auto';
+        if (fallback) {
+          setSelectedLeg(fallback);
+          setDesiredContract(fallback.ticker.toUpperCase());
+        } else {
+          setSelectedLeg(null);
+          setDesiredContract(null);
+        }
+        return;
+      }
       selectionSourceRef.current = 'auto';
       setSelectedLeg(matching);
       if (pendingSelectionRef.current.contract?.toUpperCase() === desiredContract.toUpperCase()) {
@@ -1600,6 +1694,8 @@ function App() {
     if (selectedLeg?.ticker === desiredContract) return;
     const parsedExpiration = parseOptionExpirationFromTicker(desiredContract);
     if (!parsedExpiration) return;
+    const parsedDte = computeExpirationDte(parsedExpiration);
+    if (parsedDte != null && parsedDte < 0) return; // never follow an expired contract's expiration
     if (selectedExpiration === parsedExpiration) return;
     pendingSelectionRef.current.expiration = parsedExpiration;
     if (!mergedExpirations.includes(parsedExpiration)) {
@@ -1642,10 +1738,9 @@ function App() {
       return;
     }
     let cancelled = false;
-    const controller = new AbortController();
     async function loadSnapshot() {
       try {
-        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker], controller.signal);
+        const payload = await marketApi.getWatchlistSnapshots([normalizedTicker]);
         if (!cancelled) {
           const snapshot = payload.entries?.[0] ?? null;
           setUnderlyingSnapshot(snapshot);
@@ -1662,7 +1757,6 @@ function App() {
     loadSnapshot();
     return () => {
       cancelled = true;
-      controller.abort();
     };
   }, [normalizedTicker]);
 
@@ -1747,11 +1841,10 @@ function App() {
 
     let isMounted = true;
     let structuralFailure = false;
-    const controller = new AbortController();
     const fetchOrders = async () => {
       if (structuralFailure) return;
       try {
-        const { orders } = await getOptionOrdersForPolling({ status: 'filled', limit: 50 }, controller.signal);
+        const { orders } = await getOptionOrdersForPolling({ status: 'filled', limit: 50 });
         if (!isMounted) return;
 
         // Filter and map orders for the current display ticker
@@ -1781,7 +1874,6 @@ function App() {
         if (!isMounted) return;
         const classification = classifyOrderHistoryError(err);
         if (classification === 'canceled') {
-          console.debug('fetchOrders canceled');
           return;
         }
         if (classification === 'legacy-disabled') {
@@ -1798,7 +1890,6 @@ function App() {
           return;
         }
         if (err?.code === 'BACKEND_UNAVAILABLE' || classification === 'network') {
-          console.debug('Order-history polling paused while backend health recovers');
           return;
         }
         console.error('Failed to fetch trade markers:', err);
@@ -1809,7 +1900,6 @@ function App() {
     const interval = setInterval(fetchOrders, 30000); // Poll every 30s
     return () => {
       isMounted = false;
-      controller.abort();
       clearInterval(interval);
     };
   }, [displayTicker, chartDataSymbol]);
@@ -2026,11 +2116,19 @@ function App() {
         ]);
         if (!cancelled) {
           // REST snapshots land in the same live store the socket feeds, so
-          // panels have one source of truth regardless of transport.
+          // panels have one source of truth regardless of transport. Tag the
+          // provenance explicitly (regardless of what the raw payload
+          // carries) so the store's write-guard can identify this as a
+          // snapshot and refuse to let it clobber a newer websocket quote.
           replaceTradeHistory(symbol, (tradesPayload.trades ?? []).slice(0, MAX_TRADE_HISTORY));
-          publishQuote({ ...quotePayload, ticker: symbol });
+          publishQuote({
+            ...quotePayload,
+            ticker: symbol,
+            source: 'rest-snapshot',
+            dataMode: quotePayload.dataMode ?? 'snapshot',
+          });
           if (reason === 'fallback') {
-            console.debug('[CLIENT] fallback snapshot refreshed', { symbol, trades: tradesPayload.trades?.length ?? 0 });
+            debugLog('live', '[CLIENT] fallback snapshot refreshed', { symbol, trades: tradesPayload.trades?.length ?? 0 });
           }
         }
       } catch (error: any) {
@@ -2252,8 +2350,7 @@ function App() {
   }, []);
 
   const handleOrderSubmitted = useCallback((ticker: string, side: string, qty: number, price: number) => {
-    console.log(`[CLIENT] Order confirmed for ${ticker}: ${side} ${qty} at ${price}`);
-    // Future: add to visual journaling history
+    debugLog('orders', '[CLIENT] Order confirmed', { ticker, side, qty, price });
   }, []);
 
   const handleHeaderTickerSubmit = useCallback((value: string) => {
@@ -2687,32 +2784,10 @@ function App() {
       </div>
     ) : null;
 
-  // Chart's own independent status (mirrors ChartPanel's healthLabel derivation)
-  // for the workspace status bar — never contributes to any other domain's state.
-  const chartHealth = marketSessionMeta?.health ?? null;
-  const chartIsStale = (chartHealth?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
-  const chartIsFrozen = chartHealth?.mode === 'FROZEN' || Boolean(marketSessionMeta?.marketClosed);
-  const chartStatusLabel: string = chartIsFrozen
-    ? 'FROZEN'
-    : chartHealth?.mode === 'BACKFILLING'
-      ? 'BACKFILLING'
-      : chartHealth?.mode === 'LIVE' && chartIsStale
-        ? 'STALE'
-        : chartHealth?.mode === 'LIVE'
-          ? 'LIVE'
-          : chartHealth?.source === 'snapshot'
-            ? 'SNAPSHOT'
-            : chartHealth?.source === 'cache'
-              ? 'CACHED'
-              : 'DEGRADED';
-  const chartStatusTone: ChartTone =
-    chartStatusLabel === 'LIVE'
-      ? 'live'
-      : chartStatusLabel === 'SNAPSHOT' || chartStatusLabel === 'CACHED' || chartStatusLabel === 'BACKFILLING'
-        ? 'snapshot'
-        : chartStatusLabel === 'STALE' || chartStatusLabel === 'FROZEN'
-          ? 'stale'
-          : 'stale';
+  // The chart badge now derives from the shared status hook, which keys STALE
+  // off snapshot-DELIVERY freshness (tracked via markChartActivity in the chart
+  // socket handlers) rather than entitlement-limited candle age. The bar only
+  // needs to know whether the market is closed and whether the fetch is erroring.
 
   const chartPanelEl = (
     <ChartPanel
@@ -2810,6 +2885,7 @@ function App() {
           socketConnected={liveSocketConnected}
           subscriptionActive={liveSubscriptionActive}
           providerUnavailable={liveSubscriptionUnavailable}
+          subscriptionFailed={liveSubscriptionAckTimedOut}
           marketClosed={marketSessionMeta?.marketClosed}
         />
       </div>
@@ -3031,7 +3107,7 @@ function App() {
         chatDisabled={!chatAllowed}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
-      <SystemStatusBar chartLabel={chartStatusLabel} chartStatusTone={chartStatusTone} />
+      <SystemStatusBar marketClosed={Boolean(marketSessionMeta?.marketClosed)} chartErrored={Boolean(marketError)} />
       <MarketContextBar />
       {settingsOpen && (
         <div

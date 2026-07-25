@@ -102,6 +102,44 @@ function joinDetails(parts: Array<string | null | undefined>) {
   return filtered.length ? filtered.join(' · ') : null;
 }
 
+type ChartHealthInput = NonNullable<NonNullable<Props['sessionMeta']>['health']>;
+
+export function deriveChartHealthPresentation(args: {
+  health: ChartHealthInput | null;
+  usingLastSession: boolean;
+  resultGranularity: 'intraday' | 'daily' | 'cache';
+  isMarketClosed: boolean;
+}): { label: string; detail: string | null; stale: boolean; frozen: boolean } {
+  const { health, usingLastSession, resultGranularity, isMarketClosed } = args;
+  const healthAge = formatAge(health?.lastUpdateMsAgo ?? null);
+  const snapshotOrRetainedData =
+    Boolean(health && (health.source === 'snapshot' || health.source === 'cache')) ||
+    usingLastSession ||
+    resultGranularity !== 'intraday';
+  const stale = !snapshotOrRetainedData && (health?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
+  const frozen = health?.mode === 'FROZEN' || isMarketClosed;
+  const label =
+    frozen
+      ? 'Frozen'
+      : health?.mode === 'BACKFILLING'
+        ? 'Backfilling'
+        : health?.source === 'snapshot'
+          ? 'Snapshot'
+          : health?.source === 'cache'
+            ? 'Cached'
+            : health?.mode === 'LIVE' && stale
+              ? 'Stale'
+              : health?.mode === 'LIVE'
+                ? 'Live'
+                : 'Degraded';
+  const detail = joinDetails([
+    healthAge ? `${snapshotOrRetainedData ? 'Bar age' : 'Last update'} ${healthAge}` : null,
+    health?.providerThrottled ? 'Rate limited' : null,
+    health?.gapsDetected ? `${health.gapsDetected} gap${health.gapsDetected === 1 ? '' : 's'}` : null,
+  ]);
+  return { label, detail, stale, frozen };
+}
+
 // memo: the chart chrome recomputes ~30 derived values per render; only bar
 // data and its own controls should trigger that, not unrelated app renders.
 export const ChartPanel = memo(function ChartPanel({
@@ -136,28 +174,16 @@ export const ChartPanel = memo(function ChartPanel({
   const usingLastSession = sessionMeta?.usingLastSession ?? false;
   const resultGranularity = sessionMeta?.resultGranularity ?? 'intraday';
   const health = sessionMeta?.health ?? null;
-  const healthAge = formatAge(health?.lastUpdateMsAgo ?? null);
-  const isStale = (health?.lastUpdateMsAgo ?? 0) > 10 * 60 * 1000;
-  const isFrozen = health?.mode === 'FROZEN' || isMarketClosed;
-  const healthLabel =
-    isFrozen
-      ? 'Frozen'
-      : health?.mode === 'BACKFILLING'
-        ? 'Backfilling'
-        : health?.mode === 'LIVE' && isStale
-          ? 'Stale'
-          : health?.mode === 'LIVE'
-            ? 'Live'
-            : health?.source === 'snapshot'
-              ? 'Snapshot'
-              : health?.source === 'cache'
-                ? 'Cached'
-                : 'Degraded';
-  const healthDetail = joinDetails([
-    healthAge ? `Last update ${healthAge}` : null,
-    health?.providerThrottled ? 'Rate limited' : null,
-    health?.gapsDetected ? `${health.gapsDetected} gap${health.gapsDetected === 1 ? '' : 's'}` : null,
-  ]);
+  const healthPresentation = deriveChartHealthPresentation({
+    health,
+    usingLastSession,
+    resultGranularity,
+    isMarketClosed,
+  });
+  const overlayAge = formatAge(health?.lastUpdateMsAgo ?? null);
+  const isFrozen = healthPresentation.frozen;
+  const healthLabel = healthPresentation.label;
+  const healthDetail = healthPresentation.detail;
   const healthTone =
     healthLabel === 'Live'
       ? 'text-intel-pos'
@@ -330,7 +356,7 @@ export const ChartPanel = memo(function ChartPanel({
         )}
         {(isFrozen || usingLastSession) && hasRenderableData && (
           <div className="pointer-events-none absolute left-4 top-4 rounded-md border border-intel-line bg-intel-panel/85 px-2 py-1 font-mono text-[10px] uppercase tracking-label text-intel-ink2">
-            ◐ Snapshot {healthAge ? `· ${healthAge}` : ''}
+            ◐ Snapshot {overlayAge ? `· ${overlayAge}` : ''}
           </div>
         )}
       </div>

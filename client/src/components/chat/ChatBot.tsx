@@ -142,7 +142,11 @@ export function ChatBot({
       }
       setAiStatus('ready');
     } catch (error: any) {
-      setAiStatus('error');
+      // A single failed request does NOT latch the global AI health badge to
+      // ERROR — the failure is surfaced inline in the chat below, and the
+      // operator badge reflects AI *service* reachability (probed separately),
+      // not the outcome of one chat turn. Just clear the busy state.
+      setAiStatus('ready');
       const serverMessage = typeof error?.response?.data?.error === 'string' ? error.response.data.error : null;
       const isMaxTurnError = serverMessage?.includes('Max turns');
       const fallback =

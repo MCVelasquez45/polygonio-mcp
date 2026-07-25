@@ -10,6 +10,16 @@ import { appendMessages } from './services/conversationStore';
 // Handles `/api/chat` requests and persists transcripts for later retrieval.
 
 const router = Router();
+const CHAT_DEBUG = process.env.AI_TRADER_DEBUG_CHAT === 'true' || process.env.DEBUG?.split(',').includes('chat');
+
+function chatDebug(event: string, context: Record<string, unknown>): void {
+  if (!CHAT_DEBUG) return;
+  console.log('[SERVER] chat debug', {
+    timestamp: new Date().toISOString(),
+    event,
+    ...context,
+  });
+}
 
 function normalizeChatSymbol(context: any): string | null {
   const candidates = [
@@ -75,7 +85,7 @@ router.post('/', async (req, res, next) => {
   try {
     const { message, sessionId, context, agentId } = req.body;
     if (typeof message !== 'string' || !message.trim()) {
-      console.log('[SERVER] /api/chat validation failed:', req.body);
+      chatDebug('CHAT_VALIDATION_FAILED', { hasBody: Boolean(req.body) });
       return res.status(400).json({ error: 'message is required' });
     }
 
@@ -85,7 +95,7 @@ router.post('/', async (req, res, next) => {
     const symbol = normalizeChatSymbol(context);
     const agentSessionName = [userKey, symbol, resolvedSessionId].filter(Boolean).join(':');
 
-    console.log('[SERVER] /api/chat forwarding payload:', {
+    chatDebug('CHAT_FORWARDING_PAYLOAD', {
       sessionId: resolvedSessionId,
       symbol,
       agentId: typeof agentId === 'string' ? agentId : null,
@@ -108,7 +118,7 @@ router.post('/', async (req, res, next) => {
             userKey,
             feature: 'assistant.chat'
           });
-    console.log('[SERVER] /api/chat response from agent:', data);
+    chatDebug('CHAT_AGENT_RESPONSE', { sessionId: resolvedSessionId, replyChars: data.reply?.length ?? 0 });
 
     const conversation = await appendMessages(
       resolvedSessionId,

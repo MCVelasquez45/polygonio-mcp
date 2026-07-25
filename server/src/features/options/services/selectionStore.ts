@@ -1,5 +1,7 @@
 import { Collection } from 'mongodb';
 import { getCollection, isMongoReady } from '../../../shared/db/mongo';
+import { expirationFromOptionSymbol } from '../../../shared/symbols/optionSymbol';
+import { isExpiredContract } from '../../../shared/time/tradingCalendar';
 
 // Persists the last per-user option selection so the UI can restore context.
 
@@ -36,7 +38,21 @@ export async function getLatestSelection(userId: string) {
   if (!isMongoReady()) return null;
   await ensureSelectionIndexes();
   const collection = getSelectionCollection();
-  return collection.findOne({ userId });
+  const selection = await collection.findOne({ userId });
+  if (!selection) return null;
+  const expiration = selection.expiration ?? expirationFromOptionSymbol(selection.contract);
+  if (isExpiredContract(expiration, Date.now())) {
+    // Never hand back an expired contract selection — a persisted selection
+    // saved before this contract expired is a stale cached selection, not a
+    // valid one to restore.
+    console.warn('[OptionSelection] discarding expired persisted selection on read', {
+      userId,
+      contract: selection.contract,
+      expiration,
+    });
+    return null;
+  }
+  return selection;
 }
 
 export async function saveSelection(userId: string, payload: Partial<OptionSelectionDocument>) {
@@ -45,6 +61,10 @@ export async function saveSelection(userId: string, payload: Partial<OptionSelec
   }
   if (!payload?.ticker || !payload?.contract) {
     throw new Error('ticker and contract are required');
+  }
+  const expiration = payload.expiration ?? expirationFromOptionSymbol(payload.contract);
+  if (isExpiredContract(expiration, Date.now())) {
+    throw Object.assign(new Error('Cannot persist selection for an expired contract'), { status: 422 });
   }
   if (!isMongoReady()) {
     return { userId, ticker: payload.ticker, contract: payload.contract, updatedAt: new Date() } as OptionSelectionDocument;

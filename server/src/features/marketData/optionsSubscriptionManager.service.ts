@@ -1,6 +1,7 @@
 import { MassiveWsClient, type MassiveWsState } from '../../shared/data/massiveWs';
 import { writeStructuredLog } from '../../shared/logging/safeLogging';
-import { isMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
+import { expirationFromOptionSymbol, isMassiveOptionSymbol } from '../../shared/symbols/optionSymbol';
+import { isExpiredContract } from '../../shared/time/tradingCalendar';
 import { ingestWsQuote, ingestWsTrade } from './optionsQuoteCache.service';
 
 // Single owner of the Massive OPTIONS WebSocket connection and its
@@ -273,6 +274,11 @@ export function acquireOptionSubscription(
   const symbol = rawSymbol.trim().toUpperCase();
   const params = subscriptionParams(symbol, kind);
   if (!isOptionContractSymbol(symbol)) return failure('invalid_option_symbol', params);
+  const expiration = expirationFromOptionSymbol(symbol);
+  if (isExpiredContract(expiration, Date.now())) {
+    console.warn('[OptionsWS] refusing subscription for expired contract', { symbol, expiration });
+    return failure('expired_contract', params);
+  }
   const client = ensureClient();
   if (!client) {
     if (!MASSIVE_WS_KEY) return failure('missing_massive_api_key', params);
@@ -305,6 +311,7 @@ export function acquireOptionSubscription(
       payload: { action: 'subscribe', params },
       authenticated: client.getState().authenticated,
       connected: client.getState().connected,
+      activeContractCount: records.size,
     });
     client.subscribe(params);
   }

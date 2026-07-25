@@ -63,7 +63,7 @@ test('startup initializes the designated options WebSocket owner before subscrip
 });
 
 test('4+5: option subscriptions are refcounted, deduped, and released when idle', async () => {
-  const symbol = 'O:SPY260724C00500000';
+  const symbol = 'O:SPY260821C00500000';
   assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-a').accepted, true);
   assert.equal(manager.acquireOptionSubscription(symbol, 'trades_quotes', 'consumer-b').accepted, true);
   await waitFor(() => optionsFrames.some(f => f.action === 'subscribe'));
@@ -99,7 +99,7 @@ test('6: under options-advanced, a stock live subscription never opens a stocks 
 });
 
 test('option aggregate subscriptions from the live feed go through the shared options connection', async () => {
-  const symbol = 'O:SPY260724C00505000';
+  const symbol = 'O:SPY260821C00505000';
   const before = optionsFrames.filter(f => f.action === 'subscribe').length;
   liveFeed.subscribeAggregateSymbol(symbol);
   await waitFor(() => optionsFrames.filter(f => f.action === 'subscribe').length > before);

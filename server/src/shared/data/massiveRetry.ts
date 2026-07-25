@@ -90,7 +90,18 @@ function retryAfterHeader(error: unknown): unknown {
 /**
  * Whether a Massive request error should be retried, given the attempt index
  * (0-based) and the caller's max retry budget. Retries network timeouts and
- * any status in {@link MASSIVE_RETRYABLE_STATUS} — including 429.
+ * transient 5xx unconditionally.
+ *
+ * A 429 is special: it is a per-minute *endpoint-class quota*, not a transient
+ * per-request fault. Blindly retrying it on the local sub-second exponential
+ * backoff cannot clear the window — it just spends more of the same budget and
+ * deepens the throttle (measured: 429 retries were ~30% of all outbound Massive
+ * volume and every one of them 429'd again). So a bare 429 is NOT retried here;
+ * the REST wrapper already registers a 60s endpoint-class cooldown on each 429
+ * and serves stale cache to callers, which is the correct "back off" response.
+ * The one case where retrying a 429 is appropriate is when the provider itself
+ * tells us when to come back via `Retry-After` — then the wait is
+ * provider-directed (honored in full by resolveMassiveRetryDelayMs) and safe.
  */
 export function isRetryableMassiveError(error: unknown, attempt: number, maxRetries: number): boolean {
   if (attempt >= maxRetries) return false;
@@ -100,6 +111,10 @@ export function isRetryableMassiveError(error: unknown, attempt: number, maxRetr
     return true;
   }
   const status = error.response?.status;
+  if (status === 429) {
+    // Retry a rate-limit only on an explicit provider-directed Retry-After.
+    return parseRetryAfterMs(retryAfterHeader(error)) != null;
+  }
   return typeof status === 'number' && MASSIVE_RETRYABLE_STATUS.has(status);
 }
 

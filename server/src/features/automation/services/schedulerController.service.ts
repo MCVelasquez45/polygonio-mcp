@@ -471,6 +471,7 @@ export function getSchedulerStatus() {
           candidateCount: last.candidateCount,
           submittedCount: last.submittedCount,
           skipReasons: last.skipReasons,
+          sessions: last.sessions,
         }
       : null,
   };

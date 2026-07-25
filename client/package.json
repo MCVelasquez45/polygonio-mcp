@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "lint": "../node_modules/.bin/eslint src e2e --max-warnings=0",
+    "build": "npm run lint && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

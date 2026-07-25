@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors, { type CorsOptions } from 'cors';
+import compression from 'compression';
+import helmet from 'helmet';
 import { createServer } from 'http';
 import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
@@ -59,14 +61,57 @@ import {
   unsubscribeAggregateSymbol
 } from './features/market/services/liveFeed';
 import { initChartHub, registerChartHubHandlers } from './features/market/services/chartHub';
+import { startAgentWarmup, stopAgentWarmup } from './features/assistant/agentClient';
 
 const app = express();
 const corsOrigin = buildCorsOrigin();
 const corsOptions: CorsOptions = {
   origin: corsOrigin,
   credentials: false,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  exposedHeaders: ['X-Request-Id'],
+  optionsSuccessStatus: 204,
 };
+app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: ["'self'", ...buildCspConnectSources()],
+        frameAncestors: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    hsts:
+      process.env.NODE_ENV === 'production'
+        ? {
+            maxAge: 15552000,
+            includeSubDomains: true,
+            preload: false,
+          }
+        : false,
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'no-referrer' },
+  })
+);
+app.use(compression());
 app.use(cors(corsOptions));
+writeStructuredLog({
+  component: 'server',
+  module: 'security',
+  event: 'SECURITY_MIDDLEWARE_CONFIGURED',
+  severity: 'info',
+  context: {
+    helmet: true,
+    compression: true,
+    xPoweredByHidden: true,
+    hstsEnabled: process.env.NODE_ENV === 'production',
+    corsConfigured: true,
+  },
+});
 
 // Proxy: Python Screener Service
 // Must be placed before bodyParser/express.json() to stream requests correctly
@@ -234,6 +279,7 @@ async function start() {
 
   httpServer.listen(PORT, () => {
     console.log(`[SERVER] API listening on :${PORT}`);
+    startAgentWarmup();
     scheduleOptionsStreamOwnerStartup();
   });
 
@@ -312,6 +358,7 @@ async function gracefulShutdown(signal: string) {
     optionsStreamStartupTimer = null;
   }
   shutdownOptionsStream();
+  stopAgentWarmup();
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
   await Promise.all([
@@ -323,12 +370,20 @@ async function gracefulShutdown(signal: string) {
 process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
-start().catch(error => {
-  console.error('[SERVER] Uncaught bootstrap error', error);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== 'test' && process.env.AI_TRADER_NO_BOOTSTRAP !== 'true') {
+  start().catch(error => {
+    writeStructuredLog({
+      component: 'server',
+      module: 'bootstrap',
+      event: 'BOOTSTRAP_UNCAUGHT_ERROR',
+      severity: 'critical',
+      context: { error: serializeErrorForLog(error) },
+    });
+    process.exit(1);
+  });
+}
 
-export { io };
+export { app, io, httpServer };
 
 type MongoConfig = {
   uri: string;
@@ -456,6 +511,30 @@ function buildCorsOrigin(): CorsOriginCallback {
 
     callback(null, false);
   };
+}
+
+function buildCspConnectSources(): string[] {
+  const origins = [
+    ...splitOrigins(process.env.CORS_ORIGINS),
+    ...splitOrigins(process.env.CLIENT_ORIGIN),
+    ...splitOrigins(process.env.FRONTEND_ORIGIN),
+    ...splitOrigins(process.env.VERCEL_FRONTEND_URL),
+  ];
+  if (process.env.NODE_ENV !== 'production') {
+    origins.push('http://localhost:5173', 'http://127.0.0.1:5173');
+  }
+  const sources = new Set<string>();
+  for (const origin of origins) {
+    try {
+      const url = new URL(origin);
+      sources.add(url.origin);
+      const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      sources.add(`${wsProtocol}//${url.host}`);
+    } catch {
+      // Ignore malformed CSP sources; CORS still validates exact origins.
+    }
+  }
+  return Array.from(sources);
 }
 
 function splitOrigins(value: string | undefined): string[] {

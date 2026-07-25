@@ -28,12 +28,21 @@
     "clean": "node dev/commands/clean.mjs",
     "stop": "node dev/commands/stop.mjs",
     "restart": "node dev/commands/restart.mjs",
-    "test:dev": "node --test dev/test/*.test.mjs"
+    "test:dev": "node --test dev/test/*.test.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "build": "npm run lint && npm --prefix server run build && npm --prefix client run build",
+    "prepare": "node scripts/install-precommit-hook.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8.65.0"
   }
 }

@@ -30,11 +30,11 @@ optionsWss.on('connection', socket => {
     optionsFrames.push(payload);
     if (payload.action === 'auth') {
       socket.send(JSON.stringify([{ ev: 'status', status: 'auth_success' }]));
-    } else if (payload.action === 'subscribe' && String(payload.params).includes('O:SPY260724C00520000')) {
+    } else if (payload.action === 'subscribe' && String(payload.params).includes('O:SPY260821C00520000')) {
       socket.send(JSON.stringify([
         {
           ev: 'Q',
-          sym: 'O:SPY260724C00520000',
+          sym: 'O:SPY260821C00520000',
           bp: 1.23,
           ap: 1.27,
           bs: 31,
@@ -44,7 +44,7 @@ optionsWss.on('connection', socket => {
         },
         {
           ev: 'T',
-          sym: 'O:SPY260724C00520000',
+          sym: 'O:SPY260821C00520000',
           p: 1.25,
           s: 4,
           x: 65,
@@ -122,7 +122,7 @@ test('equity live:subscribe is accepted as REST-only under options-only entitlem
 });
 
 test('live:subscribe replays cached option quote to the subscribing socket', async () => {
-  const symbol = 'O:SPY260724C00500000';
+  const symbol = 'O:SPY260821C00500000';
   const providerTimestamp = Date.now() - 250;
   quoteCache.ingestRestQuote({
     symbol,
@@ -164,7 +164,7 @@ test('live:subscribe replays cached option quote to the subscribing socket', asy
 });
 
 test('REST quote cache updates broadcast to existing live subscribers', () => {
-  const symbol = 'O:SPY260724C00510000';
+  const symbol = 'O:SPY260821C00510000';
   const emitted = [];
 
   liveFeed.initLiveFeed({
@@ -193,7 +193,7 @@ test('REST quote cache updates broadcast to existing live subscribers', () => {
 });
 
 test('provider option Q/T events update canonical cache and broadcast once', async () => {
-  const symbol = 'O:SPY260724C00520000';
+  const symbol = 'O:SPY260821C00520000';
   const emitted = [];
   quoteCache.clearQuoteCache();
   quoteCache.resetQuoteCacheListenersForTest();
