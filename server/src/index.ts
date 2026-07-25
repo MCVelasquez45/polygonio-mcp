@@ -51,6 +51,7 @@ import { intelligenceRouter } from './features/intelligence/intelligence.routes'
 import { optionsRouter } from './features/options/options.routes';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
+import { createRequestIdentityMiddleware } from './shared/auth/requestIdentity';
 import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -69,7 +70,14 @@ const corsOptions: CorsOptions = {
   origin: corsOrigin,
   credentials: false,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Request-Id',
+    'X-AI-Trader-Actor-Id',
+    'X-AI-Trader-Account-Id',
+    'X-AI-Trader-Roles',
+  ],
   exposedHeaders: ['X-Request-Id'],
   optionsSuccessStatus: 204,
 };
@@ -113,19 +121,6 @@ writeStructuredLog({
   },
 });
 
-// Proxy: Python Screener Service
-// Must be placed before bodyParser/express.json() to stream requests correctly
-const SCREENER_URL = process.env.SCREENER_URL || 'http://localhost:8001';
-app.use(
-  ['/api/screen', '/api/scan', '/api/lab/backtest', '/api/lab/screener'],
-  createProxyMiddleware({
-    target: SCREENER_URL,
-    changeOrigin: true,
-  })
-);
-
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
-
 type RequestWithContext = express.Request & { requestId?: string };
 
 app.use((req: RequestWithContext, res, next) => {
@@ -147,6 +142,20 @@ app.use((req: RequestWithContext, res, next) => {
   });
   next();
 });
+app.use(createRequestIdentityMiddleware());
+
+// Proxy: Python Screener Service
+// Must be placed before bodyParser/express.json() to stream requests correctly
+const SCREENER_URL = process.env.SCREENER_URL || 'http://localhost:8001';
+app.use(
+  ['/api/screen', '/api/scan', '/api/lab/backtest', '/api/lab/screener'],
+  createProxyMiddleware({
+    target: SCREENER_URL,
+    changeOrigin: true,
+  })
+);
+
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 
 app.get(['/health', '/api/health'], (_req, res) => {
   writeStructuredLog({
