@@ -80,6 +80,12 @@ Some server automation and dev-platform tests bind local ports. In restricted sa
 - Trade Intelligence Reports: `docs/features/trade-intelligence-reports.md`
 - Daily Intelligence Reports: `docs/features/daily-intelligence-reports.md`
 - Decision Journal: `docs/features/decision-journal.md`
+- Decision Intelligence Engine: `docs/decision-engine/README.md`
+- Event Intelligence Engine: `docs/event-intelligence/README.md`
+- Strategy Orchestrator: `docs/strategy-orchestrator/README.md`
+- Enterprise Risk Intelligence Engine: `docs/risk-engine/README.md`
+- Enterprise Trade Lifecycle Manager: `docs/trade-lifecycle/README.md`
+- Autonomous Trading Integration: `docs/autonomous-trading/README.md`
 - Strategy Analytics: `docs/features/strategy-analytics.md`
 
 ## Local Development

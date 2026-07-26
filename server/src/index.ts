@@ -48,7 +48,21 @@ import {
   shutdownOptionsStream,
 } from './features/marketData/optionsSubscriptionManager.service';
 import { intelligenceRouter } from './features/intelligence/intelligence.routes';
+import { decisionEngineRouter, startDecisionEngineScanner, stopDecisionEngineScanner } from './features/decisionEngine';
+import { eventIntelligenceRouter, startEventIntelligenceScanner, stopEventIntelligenceScanner } from './features/eventIntelligence';
+import {
+  strategyOrchestratorRouter,
+  startStrategyOrchestratorScheduler,
+  stopStrategyOrchestratorScheduler,
+} from './features/strategyOrchestrator';
+import { riskEngineRouter, startRiskEngineScheduler, stopRiskEngineScheduler } from './features/riskEngine';
 import { optionsRouter } from './features/options/options.routes';
+import {
+  tradeLifecycleRouter,
+  startTradeLifecycleScheduler,
+  stopTradeLifecycleScheduler,
+} from './features/tradeLifecycle';
+import { autonomousTradingRouter } from './features/autonomousTrading';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { createRequestIdentityMiddleware } from './shared/auth/requestIdentity';
@@ -190,6 +204,12 @@ app.use('/api/system', systemHealthRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
 app.use('/api/intelligence', intelligenceRouter);
+app.use('/api/decision-engine', decisionEngineRouter);
+app.use('/api/event-intelligence', eventIntelligenceRouter);
+app.use('/api/strategy-orchestrator', strategyOrchestratorRouter);
+app.use('/api/risk-engine', riskEngineRouter);
+app.use('/api/trade-lifecycle', tradeLifecycleRouter);
+app.use('/api/autonomous-trading', autonomousTradingRouter);
 
 app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
   writeStructuredLog({
@@ -290,6 +310,10 @@ async function start() {
     console.log(`[SERVER] API listening on :${PORT}`);
     startAgentWarmup();
     scheduleOptionsStreamOwnerStartup();
+    startDecisionEngineScanner();
+    startEventIntelligenceScanner();
+    startStrategyOrchestratorScheduler();
+    startRiskEngineScheduler();
   });
 
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
@@ -312,6 +336,7 @@ async function start() {
         if (adapter) startOrderReconciliationWorker(adapter);
         startAutomationScheduler();
         startMonitorScheduler();
+        startTradeLifecycleScheduler();
       }
     })
     .catch(error => {
@@ -368,6 +393,11 @@ async function gracefulShutdown(signal: string) {
   }
   shutdownOptionsStream();
   stopAgentWarmup();
+  stopDecisionEngineScanner();
+  stopEventIntelligenceScanner();
+  stopStrategyOrchestratorScheduler();
+  stopRiskEngineScheduler();
+  await stopTradeLifecycleScheduler().catch(() => undefined);
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
   await Promise.all([

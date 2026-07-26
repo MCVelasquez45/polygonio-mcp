@@ -33,6 +33,125 @@ vi.mock('../hooks/useAutomationVisibility', () => ({
     refresh: vi.fn(),
   }),
 }));
+vi.mock('../api/decisionEngine', () => ({
+  getLatestDecisionEngineScan: () => Promise.resolve(null),
+}));
+vi.mock('../api/eventIntelligence', () => ({
+  getEventIntelligenceContext: () => Promise.resolve(null),
+}));
+vi.mock('../api/strategyOrchestrator', () => ({
+  getLatestStrategyRecommendation: () => Promise.resolve(null),
+}));
+vi.mock('../api/riskEngine', () => ({
+  getRiskEngineSnapshot: () =>
+    Promise.resolve({
+      status: {
+        enabled: true,
+        approvalRequired: true,
+        latestApprovalId: null,
+        latestStatus: null,
+        pendingRecommendations: 0,
+        portfolioHeat: 0,
+        ruleVersion: 'risk-v1',
+      },
+      portfolio: {
+        portfolioSize: 100000,
+        buyingPower: null,
+        exposure: { sectorExposure: {}, currentOpenTrades: 0, maximumConcurrentTrades: 8 },
+        greeks: { delta: null, gamma: null, theta: null, vega: null, rho: null },
+        riskBudget: { riskConsumed: 0, remainingRiskBudget: 1500, openRisk: 0, maximumOpenRisk: 6000 },
+      },
+      history: [],
+      queue: { pending: [] },
+    }),
+}));
+vi.mock('../api/tradeLifecycle', () => ({
+  getTradeLifecycleStatus: () =>
+    Promise.resolve({
+      generatedAt: new Date().toISOString(),
+      flags: { TRADE_LIFECYCLE_ENABLED: true },
+      aiStatus: 'READY',
+      paperTrading: true,
+      market: 'OPEN',
+      currentStrategy: null,
+      currentRegime: null,
+      nextEvaluation: null,
+      currentDecision: null,
+      counts: {},
+      schedulers: {},
+    }),
+  getTradeLifecycleActive: () => Promise.resolve([]),
+  getTradeLifecyclePending: () => Promise.resolve([]),
+  getTradeLifecycleHistory: () => Promise.resolve([]),
+  getTradeLifecycleTimeline: () => Promise.resolve([]),
+}));
+vi.mock('../api/autonomousTrading', () => ({
+  getAutonomousTradingStatus: () =>
+    Promise.resolve({
+      generatedAt: new Date().toISOString(),
+      status: 'Running',
+      mode: 'Shadow',
+      modeBanner: 'SHADOW MODE - No broker orders will be submitted.',
+      market: 'Open',
+      broker: 'Alpaca Paper',
+      automationOwner: 'Owned',
+      marketData: 'Live',
+      nextEvaluationAt: null,
+      emergencyStop: 'Inactive',
+      watching: ['SPY', 'QQQ'],
+      currentActivity: 'The system is monitoring SPY and QQQ. No current strategy recommendation is available.',
+      latestPipelineId: null,
+      featureFlags: {},
+    }),
+  getAutonomousTradingCurrent: () => Promise.resolve(null),
+  getAutonomousTradingActive: () => Promise.resolve({ trades: [], positions: [] }),
+  getAutonomousTradingPending: () => Promise.resolve({ trades: [], intents: [], current: null }),
+  getAutonomousTradingRecentDecisions: () => Promise.resolve([]),
+  getAutonomousTradingTimeline: () => Promise.resolve([]),
+  getAutonomousTradingHealth: () => Promise.resolve(null),
+}));
+vi.mock('../api/system', () => ({
+  getSystemStatus: () =>
+    Promise.resolve({
+      status: 'RUNNING',
+      generatedAt: new Date().toISOString(),
+      summary: 'System schedulers are running.',
+      system: {
+        mongo: 'CONNECTED',
+        automation: 'READY',
+        scheduler: 'ACTIVE',
+        monitor: 'ACTIVE',
+        brokerTruthCurrent: true,
+        mode: 'Shadow',
+        market: 'Open',
+        emergencyStop: 'Inactive',
+        nextEvaluationAt: null,
+      },
+      components: [],
+    }),
+  getSystemMetrics: () =>
+    Promise.resolve({
+      generatedAt: new Date().toISOString(),
+      process: { uptimeSec: 120, memoryRss: 1, memoryHeapUsed: 1, memoryHeapTotal: 1 },
+      marketData: {
+        queueDepth: 0,
+        activeRequests: 0,
+        inflightDeduped: 0,
+        deduplicatedRequests: 2,
+        responseCacheEntries: 3,
+        chartFeeds: 1,
+      },
+      automation: {
+        schedulerState: 'ACTIVE',
+        monitorState: 'ACTIVE',
+        schedulerLastTickAt: null,
+        monitorLastTickAt: null,
+        schedulerSubmittedCount: 0,
+        schedulerSkipReasons: {},
+      },
+      autonomousTrading: [],
+    }),
+}));
 
 import { parseOcc, contractLabel } from '../components/cockpit/occSymbol';
 import { selectActiveTrade, type CockpitTrade } from '../components/cockpit/cockpitUi';
@@ -74,7 +193,7 @@ describe('CockpitLayout health strip', () => {
     expect(screen.getByText('Automation')).toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
     expect(screen.getByText('Broker')).toBeInTheDocument();
-    expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.getAllByText('Market').length).toBeGreaterThan(0);
     expect(screen.getByText('Open')).toBeInTheDocument();
     expect(screen.getByText('Data')).toBeInTheDocument();
     expect(screen.getAllByText('Connected').length).toBeGreaterThan(1);
