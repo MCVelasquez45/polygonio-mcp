@@ -9,3 +9,4 @@ export * as portfolioApi from './portfolio';
 export * as intelligenceApi from './intelligence';
 export * as tradeLifecycleApi from './tradeLifecycle';
 export * as systemApi from './system';
+export * as learningApi from './learning';

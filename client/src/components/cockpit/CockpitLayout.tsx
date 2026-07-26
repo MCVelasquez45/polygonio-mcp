@@ -6,6 +6,7 @@ import { CockpitWorkspace } from './CockpitWorkspace';
 import { Panel, Pill, selectActiveTrade, statusTone } from './cockpitUi';
 import { statusOrReason } from './cockpitDisplay';
 import { TradeLifecyclePanel } from './TradeLifecyclePanel';
+import { LearningIntelligencePanel } from './LearningIntelligencePanel';
 
 function HealthItem({ label, value, healthy }: { label: string; value: string; healthy: boolean }) {
   return (
@@ -501,6 +502,7 @@ export function CockpitLayout() {
         <RecentActionsPanel events={events} />
       </div>
       <TradeLifecyclePanel />
+      <LearningIntelligencePanel />
     </div>
   );
 }

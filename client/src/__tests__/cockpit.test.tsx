@@ -152,6 +152,25 @@ vi.mock('../api/system', () => ({
       autonomousTrading: [],
     }),
 }));
+vi.mock('../api/learning', () => ({
+  getStatus: () =>
+    Promise.resolve({
+      status: 'CURRENT',
+      generatedAt: new Date().toISOString(),
+      completedTrades: 0,
+      tradeReviews: 0,
+      datasets: 0,
+      pendingReviews: 0,
+      pendingDatasets: 0,
+      latestReviewAt: null,
+      explanation: 'No completed trade reports are available for learning yet.',
+    }),
+  getTrades: () => Promise.resolve([]),
+  getScorecards: () => Promise.resolve([]),
+  getCalibration: () => Promise.resolve([]),
+  getRegimes: () => Promise.resolve([]),
+  getEvents: () => Promise.resolve([]),
+}));
 
 import { parseOcc, contractLabel } from '../components/cockpit/occSymbol';
 import { selectActiveTrade, type CockpitTrade } from '../components/cockpit/cockpitUi';

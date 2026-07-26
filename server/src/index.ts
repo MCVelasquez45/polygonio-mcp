@@ -63,6 +63,7 @@ import {
   stopTradeLifecycleScheduler,
 } from './features/tradeLifecycle';
 import { autonomousTradingRouter } from './features/autonomousTrading';
+import { learningRouter, startLearningScheduler, stopLearningScheduler } from './features/learning';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
 import { createRequestIdentityMiddleware } from './shared/auth/requestIdentity';
@@ -210,6 +211,7 @@ app.use('/api/strategy-orchestrator', strategyOrchestratorRouter);
 app.use('/api/risk-engine', riskEngineRouter);
 app.use('/api/trade-lifecycle', tradeLifecycleRouter);
 app.use('/api/autonomous-trading', autonomousTradingRouter);
+app.use('/api/learning', learningRouter);
 
 app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
   writeStructuredLog({
@@ -314,6 +316,7 @@ async function start() {
     startEventIntelligenceScanner();
     startStrategyOrchestratorScheduler();
     startRiskEngineScheduler();
+    startLearningScheduler();
   });
 
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
@@ -397,6 +400,7 @@ async function gracefulShutdown(signal: string) {
   stopEventIntelligenceScanner();
   stopStrategyOrchestratorScheduler();
   stopRiskEngineScheduler();
+  stopLearningScheduler();
   await stopTradeLifecycleScheduler().catch(() => undefined);
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();

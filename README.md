@@ -86,6 +86,7 @@ Some server automation and dev-platform tests bind local ports. In restricted sa
 - Enterprise Risk Intelligence Engine: `docs/risk-engine/README.md`
 - Enterprise Trade Lifecycle Manager: `docs/trade-lifecycle/README.md`
 - Autonomous Trading Integration: `docs/autonomous-trading/README.md`
+- Enterprise Learning Intelligence: `docs/learning/README.md`
 - Strategy Analytics: `docs/features/strategy-analytics.md`
 
 ## Local Development
