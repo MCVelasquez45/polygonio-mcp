@@ -269,7 +269,7 @@ export function CommandCenterPage({ initial = {}, loadOnMount = true, onOpen }: 
             lastQuoteAt={conn.lastQuoteAt}
             nowMs={now}
           />
-          <ActivityFeed events={events} />
+          <ActivityFeed events={events} operatorOnly title="Operator activity" />
         </div>
       </section>
 

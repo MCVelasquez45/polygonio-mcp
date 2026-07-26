@@ -20,6 +20,7 @@ import { MobileShell } from './components/layout/MobileShell';
 import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
 import { SystemStatusControl } from './components/layout/SystemStatusControl';
+import { DiagnosticsDrawer } from './components/layout/DiagnosticsDrawer';
 import { setActiveSymbol, setActiveContract } from './lib/workspaceContextStore';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
@@ -462,6 +463,7 @@ function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   // Phone companion shell: an entirely separate layout below `md`, not a
   // squeezed workstation. Desktop state (view) is untouched by mobile tabs.
@@ -3182,7 +3184,7 @@ function App() {
       <SystemStatusControl
         marketClosed={Boolean(marketSessionMeta?.marketClosed)}
         chartErrored={Boolean(marketError)}
-        onOpenDiagnostics={() => setView('operations')}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
       />
       <MarketContextBar />
       {settingsOpen && (
@@ -3375,6 +3377,8 @@ function App() {
         onViewChange={setView}
         onTickerSubmit={handleHeaderTickerSubmit}
       />
+
+      <DiagnosticsDrawer open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
 
       <ChatDock
         isOpen={isChatOpen && chatAllowed}

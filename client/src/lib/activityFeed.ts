@@ -42,6 +42,45 @@ export function categorize(event: AutomationVisibilityEvent): ActivityCategory {
 // Repetitive, low-signal events that should be collapsed into a count.
 const GROUPABLE = /(HEARTBEAT|MARK_RECEIVED|EVALUATED|TICK|POLL|NO_SIGNAL|CACHE_)/i;
 
+// Pure engineering telemetry — reconciliation, scheduler, lease, queue, cache.
+// These belong in the Diagnostics drawer, never on the operator's timeline.
+const ENGINEERING = /(HEARTBEAT|RECONCIL|SCHEDULER|LEASE|QUEUE|CACHE_|POLL|TICK|EVALUATED|MARK_RECEIVED|RENEW|DEDUP|SNAPSHOT_TAKEN|WATCHLIST_CACHE)/i;
+
+// Events an operator acts on, even when they'd otherwise look routine. These
+// always stay on the operator timeline regardless of the engineering filter.
+const OPERATOR_SIGNAL =
+  /(FILL|POSITION_OPENED|POSITION_CLOSED|POSITION_FILLED|EXIT|ORDER_SUBMITTED|ORDER_FILLED|CANCEL|RISK_REJECT|RISK_APPROV|RECOMMEND|EMERGENCY|BROKER_DISCONNECT|DATA_STALE|DATA_DEGRADED|SIGNAL_CHANGED|CANDIDATE)/i;
+
+/**
+ * Whether an event belongs on the OPERATOR activity timeline (a trading /
+ * risk / system event a person acts on) rather than in engineering Diagnostics.
+ * Critical severity is always operator-facing; explicit engineering telemetry
+ * is always excluded; otherwise trade/order/risk/error categories qualify.
+ */
+export function isOperatorEvent(event: AutomationVisibilityEvent): boolean {
+  const name = `${event.event ?? ''}`;
+  if ((event.severity ?? '').toLowerCase() === 'critical') return true;
+  if (OPERATOR_SIGNAL.test(name)) return true;
+  if (ENGINEERING.test(name)) return false;
+  const category = categorize(event);
+  return category === 'trades' || category === 'orders' || category === 'risk' || category === 'errors';
+}
+
+/** Split a raw event stream into operator-facing and engineering (diagnostic)
+ *  events without dropping anything — the two arrays partition the input. */
+export function splitOperatorEvents(events: AutomationVisibilityEvent[]): {
+  operator: AutomationVisibilityEvent[];
+  engineering: AutomationVisibilityEvent[];
+} {
+  const operator: AutomationVisibilityEvent[] = [];
+  const engineering: AutomationVisibilityEvent[] = [];
+  for (const event of events) {
+    if (isOperatorEvent(event)) operator.push(event);
+    else engineering.push(event);
+  }
+  return { operator, engineering };
+}
+
 function isGroupable(event: AutomationVisibilityEvent): boolean {
   // Never group anything that failed — errors always stay individual.
   if ((event.severity ?? '').toLowerCase() === 'critical') return false;
