@@ -9,8 +9,10 @@ import {
   type ManualIntent,
 } from '../../api/manualTrading';
 import type { DeskInsight } from '../../api/analysis';
-import type { PortfolioOperations, PortfolioRisk } from '../../api/portfolio';
+import type { OwnedPosition, PortfolioOperations, PortfolioRisk } from '../../api/portfolio';
 import type { WatchlistSnapshot } from '../../types/market';
+import { PositionManagerPanel } from './PositionManagerPanel';
+import { setActivePosition, useActivePosition } from '../../lib/workspaceContextStore';
 import {
   ActionButton,
   AlertBanner,
@@ -274,6 +276,8 @@ function PositionBlotterRow({
   closing,
   closeDisabled,
   onClose,
+  onSelect,
+  selected,
 }: {
   pos: PositionView;
   source: 'AUTO' | 'MANUAL';
@@ -285,6 +289,8 @@ function PositionBlotterRow({
   closing: boolean;
   closeDisabled: boolean;
   onClose: () => void;
+  onSelect: () => void;
+  selected: boolean;
 }) {
   const liveSymbol = toLiveOptionSymbol(pos.symbol);
   useCockpitLiveSubscription(liveSymbol);
@@ -328,7 +334,13 @@ function PositionBlotterRow({
       : entry;
 
   return (
-    <tr className="border-b border-intel-lineSoft font-mono text-xs text-intel-ink2 transition-colors hover:bg-intel-panel2">
+    <tr
+      onClick={onSelect}
+      aria-selected={selected}
+      className={`cursor-pointer border-b border-intel-lineSoft font-mono text-xs text-intel-ink2 transition-colors hover:bg-intel-panel2 ${
+        selected ? 'bg-intel-accentSoft' : ''
+      }`}
+    >
       <td className={`${TD} font-semibold text-intel-ink`}>{pos.symbol}</td>
       <td className={TD}>
         <span className={source === 'AUTO' ? 'text-intel-accent' : 'text-intel-ink2'}>{source}</span>
@@ -370,7 +382,10 @@ function PositionBlotterRow({
         <button
           type="button"
           aria-label={`Close position ${pos.symbol}`}
-          onClick={onClose}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
           disabled={closing || closeDisabled}
           className="rounded border border-intel-neg/40 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-intel-neg transition hover:bg-intel-neg/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -795,6 +810,36 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
     [automationPositions, manualPositions]
   );
 
+  // Symbol -> broker-truth owned position, so selecting a blotter row can pass
+  // the automation positionId (needed by the live snapshot endpoint) and the
+  // attached stop/target onto the shared context bus. No new fetch — this reads
+  // the same operations payload the blotter already renders.
+  const ownedBySymbol = useMemo(() => {
+    const map = new Map<string, OwnedPosition>();
+    const rows = [
+      ...(portfolioOperations?.automationContext?.positionsBySymbol ?? []),
+      ...(portfolioOperations?.manualBrokerActivity?.positions ?? []),
+    ];
+    for (const row of rows) map.set(normalizePositionSymbol(row.symbol), row);
+    return map;
+  }, [portfolioOperations]);
+
+  const activePosition = useActivePosition();
+  const handleSelectPosition = useCallback(
+    (pos: PositionView, source: 'AUTO' | 'MANUAL') => {
+      const owned = ownedBySymbol.get(normalizePositionSymbol(pos.symbol));
+      setActivePosition({
+        id: owned?.automation?.positionId ?? pos.symbol,
+        underlying: getUnderlyingSymbol(pos.symbol),
+        optionSymbol: pos.symbol,
+        source: owned?.source ?? (source === 'AUTO' ? 'AUTOMATION' : 'MANUAL'),
+        stopPrice: owned?.automation?.stopPrice ?? null,
+        targetPrice: owned?.automation?.targetPrice ?? null,
+      });
+    },
+    [ownedBySymbol]
+  );
+
   // Book greeks exposure: Σ greek × signed contracts × 100. Null (shown as em
   // dash) when any open position is missing that greek — a partial sum would
   // misstate the book.
@@ -999,6 +1044,9 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
         )}
       </div>
 
+      {/* POSITION MANAGER — detail for the selected position (context bus) */}
+      <PositionManagerPanel />
+
       {/* POSITIONS BLOTTER */}
       <section className="rounded-panel bg-intel-panel">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-intel-divider px-4 py-2.5">
@@ -1071,6 +1119,8 @@ export function PortfolioPanel({ aiEnabled = true, sentimentEnabled = true, onOp
                     closing={closingSymbol === pos.symbol}
                     closeDisabled={isMarketOpen === false}
                     onClose={() => handleClosePosition(pos)}
+                    onSelect={() => handleSelectPosition(pos, source)}
+                    selected={activePosition?.optionSymbol === pos.symbol}
                   />
                 );
               })}

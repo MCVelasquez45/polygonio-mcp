@@ -21,7 +21,7 @@ import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
 import { SystemStatusControl } from './components/layout/SystemStatusControl';
 import { DiagnosticsDrawer } from './components/layout/DiagnosticsDrawer';
-import { setActiveSymbol, setActiveContract } from './lib/workspaceContextStore';
+import { setActiveSymbol, setActiveContract, useActivePosition, useLinkedMode } from './lib/workspaceContextStore';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -539,6 +539,20 @@ function App() {
   useEffect(() => {
     setActiveContract(selectedLeg);
   }, [selectedLeg]);
+
+  // Linked Mode (Deliverable 4/5): when the operator selects an open position
+  // and Linked Mode is on, re-center the chart underlying and the options matrix
+  // on that position's contract. Uses the existing setters (setTicker /
+  // setDesiredContract) so chart, matrix, Greeks, and AI context all follow —
+  // no new fetch or subscription. When Linked Mode is off, a selection never
+  // interrupts a symbol the operator is researching.
+  const linkedActivePosition = useActivePosition();
+  const linkedMode = useLinkedMode();
+  useEffect(() => {
+    if (!linkedMode || !linkedActivePosition) return;
+    if (linkedActivePosition.underlying) setTicker(linkedActivePosition.underlying);
+    if (linkedActivePosition.optionSymbol) setDesiredContract(linkedActivePosition.optionSymbol);
+  }, [linkedMode, linkedActivePosition]);
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
