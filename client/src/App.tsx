@@ -19,7 +19,8 @@ import { NavRail } from './components/layout/NavRail';
 import { MobileShell } from './components/layout/MobileShell';
 import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
-import { SystemStatusBar } from './components/layout/SystemStatusBar';
+import { SystemStatusControl } from './components/layout/SystemStatusControl';
+import { setActiveSymbol, setActiveContract } from './lib/workspaceContextStore';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -524,6 +525,18 @@ function App() {
   const [desiredContract, setDesiredContract] = useState<string | null>(null);
   const activeContractSymbol = selectedLeg?.ticker ?? null;
   const activeContractSymbolRef = useRef<string | null>(null);
+
+  // Publish the operator's current focus onto the shared workspace context bus
+  // so downstream panels (chart, matrix, Greeks, risk, AI) can subscribe to one
+  // source of truth instead of receiving the same value threaded through props.
+  // This is a thin mirror of existing selection state — it opens no sockets and
+  // fetches nothing, so it can never create a duplicate subscription.
+  useEffect(() => {
+    setActiveSymbol(normalizedTicker);
+  }, [normalizedTicker]);
+  useEffect(() => {
+    setActiveContract(selectedLeg);
+  }, [selectedLeg]);
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
@@ -3166,7 +3179,11 @@ function App() {
         chatDisabled={!chatAllowed}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
-      <SystemStatusBar marketClosed={Boolean(marketSessionMeta?.marketClosed)} chartErrored={Boolean(marketError)} />
+      <SystemStatusControl
+        marketClosed={Boolean(marketSessionMeta?.marketClosed)}
+        chartErrored={Boolean(marketError)}
+        onOpenDiagnostics={() => setView('operations')}
+      />
       <MarketContextBar />
       {settingsOpen && (
         <div
