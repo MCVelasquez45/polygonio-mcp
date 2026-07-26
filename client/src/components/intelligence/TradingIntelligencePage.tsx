@@ -4,6 +4,7 @@ import {
   BookOpenText,
   CalendarDays,
   FileSearch,
+  GraduationCap,
   LayoutDashboard,
   Newspaper,
 } from 'lucide-react';
@@ -13,6 +14,7 @@ import { DecisionJournalPage } from './DecisionJournalPage';
 import { StrategyAnalyticsPage } from './StrategyAnalyticsPage';
 import { TradeReportsPage } from './TradeReportsPage';
 import { TradingSessionsPage } from './TradingSessionsPage';
+import { LearningIntelligencePanel } from '../cockpit/LearningIntelligencePanel';
 import type { IntelligenceView } from './views';
 
 const NAV: Array<{ view: IntelligenceView; label: string; icon: typeof LayoutDashboard }> = [
@@ -21,6 +23,7 @@ const NAV: Array<{ view: IntelligenceView; label: string; icon: typeof LayoutDas
   { view: 'trades', label: 'Trade Reports', icon: FileSearch },
   { view: 'decisions', label: 'Decision Journal', icon: BookOpenText },
   { view: 'analytics', label: 'Strategy Analytics', icon: BarChart3 },
+  { view: 'learning', label: 'Learning', icon: GraduationCap },
   { view: 'sessions', label: 'Sessions', icon: CalendarDays },
 ];
 
@@ -62,6 +65,7 @@ export function TradingIntelligencePage() {
         {view === 'trades' && <TradeReportsPage />}
         {view === 'decisions' && <DecisionJournalPage />}
         {view === 'analytics' && <StrategyAnalyticsPage />}
+        {view === 'learning' && <LearningIntelligencePanel />}
         {view === 'sessions' && <TradingSessionsPage />}
       </div>
     </div>

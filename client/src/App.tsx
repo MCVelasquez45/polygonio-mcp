@@ -21,6 +21,7 @@ import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
 import { SystemStatusControl } from './components/layout/SystemStatusControl';
 import { DiagnosticsDrawer } from './components/layout/DiagnosticsDrawer';
+import { CollapsibleSection } from './components/shared/CollapsibleSection';
 import { setActiveSymbol, setActiveContract, useActivePosition, useLinkedMode } from './lib/workspaceContextStore';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
@@ -2984,22 +2985,26 @@ function App() {
         {deskInsightPanel}
       </div>
       <div className="lg:col-span-2 min-w-0">
-        <GreeksPanel
-          contract={contractDetail}
-          leg={selectedLeg}
-          label={displayTicker}
-          underlyingPrice={greeksUnderlyingPrice}
-          insight={deskInsight}
-          selection={contractSelection}
-          selectionLoading={contractSelectionLoading}
-          onRequestSelection={handleContractSelectionRequest}
-          selectionDisabled={!contractSelectionAllowed}
-          analysisRequestId={contractAnalysisRequestId}
-          analysisDisabled={!contractAnalysisAllowed}
-        />
+        <CollapsibleSection title="Greeks & contract analysis" hint="Advanced">
+          <GreeksPanel
+            contract={contractDetail}
+            leg={selectedLeg}
+            label={displayTicker}
+            underlyingPrice={greeksUnderlyingPrice}
+            insight={deskInsight}
+            selection={contractSelection}
+            selectionLoading={contractSelectionLoading}
+            onRequestSelection={handleContractSelectionRequest}
+            selectionDisabled={!contractSelectionAllowed}
+            analysisRequestId={contractAnalysisRequestId}
+            analysisDisabled={!contractAnalysisAllowed}
+          />
+        </CollapsibleSection>
       </div>
       <div className="lg:col-span-3 min-w-0">
-        {scannerPanelEl}
+        <CollapsibleSection title="Scanner" hint="Watchlist analysis · entry checklist">
+          {scannerPanelEl}
+        </CollapsibleSection>
       </div>
     </div>
   );

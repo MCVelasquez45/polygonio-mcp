@@ -8,6 +8,7 @@ import { Panel, Pill, selectActiveTrade, statusTone } from './cockpitUi';
 import { statusOrReason } from './cockpitDisplay';
 import { TradeLifecyclePanel } from './TradeLifecyclePanel';
 import { LearningIntelligencePanel } from './LearningIntelligencePanel';
+import { CollapsibleSection } from '../shared/CollapsibleSection';
 
 function HealthItem({ label, value, healthy }: { label: string; value: string; healthy: boolean }) {
   return (
@@ -507,11 +508,16 @@ export function CockpitLayout() {
         <DecisionPanel visibility={visibility} />
         <TodayPanel visibility={visibility} />
       </div>
-      <SystemOperationsPanel />
       <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
         <PendingOrdersPanel visibility={visibility} />
         <RecentActionsPanel events={events} />
       </div>
+      {/* Scheduler / monitor / queue telemetry is supervision detail, not a
+          trading decision — collapsed by default so the operator sees strategy,
+          results, and actions first. */}
+      <CollapsibleSection title="Engineering diagnostics" hint="Scheduler · monitor · queue · cache">
+        <SystemOperationsPanel />
+      </CollapsibleSection>
       <TradeLifecyclePanel />
       <LearningIntelligencePanel />
     </div>
