@@ -222,7 +222,7 @@ export function AutonomousTraderPanel() {
 
         <section className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div>
-            <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">Controls and Safety</h4>
+            <h4 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">Controls and Safety (reference)</h4>
             <div className="flex flex-wrap gap-2">
               <ControlHint icon={<Pause className="h-3.5 w-3.5" />} label="Pause Evaluations" />
               <ControlHint icon={<Play className="h-3.5 w-3.5" />} label="Resume Evaluations" />
@@ -231,7 +231,7 @@ export function AutonomousTraderPanel() {
               <ControlHint icon={<XCircle className="h-3.5 w-3.5" />} label="Emergency Stop" />
             </div>
             <p className="mt-2 text-xs text-intel-ink3">
-              Only safe existing automation mutations should be wired here. Live-money controls are not available.
+              These are read-only indicators. Live actions (Pause, Resume, Emergency Stop) are operated from Mission Control at the top of the cockpit. Live-money controls are not available.
             </p>
           </div>
           <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
@@ -328,7 +328,10 @@ function DetailBlock({ title, data }: { title: string; data: Record<string, unkn
 
 function ControlHint({ icon, label }: { icon: ReactNode; label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-intel-panel2 px-2 py-1 text-xs font-semibold text-intel-ink2">
+    <span
+      className="inline-flex cursor-default items-center gap-1.5 rounded-md border border-dashed border-intel-line px-2 py-1 text-xs font-medium text-intel-ink3"
+      aria-disabled="true"
+    >
       {icon}
       {label}
     </span>
