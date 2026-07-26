@@ -39,6 +39,18 @@ import {
   listStrategyAnalytics,
   validateWindowType,
 } from './services/strategyAnalytics.service';
+import {
+  getConfidenceCalibration,
+  getEventPerformance,
+  getFedPerformance,
+  getHistoricalPerformance,
+  getLearningDataset,
+  getMarketRegimePerformance,
+  getOptionsFlowPerformance,
+  getSectorPerformance,
+  getStrategyScorecards,
+  getTradeReview,
+} from './services/learningPerformance.service';
 
 export const intelligenceRouter = Router();
 
@@ -127,6 +139,91 @@ intelligenceRouter.get('/analytics/date/:date', async (req, res) => {
       return;
     }
     res.json({ analytics });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+function limitFromQuery(value: unknown, fallback = 500): number {
+  const parsed = typeof value === 'string' ? Number(value) : fallback;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+intelligenceRouter.get('/learning/trade-review', async (req, res) => {
+  try {
+    res.json(await getTradeReview(limitFromQuery(req.query.limit, 100)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/learning/confidence-calibration', async (req, res) => {
+  try {
+    res.json(await getConfidenceCalibration(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/learning/strategy-scorecards', async (req, res) => {
+  try {
+    res.json(await getStrategyScorecards(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/learning/dataset', async (req, res) => {
+  try {
+    res.json(await getLearningDataset(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/historical', async (req, res) => {
+  try {
+    res.json(await getHistoricalPerformance(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/market-regime', async (req, res) => {
+  try {
+    res.json(await getMarketRegimePerformance(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/event', async (req, res) => {
+  try {
+    res.json(await getEventPerformance(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/sector', async (req, res) => {
+  try {
+    res.json(await getSectorPerformance(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/fed', async (req, res) => {
+  try {
+    res.json(await getFedPerformance(limitFromQuery(req.query.limit)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+intelligenceRouter.get('/performance/options-flow', async (req, res) => {
+  try {
+    res.json(await getOptionsFlowPerformance(limitFromQuery(req.query.limit)));
   } catch (error) {
     sendError(res, error);
   }

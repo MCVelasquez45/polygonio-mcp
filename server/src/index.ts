@@ -48,9 +48,25 @@ import {
   shutdownOptionsStream,
 } from './features/marketData/optionsSubscriptionManager.service';
 import { intelligenceRouter } from './features/intelligence/intelligence.routes';
+import { decisionEngineRouter, startDecisionEngineScanner, stopDecisionEngineScanner } from './features/decisionEngine';
+import { eventIntelligenceRouter, startEventIntelligenceScanner, stopEventIntelligenceScanner } from './features/eventIntelligence';
+import {
+  strategyOrchestratorRouter,
+  startStrategyOrchestratorScheduler,
+  stopStrategyOrchestratorScheduler,
+} from './features/strategyOrchestrator';
+import { riskEngineRouter, startRiskEngineScheduler, stopRiskEngineScheduler } from './features/riskEngine';
 import { optionsRouter } from './features/options/options.routes';
+import {
+  tradeLifecycleRouter,
+  startTradeLifecycleScheduler,
+  stopTradeLifecycleScheduler,
+} from './features/tradeLifecycle';
+import { autonomousTradingRouter } from './features/autonomousTrading';
+import { learningRouter, startLearningScheduler, stopLearningScheduler } from './features/learning';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
 import { initMongo } from './shared/db/mongo';
+import { createRequestIdentityMiddleware } from './shared/auth/requestIdentity';
 import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -69,7 +85,14 @@ const corsOptions: CorsOptions = {
   origin: corsOrigin,
   credentials: false,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Request-Id',
+    'X-AI-Trader-Actor-Id',
+    'X-AI-Trader-Account-Id',
+    'X-AI-Trader-Roles',
+  ],
   exposedHeaders: ['X-Request-Id'],
   optionsSuccessStatus: 204,
 };
@@ -113,19 +136,6 @@ writeStructuredLog({
   },
 });
 
-// Proxy: Python Screener Service
-// Must be placed before bodyParser/express.json() to stream requests correctly
-const SCREENER_URL = process.env.SCREENER_URL || 'http://localhost:8001';
-app.use(
-  ['/api/screen', '/api/scan', '/api/lab/backtest', '/api/lab/screener'],
-  createProxyMiddleware({
-    target: SCREENER_URL,
-    changeOrigin: true,
-  })
-);
-
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
-
 type RequestWithContext = express.Request & { requestId?: string };
 
 app.use((req: RequestWithContext, res, next) => {
@@ -147,6 +157,20 @@ app.use((req: RequestWithContext, res, next) => {
   });
   next();
 });
+app.use(createRequestIdentityMiddleware());
+
+// Proxy: Python Screener Service
+// Must be placed before bodyParser/express.json() to stream requests correctly
+const SCREENER_URL = process.env.SCREENER_URL || 'http://localhost:8001';
+app.use(
+  ['/api/screen', '/api/scan', '/api/lab/backtest', '/api/lab/screener'],
+  createProxyMiddleware({
+    target: SCREENER_URL,
+    changeOrigin: true,
+  })
+);
+
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 
 app.get(['/health', '/api/health'], (_req, res) => {
   writeStructuredLog({
@@ -181,6 +205,13 @@ app.use('/api/system', systemHealthRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/market-data', marketDataRouter);
 app.use('/api/intelligence', intelligenceRouter);
+app.use('/api/decision-engine', decisionEngineRouter);
+app.use('/api/event-intelligence', eventIntelligenceRouter);
+app.use('/api/strategy-orchestrator', strategyOrchestratorRouter);
+app.use('/api/risk-engine', riskEngineRouter);
+app.use('/api/trade-lifecycle', tradeLifecycleRouter);
+app.use('/api/autonomous-trading', autonomousTradingRouter);
+app.use('/api/learning', learningRouter);
 
 app.use((error: any, req: RequestWithContext, res: express.Response, _next: express.NextFunction) => {
   writeStructuredLog({
@@ -281,6 +312,11 @@ async function start() {
     console.log(`[SERVER] API listening on :${PORT}`);
     startAgentWarmup();
     scheduleOptionsStreamOwnerStartup();
+    startDecisionEngineScanner();
+    startEventIntelligenceScanner();
+    startStrategyOrchestratorScheduler();
+    startRiskEngineScheduler();
+    startLearningScheduler();
   });
 
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
@@ -303,6 +339,7 @@ async function start() {
         if (adapter) startOrderReconciliationWorker(adapter);
         startAutomationScheduler();
         startMonitorScheduler();
+        startTradeLifecycleScheduler();
       }
     })
     .catch(error => {
@@ -359,6 +396,12 @@ async function gracefulShutdown(signal: string) {
   }
   shutdownOptionsStream();
   stopAgentWarmup();
+  stopDecisionEngineScanner();
+  stopEventIntelligenceScanner();
+  stopStrategyOrchestratorScheduler();
+  stopRiskEngineScheduler();
+  stopLearningScheduler();
+  await stopTradeLifecycleScheduler().catch(() => undefined);
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();
   await Promise.all([

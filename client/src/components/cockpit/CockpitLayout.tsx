@@ -1,10 +1,13 @@
-import { useCallback, useState } from 'react';
-import { portfolioApi } from '../../api';
+import { useCallback, useEffect, useState } from 'react';
+import { portfolioApi, systemApi } from '../../api';
 import type { AutomationVisibility, AutomationVisibilityEvent } from '../../api/portfolio';
 import { useAutomationVisibility } from '../../hooks/useAutomationVisibility';
+import { trackOperatorEvent } from '../../lib/operatorAnalytics';
 import { CockpitWorkspace } from './CockpitWorkspace';
 import { Panel, Pill, selectActiveTrade, statusTone } from './cockpitUi';
 import { statusOrReason } from './cockpitDisplay';
+import { TradeLifecyclePanel } from './TradeLifecyclePanel';
+import { LearningIntelligencePanel } from './LearningIntelligencePanel';
 
 function HealthItem({ label, value, healthy }: { label: string; value: string; healthy: boolean }) {
   return (
@@ -89,6 +92,9 @@ function MissionControlBar({
       setActionError(null);
       try {
         await fn();
+        if (label === 'resume') trackOperatorEvent('Automation Started', { control: 'resume' });
+        if (label === 'pause') trackOperatorEvent('Automation Stopped', { control: 'pause' });
+        if (label === 'emergency-stop') trackOperatorEvent('Automation Stopped', { control: 'emergency-stop' });
         onActed();
       } catch (err: any) {
         setActionError(err?.response?.data?.error ?? err?.message ?? `${label} failed`);
@@ -297,6 +303,93 @@ function TodayPanel({ visibility }: { visibility: AutomationVisibility | null })
   );
 }
 
+function SystemOperationsPanel() {
+  const [status, setStatus] = useState<systemApi.SystemStatusResponse | null>(null);
+  const [metrics, setMetrics] = useState<systemApi.SystemMetricsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [statusResult, metricsResult] = await Promise.all([
+          systemApi.getSystemStatus(),
+          systemApi.getSystemMetrics(),
+        ]);
+        if (!cancelled) {
+          setStatus(statusResult);
+          setMetrics(metricsResult);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err?.response?.data?.error ?? err?.message ?? 'System status unavailable');
+      }
+    }
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  const components = status?.components ?? [];
+  const blocked = components.filter((component) => component.status === 'BLOCKED');
+  const degraded = components.filter((component) => component.status === 'DEGRADED');
+  return (
+    <Panel
+      title="System Operations"
+      badge={<Pill tone={statusTone(status?.status)}>{status?.status ?? 'Loading'}</Pill>}
+    >
+      {error ? <p className="mb-2 text-xs text-intel-neg">{error}</p> : null}
+      <p className="text-sm leading-6 text-intel-ink2">
+        {status?.summary ?? 'System status is loading.'}
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <SystemMetric label="Eval Loop" value={status?.system.scheduler ?? metrics?.automation.schedulerState} />
+        <SystemMetric label="Monitor" value={status?.system.monitor ?? metrics?.automation.monitorState} />
+        <SystemMetric label="Broker Truth" value={status?.system.brokerTruthCurrent === true ? 'Current' : 'Not current'} />
+        <SystemMetric label="Queue" value={num(metrics?.marketData.queueDepth)} />
+        <SystemMetric label="Deduped" value={num(metrics?.marketData.deduplicatedRequests)} />
+        <SystemMetric label="Cache" value={num(metrics?.marketData.responseCacheEntries)} />
+        <SystemMetric label="Chart Feeds" value={num(metrics?.marketData.chartFeeds)} />
+        <SystemMetric label="Uptime" value={metrics ? `${num(metrics.process.uptimeSec)}s` : '—'} />
+      </div>
+      {(blocked.length > 0 || degraded.length > 0) && (
+        <details
+          className="mt-3 rounded bg-intel-panel2 p-2"
+          onToggle={event => {
+            if (event.currentTarget.open) {
+              trackOperatorEvent('Operator Expanded Advanced Details', { section: 'System Operations Diagnostics' });
+            }
+          }}
+        >
+          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-label text-intel-ink3">
+            Diagnostics
+          </summary>
+          <div className="mt-2 space-y-1 text-xs text-intel-ink2">
+            {[...blocked, ...degraded].slice(0, 8).map((component) => (
+              <div key={component.name} className="flex items-center justify-between gap-3">
+                <span>{component.name}</span>
+                <span className="text-intel-ink3">{component.lastError ?? component.staleReason ?? component.status}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </Panel>
+  );
+}
+
+function SystemMetric({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="min-w-0 rounded bg-intel-panel2 p-2">
+      <div className={MC_LABEL}>{label}</div>
+      <div className="mt-0.5 truncate font-mono text-xs font-semibold text-intel-ink">{value ?? '—'}</div>
+    </div>
+  );
+}
+
 /** Live automation orders at the broker (working entries/exits). */
 function PendingOrdersPanel({ visibility }: { visibility: AutomationVisibility | null }) {
   const orders: any[] = visibility?.pendingOrders ?? [];
@@ -414,10 +507,13 @@ export function CockpitLayout() {
         <DecisionPanel visibility={visibility} />
         <TodayPanel visibility={visibility} />
       </div>
+      <SystemOperationsPanel />
       <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
         <PendingOrdersPanel visibility={visibility} />
         <RecentActionsPanel events={events} />
       </div>
+      <TradeLifecyclePanel />
+      <LearningIntelligencePanel />
     </div>
   );
 }

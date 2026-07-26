@@ -10,7 +10,8 @@ Version 1 is the first verified autonomous trading baseline. It successfully exe
 - Hardened release tag: `v1.0.1-production-hardened`
 - Environment verified: Alpaca paper trading
 - Current development branch: `feature/trading-intelligence-engine`
-- Current release candidate: AI-Trader V3 RC1 / PR #57
+- Current release candidate: AI-Trader Enterprise RC1 / PR #59 (tag `v2.0.0-enterprise`)
+- Enterprise release report: `docs/release/AI_TRADER_ENTERPRISE_RC1.md`
 
 RC1 is a paper-trading release candidate. It is not cleared for live-money deployment.
 
@@ -80,6 +81,14 @@ Some server automation and dev-platform tests bind local ports. In restricted sa
 - Trade Intelligence Reports: `docs/features/trade-intelligence-reports.md`
 - Daily Intelligence Reports: `docs/features/daily-intelligence-reports.md`
 - Decision Journal: `docs/features/decision-journal.md`
+- Decision Intelligence Engine: `docs/decision-engine/README.md`
+- Event Intelligence Engine: `docs/event-intelligence/README.md`
+- Strategy Orchestrator: `docs/strategy-orchestrator/README.md`
+- Enterprise Risk Intelligence Engine: `docs/risk-engine/README.md`
+- Enterprise Trade Lifecycle Manager: `docs/trade-lifecycle/README.md`
+- Autonomous Trading Integration: `docs/autonomous-trading/README.md`
+- Enterprise Learning Intelligence: `docs/learning/README.md`
+- Vercel Frontend Observability: `docs/vercel/README.md`
 - Strategy Analytics: `docs/features/strategy-analytics.md`
 
 ## Local Development

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { trackOperatorEvent } from '../../../lib/operatorAnalytics';
 
 type PanelProps = {
   title: string;
@@ -26,6 +27,13 @@ export function Panel({
 }: PanelProps) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = `panel-${title.replace(/\s+/g, '-').toLowerCase()}`;
+  const toggleOpen = () => {
+    setOpen(current => {
+      const next = !current;
+      if (next) trackOperatorEvent('Operator Expanded Advanced Details', { section: title });
+      return next;
+    });
+  };
 
   const header = (
     <>
@@ -56,7 +64,7 @@ export function Panel({
     <section className="rounded-panel border border-intel-line bg-intel-panel">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={toggleOpen}
         aria-expanded={open}
         aria-controls={bodyId}
         className="flex w-full items-center gap-2 px-4 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-intel-accent"

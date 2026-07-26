@@ -6,6 +6,11 @@ import { AutomationThinkingPanel } from './AutomationThinkingPanel';
 import { OperatorActions } from './OperatorActions';
 import { MarketContextPanel } from './MarketContextPanel';
 import { OpportunityPanel } from './OpportunityPanel';
+import { DecisionIntelligencePanel } from './DecisionIntelligencePanel';
+import { EventIntelligencePanel } from './EventIntelligencePanel';
+import { StrategyOrchestratorPanel } from './StrategyOrchestratorPanel';
+import { RiskEnginePanel } from './RiskEnginePanel';
+import { AutonomousTraderPanel } from './AutonomousTraderPanel';
 import { type CockpitTrade } from './cockpitUi';
 import { useContractGreeks } from '../../hooks/useContractGreeks';
 import { useCockpitQuote } from './cockpitQuote';
@@ -30,6 +35,7 @@ export function CockpitWorkspace({
 
   return (
     <div data-testid="cockpit-workspace" className="flex min-w-0 flex-col gap-3">
+      <AutonomousTraderPanel />
       <CockpitCommandBar
         trade={trade}
         quote={quote}
@@ -52,6 +58,10 @@ export function CockpitWorkspace({
         <MarketContextPanel trade={trade} />
         <OpportunityPanel trade={trade} />
       </div>
+      <DecisionIntelligencePanel />
+      <EventIntelligencePanel />
+      <StrategyOrchestratorPanel />
+      <RiskEnginePanel />
     </div>
   );
 }

@@ -68,3 +68,25 @@ test('system health exposes additive runtime telemetry fields', async () => {
     await closeServer(routeServer.server);
   }
 });
+
+test('system status and metrics expose read-only operations summaries', async () => {
+  const routeServer = await startServer(app);
+  try {
+    const [statusResponse, metricsResponse] = await Promise.all([
+      fetch(`http://127.0.0.1:${routeServer.port}/api/system/status`),
+      fetch(`http://127.0.0.1:${routeServer.port}/api/system/metrics`),
+    ]);
+    assert.ok([200, 503].includes(statusResponse.status));
+    assert.equal(metricsResponse.status, 200);
+    const status = await statusResponse.json();
+    const metrics = await metricsResponse.json();
+    assert.equal(typeof status.generatedAt, 'string');
+    assert.ok(['RUNNING', 'DEGRADED', 'BLOCKED', 'STOPPED'].includes(status.status));
+    assert.ok('brokerTruthCurrent' in status.system);
+    assert.equal(typeof metrics.marketData.queueDepth, 'number');
+    assert.equal(typeof metrics.process.uptimeSec, 'number');
+    assert.ok(Array.isArray(metrics.autonomousTrading));
+  } finally {
+    await closeServer(routeServer.server);
+  }
+});

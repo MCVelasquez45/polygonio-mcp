@@ -3,6 +3,7 @@ import { Download, RefreshCw, Search } from 'lucide-react';
 import { portfolioApi } from '../../api';
 import type { AutomationVisibility, AutomationVisibilityEvent } from '../../api/portfolio';
 import { getSharedSocket } from '../../lib/socket';
+import { trackOperatorEvent } from '../../lib/operatorAnalytics';
 
 type LogFilter = 'All' | 'Scheduler' | 'Monitor' | 'Broker' | 'Risk' | 'Signals' | 'Orders' | 'Positions' | 'Errors';
 
@@ -206,6 +207,9 @@ export function AutomationCommandCenter() {
       setBusy(label);
       try {
         await fn();
+        if (label === 'resume') trackOperatorEvent('Automation Started', { control: 'resume' });
+        if (label === 'pause') trackOperatorEvent('Automation Stopped', { control: 'pause' });
+        if (label === 'emergency-stop') trackOperatorEvent('Automation Stopped', { control: 'emergency-stop' });
         await loadSnapshot();
       } catch (err: any) {
         setError(err?.response?.data?.error ?? err?.message ?? `${label} failed`);
