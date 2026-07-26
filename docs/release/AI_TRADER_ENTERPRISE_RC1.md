@@ -27,8 +27,8 @@ to the single existing Execution Gateway.
 Validation: `lint` ✅ · `build` ✅ · server tests **460/460** ✅ · client tests
 **144/144** ✅ · CI (Vercel + build-test) ✅.
 
-Recommendation: **READY TO MERGE** for a controlled paper/shadow production
-release, contingent on the documented deployment configuration.
+Outcome: **MERGED to `main` (PR #59), tagged `v2.0.0-enterprise`, deployed, and
+verified PRODUCTION STABLE** (see §13–§15).
 
 ## 2. Architecture summary
 
@@ -188,10 +188,11 @@ risk-gated lanes; AI/autonomous/shadow have no broker access; legacy direct
 route fail-closed (410); duplicate-order protection + broker-truth freshness
 enforced; manual and autonomous ownership separated.
 
-### MongoDB — ⏳ verified in production post-deploy
-`MONGO_OPTIONAL=false` on the durable-state backend so a DB outage fails health
-loudly. Startup drops a stale `strategyversions` index and ensures market-cache
-indexes.
+### MongoDB — ✅ verified in production
+Production `/api/system/status` reports `mongo: CONNECTED` with `automation:
+READY`. Startup drops a stale `strategyversions` index and ensures market-cache
+indexes. Recommendation stands to set `MONGO_OPTIONAL=false` on the durable-state
+backend so a DB outage fails health loudly rather than serving DB-less.
 
 ## 9. Shadow Mode readiness — ✅
 
@@ -227,31 +228,59 @@ recorded post-deploy.
 - `aggregatesWorker` interval lacks a shutdown stop (default-off worker).
 - No committed `render.yaml` (infra dashboard-managed).
 
-## 13. Production verification  ⏳ (completed post-deploy)
+## 13. Production verification  ✅ (completed 2026-07-26 ~03:12–03:20 UTC)
+
+Deploy signal: the new `/api/system/status` route flipped 404 → live after merge,
+confirming the new backend rolled over; `/health` stayed 200 throughout (Render
+zero-downtime, no outage).
 
 | Check | Result |
 |---|---|
-| Backend `/health`, `/api/health` | ⏳ |
-| `/api/system/status`, `/api/system/metrics` | ⏳ |
-| Autonomous / decision / event / strategy / risk / lifecycle / learning status | ⏳ |
-| Frontend loads; Analytics + Speed Insights present | ⏳ |
-| Same-origin `/api` routing; no backend URL in bundle | ⏳ |
-| Massive market-status reachable in prod | ⏳ |
-| Alpaca paper account reachable; live mode impossible | ⏳ |
-| MongoDB connected; automation reconciliation clean | ⏳ |
-| Stability window (no crash loop / rate-limit loop / restart) | ⏳ |
+| Backend `/health`, `/api/health` | ✅ 200 |
+| `/api/system/status` | ✅ 503 by design (idle advisory scanners; see note) |
+| `/api/system/metrics` | ✅ 200 |
+| Autonomous status/health, event/strategy/risk/lifecycle/learning status | ✅ 200 |
+| `/api/decision-engine/latest` | ✅ 404 by design ("no journaled scan yet") |
+| **No 500 across the new endpoint surface** | ✅ |
+| Frontend loads | ✅ 200 |
+| Vercel Analytics + Speed Insights runtime scripts served | ✅ `/_vercel/insights/script.js` 200, `/_vercel/speed-insights/script.js` 200 |
+| Same-origin `/api` routing; no backend/localhost origin in bundle | ✅ frontend `/api/health` 200; `onrender.com`/`localhost:4000` count = 0 in bundle |
+| Massive REST / Options WS / Stocks WS | ✅ all HEALTHY |
+| Alpaca paper account reachable; live mode impossible | ✅ `/api/broker/account` 200, ACTIVE, paper-scale balances; hard paper guard active |
+| MongoDB connected; automation READY | ✅ `mongo: CONNECTED`, `automation: READY`, scheduler/monitor ACTIVE, broker-truth current |
+| Stability window (~7.5 min) | ✅ uptime monotonic 194→447s (no restart), RSS flat ~117–122 MB, scheduler `[ACTIVE ACTIVE]`, no crash/rate-limit loop |
 
-## 14. Release artifacts  ⏳
+> **On the `503`/`BLOCKED` system-status rollup:** this is the route's *designed*
+> response when the advisory intelligence scanners (Decision/Event/Strategy/Risk)
+> report no recent run. They are intentionally **auto-start OFF** per the release
+> safety posture, so the rollup is BLOCKED while the core platform (Mongo,
+> automation engine, schedulers, Massive feeds, broker truth) is fully healthy.
+> The Render liveness probe is `/health` (200), so this does not affect the
+> deployment. Enabling the scanners is a post-release operational decision, not a
+> release fix — doing so here would violate the inert-by-default safety boundary.
 
-- Final merge SHA: ⏳
-- Release tag: `v2.0.0-enterprise` ⏳
-- Render backend deployment: ⏳ (no authenticated Render tooling in CI env)
-- Render agent deployment: ⏳
-- Vercel deployment: ⏳ (no authenticated Vercel tooling in CI env)
+## 14. Release artifacts
+
+- Final merge SHA: **`d48788ad8b0febefbbd7643865da3daeb8ed93c6`** (PR #59, merged 2026-07-26T03:10:42Z)
+- Release tag: **`v2.0.0-enterprise`** → `d48788a` (annotated tag `72aa301`)
+- Vercel deployment: GitHub deployment `5606891714`, environment Production, SHA
+  `d48788a` — status **success** (project deployment `28DkUhwbCGmDCBtuH5MeKc7HDyNw`)
+- Render backend deployment: verified **via HTTP** (new `/api/system/status`
+  route live; `/health` 200; process uptime continuous). Render posts no GitHub
+  status and no authenticated Render tooling is available in this environment, so
+  the internal Render deployment ID could not be captured programmatically.
+- Render agent deployment: agent `/health` reachable; internal deployment ID not
+  obtainable via available tooling (same limitation).
 - Production URLs: frontend `https://polygonio-mcp-beryl.vercel.app` · backend
   `https://polygonio-backend.onrender.com`
 
-## 15. Final recommendation  ⏳
+## 15. Final recommendation — ✅ PRODUCTION STABLE
 
-To be finalized after production verification: **READY TO MERGE** →
-**PRODUCTION STABLE** upon green post-deploy checks, else rollback per §11.
+PR #59 is merged to `main`, tagged `v2.0.0-enterprise`, and deployed. The
+frontend (Vercel) and backend (Render) are live and healthy; MongoDB is
+connected; Massive feeds are healthy; Alpaca paper is reachable with live-money
+structurally blocked; autonomous trading runs in shadow with all enterprise
+schedulers inert by default; no 500s; the process is stable across the
+observation window. No rollback required. Residual items are the documented
+BEST_EFFORT Massive sources and tracked pre-existing tech debt (§12) — none
+production-blocking.
