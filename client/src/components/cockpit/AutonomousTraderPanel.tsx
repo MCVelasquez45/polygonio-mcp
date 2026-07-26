@@ -16,6 +16,7 @@ import {
   type AutonomousRecentDecision,
   type AutonomousTimelineEvent,
 } from '../../api/autonomousTrading';
+import { trackOperatorEvent, trackOperatorEventOnce } from '../../lib/operatorAnalytics';
 import { Panel, Pill } from './cockpitUi';
 
 type Snapshot = {
@@ -100,6 +101,12 @@ export function AutonomousTraderPanel() {
   const current = snapshot.current;
   const pendingCurrent = snapshot.pending.current;
   const activeTrades = snapshot.active.trades;
+
+  useEffect(() => {
+    const mode = status?.mode?.toUpperCase();
+    if (mode === 'SHADOW') trackOperatorEventOnce('Shadow Mode Enabled');
+    if (mode === 'AUTONOMOUS PAPER' || mode === 'AUTONOMOUS_PAPER') trackOperatorEventOnce('Paper Mode Enabled');
+  }, [status?.mode]);
 
   return (
     <Panel
@@ -191,7 +198,15 @@ export function AutonomousTraderPanel() {
           </FeedPanel>
         </section>
 
-        <details className="group rounded-md bg-intel-panel2 p-3" data-testid="autonomous-details">
+        <details
+          className="group rounded-md bg-intel-panel2 p-3"
+          data-testid="autonomous-details"
+          onToggle={event => {
+            if (event.currentTarget.open) {
+              trackOperatorEvent('Operator Expanded Advanced Details', { section: 'Autonomous Trader' });
+            }
+          }}
+        >
           <summary className="cursor-pointer font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">
             Expandable Intelligence Details
           </summary>

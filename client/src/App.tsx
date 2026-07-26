@@ -64,6 +64,7 @@ import type {
 import type { ChecklistResult, DeskInsight, WatchlistReport, ContractSelectionResult } from './api/analysis';
 import type { ChatContext, ChatMessage, ConversationMeta, ConversationPayload, ConversationResponse } from './types';
 import { acquireLiveMarketSubscription } from './hooks/useCockpitLiveSubscription';
+import { trackOperatorEventOnce } from './lib/operatorAnalytics';
 
 // Map timeframe choices in the UI to the aggregate query parameters expected by the API.
 const TIMEFRAME_MAP = {
@@ -467,6 +468,29 @@ function App() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('trade');
   const [agentLaunch, setAgentLaunch] = useState<{ agentId: string; label: string; nonce: number } | null>(null);
 
+  useEffect(() => {
+    trackOperatorEventOnce('Application Loaded');
+  }, []);
+
+  useEffect(() => {
+    if (view === 'cockpit') {
+      trackOperatorEventOnce('Automation Viewed', { surface: 'desktop' });
+      trackOperatorEventOnce('Cockpit Viewed', { surface: 'desktop' });
+    }
+    if (view === 'intelligence') {
+      trackOperatorEventOnce('Reports Viewed', { surface: 'desktop' });
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (mobileTab === 'ai') trackOperatorEventOnce('AI Desk Viewed', { surface: 'mobile' });
+    if (mobileTab === 'cockpit') {
+      trackOperatorEventOnce('Automation Viewed', { surface: 'mobile' });
+      trackOperatorEventOnce('Cockpit Viewed', { surface: 'mobile' });
+    }
+  }, [isMobile, mobileTab]);
+
   // Keyboard-first navigation: ⌘K / Ctrl-K toggles the command palette from
   // anywhere in the workstation.
   useEffect(() => {
@@ -553,6 +577,12 @@ function App() {
   const scannerAllowed = aiEnabled && aiScannerEnabled;
   const chatAllowed = aiEnabled && aiChatEnabled;
   const chartAnalysisAllowed = aiEnabled && aiChartAnalysisEnabled;
+
+  useEffect(() => {
+    if (isChatOpen && chatAllowed) {
+      trackOperatorEventOnce('AI Desk Viewed', { surface: 'desktop' });
+    }
+  }, [chatAllowed, isChatOpen]);
   const useRegularHours = chartSessionMode === 'regular';
   const transcriptsRef = useRef<Record<string, ChatMessage[]>>(transcripts);
   const activeConversationIdRef = useRef<string | null>(activeConversationId);

@@ -10,6 +10,7 @@ import {
   type TradeLifecycleRecord,
   type TradeLifecycleStatus,
 } from '../../api/tradeLifecycle';
+import { trackOperatorEventOnce } from '../../lib/operatorAnalytics';
 import { Panel, Pill, statusTone } from './cockpitUi';
 
 function clock(value?: string | null): string {
@@ -128,6 +129,10 @@ export function TradeLifecyclePanel() {
   const [history, setHistory] = useState<TradeLifecycleRecord[]>([]);
   const [timeline, setTimeline] = useState<TradeLifecycleEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    trackOperatorEventOnce('Trade Lifecycle Viewed');
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

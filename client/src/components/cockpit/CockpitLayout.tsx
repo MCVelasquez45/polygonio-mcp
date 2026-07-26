@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { portfolioApi, systemApi } from '../../api';
 import type { AutomationVisibility, AutomationVisibilityEvent } from '../../api/portfolio';
 import { useAutomationVisibility } from '../../hooks/useAutomationVisibility';
+import { trackOperatorEvent } from '../../lib/operatorAnalytics';
 import { CockpitWorkspace } from './CockpitWorkspace';
 import { Panel, Pill, selectActiveTrade, statusTone } from './cockpitUi';
 import { statusOrReason } from './cockpitDisplay';
@@ -91,6 +92,9 @@ function MissionControlBar({
       setActionError(null);
       try {
         await fn();
+        if (label === 'resume') trackOperatorEvent('Automation Started', { control: 'resume' });
+        if (label === 'pause') trackOperatorEvent('Automation Stopped', { control: 'pause' });
+        if (label === 'emergency-stop') trackOperatorEvent('Automation Stopped', { control: 'emergency-stop' });
         onActed();
       } catch (err: any) {
         setActionError(err?.response?.data?.error ?? err?.message ?? `${label} failed`);
@@ -352,7 +356,14 @@ function SystemOperationsPanel() {
         <SystemMetric label="Uptime" value={metrics ? `${num(metrics.process.uptimeSec)}s` : '—'} />
       </div>
       {(blocked.length > 0 || degraded.length > 0) && (
-        <details className="mt-3 rounded bg-intel-panel2 p-2">
+        <details
+          className="mt-3 rounded bg-intel-panel2 p-2"
+          onToggle={event => {
+            if (event.currentTarget.open) {
+              trackOperatorEvent('Operator Expanded Advanced Details', { section: 'System Operations Diagnostics' });
+            }
+          }}
+        >
           <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-label text-intel-ink3">
             Diagnostics
           </summary>

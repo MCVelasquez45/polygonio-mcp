@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Network } from 'lucide-react';
 import { getLatestStrategyRecommendation, type StrategyOrchestratorRun } from '../../api/strategyOrchestrator';
 import { fmtPercent } from '../../lib/marketFormat';
+import { trackOperatorEventOnce } from '../../lib/operatorAnalytics';
 import { Panel, Pill, Stat } from './cockpitUi';
 
 function toneForAction(action: string): 'good' | 'warn' | 'bad' | 'neutral' {
@@ -14,6 +15,10 @@ function toneForAction(action: string): 'good' | 'warn' | 'bad' | 'neutral' {
 export function StrategyOrchestratorPanel() {
   const [run, setRun] = useState<StrategyOrchestratorRun | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+
+  useEffect(() => {
+    trackOperatorEventOnce('Strategy Viewed');
+  }, []);
 
   useEffect(() => {
     let active = true;

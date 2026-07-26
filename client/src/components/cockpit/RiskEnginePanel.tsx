@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { getRiskEngineSnapshot, type RiskEngineSnapshot } from '../../api/riskEngine';
 import { fmtMoney, fmtPercent } from '../../lib/marketFormat';
+import { trackOperatorEventOnce } from '../../lib/operatorAnalytics';
 import { Panel, Pill, Stat } from './cockpitUi';
 
 function tone(status: string | null): 'good' | 'warn' | 'bad' | 'neutral' {
@@ -13,6 +14,10 @@ function tone(status: string | null): 'good' | 'warn' | 'bad' | 'neutral' {
 export function RiskEnginePanel() {
   const [snapshot, setSnapshot] = useState<RiskEngineSnapshot | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    trackOperatorEventOnce('Risk Viewed');
+  }, []);
 
   useEffect(() => {
     let active = true;
