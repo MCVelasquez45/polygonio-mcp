@@ -105,7 +105,9 @@ Required backend environment:
 - `ALPACA_OPTION_FEED`
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
-- `AUTH_JWT_SECRET`
+- `AI_TRADER_AUTH_ENFORCEMENT` (staged auth foundation; defaults to `observe`. The
+  earlier `AUTH_JWT_SECRET` name was never read in code and has been removed —
+  see `docs/release/AI_TRADER_ENTERPRISE_RC1.md` and `server/.env.example`.)
 
 Safe autonomous defaults:
 

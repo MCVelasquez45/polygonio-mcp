@@ -10,7 +10,8 @@ Version 1 is the first verified autonomous trading baseline. It successfully exe
 - Hardened release tag: `v1.0.1-production-hardened`
 - Environment verified: Alpaca paper trading
 - Current development branch: `feature/trading-intelligence-engine`
-- Current release candidate: AI-Trader V3 RC1 / PR #57
+- Current release candidate: AI-Trader Enterprise RC1 / PR #59 (tag `v2.0.0-enterprise`)
+- Enterprise release report: `docs/release/AI_TRADER_ENTERPRISE_RC1.md`
 
 RC1 is a paper-trading release candidate. It is not cleared for live-money deployment.
 

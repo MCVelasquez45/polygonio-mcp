@@ -4,6 +4,7 @@ This index defines the canonical documentation hierarchy for AI-Trader after the
 
 ## Canonical Hierarchy
 
+0. Enterprise release candidate (v2.0.0-enterprise): `docs/release/AI_TRADER_ENTERPRISE_RC1.md`
 1. Production certification: `docs/release/PRODUCTION_CERTIFICATION.md`
 2. Enterprise baseline: `docs/release/ENTERPRISE_BASELINE.md`
 3. Enterprise readiness audit: `docs/audits/ENTERPRISE_STRATEGY_ENGINE_READINESS_AUDIT.md`
