@@ -14,6 +14,7 @@ import { buildMarketDataHealthReport } from '../marketData/optionsDataHealth.ser
 import { getAutomationUniverse, getAutomationUniverseRefreshTtlMs } from '../watchlist/automationUniverseProvider.service';
 import { getAiHealthSnapshot } from '../assistant/agentProxy.routes';
 import { getAllDataQualityMetrics } from '../market/services/chartHub/buffer';
+import { getAutonomousHealth, getAutonomousMetrics, getAutonomousStatus } from '../autonomousTrading/coordinator/autonomousCoordinator.service';
 
 // Sprint 2F — /api/system/health. A single composite health surface for every
 // core component. Fast + read-only: it composes in-process signals and last-known
@@ -180,5 +181,84 @@ systemHealthRouter.get('/health', async (_req: Request, res: Response) => {
         recentDecisions: sched.lastTick?.sessions ?? [],
       },
     },
+  });
+});
+
+systemHealthRouter.get('/status', async (_req: Request, res: Response) => {
+  const now = Date.now();
+  const sched = getSchedulerStatus();
+  const mon = getMonitorStatus();
+  const broker = getBrokerStreamHealth();
+  const mongoConnected = mongoose.connection?.readyState === 1;
+  const [autonomous, health] = mongoConnected
+    ? await Promise.all([
+        getAutonomousStatus().catch(() => null),
+        getAutonomousHealth().catch(() => null),
+      ])
+    : [null, null];
+  const status =
+    health?.overall === 'BLOCKED' || !mongoConnected
+      ? 'BLOCKED'
+      : health?.overall === 'DEGRADED'
+        ? 'DEGRADED'
+        : sched.state === 'ACTIVE' || mon.state === 'ACTIVE'
+          ? 'RUNNING'
+          : 'STOPPED';
+  res.status(status === 'BLOCKED' ? 503 : 200).json({
+    status,
+    generatedAt: new Date(now).toISOString(),
+    summary:
+      autonomous?.currentActivity ??
+      (status === 'RUNNING'
+        ? 'System schedulers are running and autonomous status is available.'
+        : 'System is not fully running. Review component health for the blocking reason.'),
+    system: {
+      mongo: mongoConnected ? 'CONNECTED' : 'DISCONNECTED',
+      automation: isAutomationReady() ? 'READY' : 'NOT_READY',
+      scheduler: sched.state,
+      monitor: mon.state,
+      brokerTruthCurrent: broker.truthCurrent,
+      mode: autonomous?.mode ?? null,
+      market: autonomous?.market ?? null,
+      emergencyStop: autonomous?.emergencyStop ?? null,
+      nextEvaluationAt: autonomous?.nextEvaluationAt ?? sched.nextWindow ?? null,
+    },
+    components: health?.services ?? [],
+  });
+});
+
+systemHealthRouter.get('/metrics', async (_req: Request, res: Response) => {
+  const q = getMassiveRequestStats();
+  const sched = getSchedulerStatus();
+  const mon = getMonitorStatus();
+  const chartMetrics = getAllDataQualityMetrics();
+  const autonomousMetrics = mongoose.connection?.readyState === 1 ? await getAutonomousMetrics().catch(() => null) : null;
+  const memory = process.memoryUsage();
+  res.json({
+    generatedAt: new Date().toISOString(),
+    process: {
+      pid: process.pid,
+      uptimeSec: Math.round(process.uptime()),
+      memoryRss: memory.rss,
+      memoryHeapUsed: memory.heapUsed,
+      memoryHeapTotal: memory.heapTotal,
+    },
+    marketData: {
+      queueDepth: q.queueDepth,
+      activeRequests: q.activeRequests,
+      inflightDeduped: q.inflightDeduped,
+      deduplicatedRequests: q.deduplicatedRequests,
+      responseCacheEntries: q.responseCacheEntries,
+      chartFeeds: chartMetrics.length,
+    },
+    automation: {
+      schedulerState: sched.state,
+      monitorState: mon.state,
+      schedulerLastTickAt: sched.lastTickAt,
+      monitorLastTickAt: mon.lastTickAt,
+      schedulerSubmittedCount: sched.submittedCount,
+      schedulerSkipReasons: sched.skipReasons,
+    },
+    autonomousTrading: autonomousMetrics?.sources ?? [],
   });
 });
