@@ -60,8 +60,12 @@ const OPERATOR_SIGNAL =
 export function isOperatorEvent(event: AutomationVisibilityEvent): boolean {
   const name = `${event.event ?? ''}`;
   if ((event.severity ?? '').toLowerCase() === 'critical') return true;
-  if (OPERATOR_SIGNAL.test(name)) return true;
+  // Engineering telemetry is checked BEFORE the operator-signal match so a
+  // reconciliation event that happens to contain an operator token (e.g.
+  // RECONCILE_POSITION_CLOSED) stays in Diagnostics rather than leaking onto
+  // the operator timeline.
   if (ENGINEERING.test(name)) return false;
+  if (OPERATOR_SIGNAL.test(name)) return true;
   const category = categorize(event);
   return category === 'trades' || category === 'orders' || category === 'risk' || category === 'errors';
 }

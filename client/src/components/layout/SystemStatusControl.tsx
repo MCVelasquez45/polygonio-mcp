@@ -51,16 +51,23 @@ function socketTone(s: string): Tone {
 function optionsTone(s: string): Tone {
   return s === 'LIVE' ? 'good' : s === 'CONNECTING' ? 'neutral' : 'warn';
 }
+// Equities are snapshot/delayed-by-design on this entitlement (no equity WS —
+// see useSystemStatus.ts). SNAPSHOT and DELAYED are the intended steady state,
+// NOT a degradation; only a genuinely absent feed is a warning. Treating
+// snapshot as 'warn' here would make the rolled-up headline read a permanent
+// false DEGRADED during completely normal operation.
 function equityTone(s: string): Tone {
   if (s === 'REALTIME') return 'good';
-  if (s === 'DELAYED' || s === 'SNAPSHOT') return 'warn';
-  return 'neutral';
+  if (s === 'SNAPSHOT' || s === 'DELAYED') return 'neutral';
+  return 'warn'; // UNAVAILABLE — the feed genuinely stopped delivering
 }
+// Charts run on entitlement-limited snapshot data; SNAPSHOT/CLOSED/CONNECTING
+// are normal, non-alarming states. Only STALE (delivery stopped / fetch errored)
+// is a real problem.
 function chartTone(s: string): Tone {
   if (s === 'LIVE') return 'good';
-  if (s === 'SNAPSHOT') return 'warn';
   if (s === 'STALE') return 'bad';
-  return 'neutral';
+  return 'neutral'; // SNAPSHOT / CLOSED / CONNECTING
 }
 function aiTone(s: string): Tone {
   return s === 'ready' ? 'good' : s === 'busy' ? 'warn' : 'bad';
@@ -142,10 +149,14 @@ export function summarizeSystemStatus(status: SystemStatus): SystemSummary {
     });
   }
 
-  const headline = overall === 'good' ? 'HEALTHY' : overall === 'bad' ? 'OFFLINE' : 'DEGRADED';
+  // 'neutral' is a normal, non-alarming steady state (snapshot feeds, idle
+  // automation) — it must read HEALTHY, not DEGRADED. Only a genuine 'warn'
+  // degrades the headline; 'bad' takes it offline.
+  const headline = overall === 'bad' ? 'OFFLINE' : overall === 'warn' ? 'DEGRADED' : 'HEALTHY';
+  const summaryTone: Tone = overall === 'bad' ? 'bad' : overall === 'warn' ? 'warn' : 'good';
   const reason = alerts.length ? alerts[0].title : null;
 
-  return { tone: overall, headline, reason, rows, alerts };
+  return { tone: summaryTone, headline, reason, rows, alerts };
 }
 
 type Props = {

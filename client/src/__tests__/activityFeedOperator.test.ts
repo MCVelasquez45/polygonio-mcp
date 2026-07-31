@@ -24,6 +24,13 @@ describe('activityFeed operator/engineering split', () => {
     expect(isOperatorEvent(ev('EVALUATED'))).toBe(false);
   });
 
+  it('keeps reconciliation in diagnostics even when the name contains an operator token', () => {
+    // Engineering classification must win over an operator-token substring so
+    // reconciliation noise never leaks onto the operator timeline.
+    expect(isOperatorEvent(ev('RECONCILE_POSITION_CLOSED'))).toBe(false);
+    expect(isOperatorEvent(ev('RECONCILIATION_EXIT_SYNC'))).toBe(false);
+  });
+
   it('always surfaces critical-severity events to the operator', () => {
     expect(isOperatorEvent(ev('MONITOR_HEARTBEAT', { severity: 'critical' }))).toBe(true);
   });

@@ -33,6 +33,15 @@ describe('summarizeSystemStatus', () => {
     expect(s.alerts).toHaveLength(0);
   });
 
+  it('reads HEALTHY in normal snapshot-mode operation (no false DEGRADED)', () => {
+    // Equities and charts are snapshot-by-design on this entitlement; that is
+    // the healthy steady state, not a degradation. Automation idle (UNKNOWN).
+    const s = summarizeSystemStatus(healthy());
+    expect(s.headline).toBe('HEALTHY');
+    expect(s.tone).toBe('good');
+    expect(s.alerts).toHaveLength(0);
+  });
+
   it('always includes every subsystem so nothing becomes unreachable', () => {
     const labels = summarizeSystemStatus(healthy()).rows.map(r => r.label);
     for (const required of [

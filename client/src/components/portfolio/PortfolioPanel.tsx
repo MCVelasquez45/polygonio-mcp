@@ -336,12 +336,24 @@ function PositionBlotterRow({
   return (
     <tr
       onClick={onSelect}
-      aria-selected={selected}
       className={`cursor-pointer border-b border-intel-lineSoft font-mono text-xs text-intel-ink2 transition-colors hover:bg-intel-panel2 ${
         selected ? 'bg-intel-accentSoft' : ''
       }`}
     >
-      <td className={`${TD} font-semibold text-intel-ink`}>{pos.symbol}</td>
+      <td className={`${TD} font-semibold text-intel-ink`}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect();
+          }}
+          aria-pressed={selected}
+          aria-label={`Manage position ${pos.symbol}`}
+          className="text-left text-intel-ink hover:text-intel-accent focus:outline-none focus-visible:underline"
+        >
+          {pos.symbol}
+        </button>
+      </td>
       <td className={TD}>
         <span className={source === 'AUTO' ? 'text-intel-accent' : 'text-intel-ink2'}>{source}</span>
       </td>

@@ -46,7 +46,11 @@ export function PositionManagerPanel() {
   const linked = useLinkedMode();
   const [live, setLive] = useState<PositionLiveSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const activeId = position?.id ?? null;
+  // Only automation-tracked positions have a Mongo positionId the live-snapshot
+  // endpoint can resolve. Manual positions carry the option symbol as their id,
+  // which the endpoint can't use — so we never poll for them (no wasted 3s
+  // request cycle) and show the explanatory note instead.
+  const activeId = position?.source === 'AUTOMATION' ? (position?.id ?? null) : null;
   const idRef = useRef<string | null>(null);
   idRef.current = activeId;
 
@@ -168,7 +172,7 @@ export function PositionManagerPanel() {
         </div>
       </div>
 
-      {(error || live?.available === false) && (
+      {(error || live?.available === false || source !== 'AUTOMATION') && (
         <p className="border-t border-intel-line px-4 py-2 font-mono text-[11px] text-intel-ink3">
           {source === 'AUTOMATION'
             ? 'Live contract snapshot is temporarily unavailable — showing last known values.'

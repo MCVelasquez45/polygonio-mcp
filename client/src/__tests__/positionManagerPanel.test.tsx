@@ -66,6 +66,21 @@ describe('PositionManagerPanel', () => {
     expect(screen.getByText('AMD')).toBeInTheDocument();
   });
 
+  it('never polls the live endpoint for manual positions (no wasted 3s requests)', async () => {
+    setActivePosition({
+      id: 'O:SPY260101C00450000',
+      underlying: 'SPY',
+      optionSymbol: 'O:SPY260101C00450000',
+      source: 'MANUAL',
+    });
+    render(<PositionManagerPanel />);
+    await waitFor(() => expect(screen.getByText('SPY')).toBeInTheDocument());
+    expect(getPositionLive).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/Live Greeks require an automation-tracked position/i)
+    ).toBeInTheDocument();
+  });
+
   it('toggles Linked Mode from the panel and clears the selection', async () => {
     setLinkedMode(true);
     setActivePosition({ id: 'p1', underlying: 'AMD', optionSymbol: 'O:AMD260731C00175000', source: 'AUTOMATION' });
