@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ChevronRight, Info, RotateCcw, X } from 'lucide-react';
 import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
+// Lazy so the markdown vendor chunk stays out of the initial trading bundle —
+// it loads on demand only when an AI desk note actually needs rendering.
+const ReactMarkdown = lazy(() => import('react-markdown'));
 import { getSharedSocket } from './lib/socket';
 import {
   publishQuote,
@@ -2804,9 +2807,24 @@ function App() {
         <div className="space-y-2.5">
           <div className="ai-glass-panel-soft rounded-md px-3 py-2 shadow-none">
             <p className="ai-section-title font-mono text-[11px] text-intel-ai">Summary</p>
-            <p className="mt-1 text-sm leading-relaxed text-intel-ink whitespace-pre-line">
-              {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
-            </p>
+            {deskSummary ? (
+              // Render the desk note as markdown so the model's own section
+              // hierarchy (thesis, bull/bear, catalysts, risks) reads as headings
+              // and lists instead of raw ** ** text. Display only — no AI logic.
+              <Suspense
+                fallback={
+                  <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-intel-ink">{deskSummary}</p>
+                }
+              >
+                <div className="desk-markdown mt-1">
+                  <ReactMarkdown>{deskSummary}</ReactMarkdown>
+                </div>
+              </Suspense>
+            ) : (
+              <p className="mt-1 text-sm leading-relaxed text-intel-ink2">
+                No notes yet. Open the AI desk to ask about {deskInsightSymbol} or any spread.
+              </p>
+            )}
           </div>
           {(sentimentText || fedEvent) && (
             <div className="flex flex-wrap gap-1.5 text-[11px]">

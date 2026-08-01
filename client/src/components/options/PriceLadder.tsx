@@ -12,6 +12,8 @@ import { useLiveQuote, useLiveTrade, useLiveTradeHistory } from '../../lib/liveM
 const TICK = 0.01;
 const RUNGS_EACH_SIDE = 7;
 const TAPE_ROWS = 8;
+// Collapse a run of this many (or more) dead inside-spread rungs into one gap.
+const COLLAPSE_MIN = 4;
 const LIVE_QUOTE_FRESH_MS = 10_000;
 // A quiet contract with a healthy, acknowledged subscription can legitimately
 // go well past LIVE_QUOTE_FRESH_MS between NBBO prints — the last quote is
@@ -44,6 +46,10 @@ type Rung = {
   isLast: boolean;
 };
 
+// A ladder display row is either a real price rung or a collapsed gap standing
+// in for a run of dead inside-spread rungs.
+type LadderItem = { type: 'rung'; rung: Rung } | { type: 'gap'; id: string; rungs: Rung[] };
+
 type PriceLadderProps = {
   symbol: string | null;
   underlying: string;
@@ -66,6 +72,10 @@ export const PriceLadder = memo(function PriceLadder({
   marketClosed,
 }: PriceLadderProps) {
   const [now, setNow] = useState(() => Date.now());
+  // Inside-spread price levels with no resting size are collapsed by default so
+  // a wide spread doesn't flood the ladder with dead rungs. Operators can
+  // expand a gap on demand; a new contract starts collapsed again.
+  const [expandedGaps, setExpandedGaps] = useState<Set<string>>(() => new Set());
   const quote = useLiveQuote(symbol);
   const lastTrade = useLiveTrade(symbol);
   const tape = useLiveTradeHistory(symbol);
@@ -98,6 +108,47 @@ export const PriceLadder = memo(function PriceLadder({
   }, [bid, ask, quote?.bidSize, quote?.askSize, lastPrice]);
 
   const tapeRows = useMemo(() => tape.slice(0, TAPE_ROWS), [tape]);
+
+  // A new contract resets any manually expanded gaps.
+  useEffect(() => {
+    setExpandedGaps(new Set());
+  }, [symbol]);
+
+  // Fold the rungs into a display list: any run of ≥ COLLAPSE_MIN contiguous
+  // inside-spread rungs that carry no resting size (and aren't the last print
+  // or the mid marker) becomes a single collapsible gap. The inside market —
+  // bid, ask, mid, and last — always survives, so the market stays centered.
+  const ladderItems = useMemo<LadderItem[]>(() => {
+    if (!rungs.length) return [];
+    const items: LadderItem[] = [];
+    let run: Rung[] = [];
+    const flush = () => {
+      if (!run.length) return;
+      if (run.length >= COLLAPSE_MIN) {
+        const id = `${run[0].price.toFixed(2)}-${run[run.length - 1].price.toFixed(2)}`;
+        items.push({ type: 'gap', id, rungs: run });
+      } else {
+        for (const r of run) items.push({ type: 'rung', rung: r });
+      }
+      run = [];
+    };
+    for (const rung of rungs) {
+      const isMidMarker = mid != null && Math.abs(rung.price - mid) < TICK / 2;
+      const significant =
+        rung.isBid || rung.isAsk || rung.isLast || rung.bidSize != null || rung.askSize != null || isMidMarker;
+      const insideSpread =
+        bid != null && ask != null && rung.price > bid + TICK / 2 && rung.price < ask - TICK / 2;
+      if (insideSpread && !significant) {
+        run.push(rung);
+      } else {
+        flush();
+        items.push({ type: 'rung', rung });
+      }
+    }
+    flush();
+    return items;
+  }, [rungs, mid, bid, ask]);
+
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
@@ -185,12 +236,63 @@ export const PriceLadder = memo(function PriceLadder({
     OFFLINE: 'Options service unavailable.',
   }[status];
 
+  const renderRung = (rung: Rung) => (
+    <div
+      key={rung.price.toFixed(2)}
+      className={`grid grid-cols-3 items-center px-4 py-[3px] font-mono text-[12px] tabular-nums ${
+        rung.isBid || rung.isAsk ? 'bg-intel-panel2' : ''
+      }`}
+    >
+      {/* Bid size — left flank, only at the best bid rung. */}
+      <span className="text-intel-info">
+        {rung.bidSize != null ? (
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-block h-3 rounded-sm bg-intel-info/25" style={{ width: sizeBar(rung.bidSize) }} />
+            {rung.bidSize}
+          </span>
+        ) : (
+          ''
+        )}
+      </span>
+
+      {/* Price spine — center band; last trade lit; bid/ask tinted. */}
+      <span
+        className={`rounded-sm py-[1px] text-center font-semibold ${
+          rung.isLast
+            ? 'bg-intel-info text-intel-bg'
+            : rung.isBid
+              ? 'bg-intel-panel2 text-intel-info'
+              : rung.isAsk
+                ? 'bg-intel-panel2 text-intel-neg'
+                : mid != null && Math.abs(rung.price - mid) < TICK / 2
+                  ? 'bg-intel-accentSoft text-intel-accent'
+                  : 'bg-intel-panel2/50 text-intel-ink2'
+        }`}
+        title={rung.isLast && lastTrade?.size != null ? `Last trade ×${lastTrade.size}` : undefined}
+      >
+        {rung.price.toFixed(2)}
+      </span>
+
+      {/* Ask size — right flank, only at the best ask rung. */}
+      <span className="text-right text-intel-neg">
+        {rung.askSize != null ? (
+          <span className="inline-flex items-center justify-end gap-2">
+            {rung.askSize}
+            <span className="inline-block h-3 rounded-sm bg-intel-neg/25" style={{ width: sizeBar(rung.askSize) }} />
+          </span>
+        ) : (
+          ''
+        )}
+      </span>
+    </div>
+  );
+
   return (
     <section className="flex h-full flex-col rounded-panel bg-intel-panel" data-testid="price-ladder">
       <div className="flex items-center justify-between border-b border-intel-divider px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <h3 className="font-mono text-[10px] font-semibold uppercase tracking-label text-intel-ink3">
-            Matrix · Top of Book
+            Top of Book
           </h3>
           <span className="truncate font-mono text-[11px] font-semibold text-intel-ink">
             {contractLabel ?? symbol ?? `${underlying} Options`}
@@ -207,63 +309,60 @@ export const PriceLadder = memo(function PriceLadder({
 
       {rungs.length === 0 ? (
         <div
-          className="flex flex-1 items-center justify-center px-4 py-8 text-center font-mono text-[11px] text-intel-ink3"
+          className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-8 text-center"
           data-testid="price-ladder-status"
         >
-          {statusCopy}
+          {/* Stacked-rung glyph — reads as "book" even before data lands, so the
+              panel looks intentional rather than empty. */}
+          <div
+            aria-hidden
+            className="flex flex-col items-center gap-[3px] opacity-60"
+          >
+            {[16, 24, 20, 28, 18].map((w, i) => (
+              <span
+                key={i}
+                className={`h-[3px] rounded-full ${i === 2 ? 'bg-intel-accent/60' : 'bg-intel-line'}`}
+                style={{ width: `${w}px` }}
+              />
+            ))}
+          </div>
+          <p className="font-mono text-[11px] text-intel-ink2">{statusCopy}</p>
+          {status === 'WAITING_FOR_CONTRACTS' && (
+            <p className="max-w-[220px] font-mono text-[10px] leading-relaxed text-intel-ink3">
+              Pick a strike in the Matrix, or use Auto-Select Contract, to stream the live book and tape here.
+            </p>
+          )}
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          {rungs.map(rung => (
-            <div
-              key={rung.price.toFixed(2)}
-              className={`grid grid-cols-3 items-center px-4 py-[3px] font-mono text-[12px] tabular-nums ${
-                rung.isBid || rung.isAsk ? 'bg-intel-panel2' : ''
-              }`}
-            >
-              {/* Bid size — left flank, only at the best bid rung. */}
-              <span className="text-intel-info">
-                {rung.bidSize != null ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-block h-3 rounded-sm bg-intel-info/25" style={{ width: sizeBar(rung.bidSize) }} />
-                    {rung.bidSize}
-                  </span>
-                ) : (
-                  ''
-                )}
-              </span>
-
-              {/* Price spine — center band; last trade lit; bid/ask tinted. */}
-              <span
-                className={`rounded-sm py-[1px] text-center font-semibold ${
-                  rung.isLast
-                    ? 'bg-intel-info text-intel-bg'
-                    : rung.isBid
-                      ? 'bg-intel-panel2 text-intel-info'
-                      : rung.isAsk
-                        ? 'bg-intel-panel2 text-intel-neg'
-                        : mid != null && Math.abs(rung.price - mid) < TICK / 2
-                          ? 'bg-intel-accentSoft text-intel-accent'
-                          : 'bg-intel-panel2/50 text-intel-ink2'
-                }`}
-                title={rung.isLast && lastTrade?.size != null ? `Last trade ×${lastTrade.size}` : undefined}
+          {ladderItems.map(item =>
+            item.type === 'rung' ? (
+              renderRung(item.rung)
+            ) : expandedGaps.has(item.id) ? (
+              item.rungs.map(rung => renderRung(rung))
+            ) : (
+              <button
+                key={`gap-${item.id}`}
+                type="button"
+                onClick={() =>
+                  setExpandedGaps(prev => {
+                    const next = new Set(prev);
+                    next.add(item.id);
+                    return next;
+                  })
+                }
+                className="grid w-full grid-cols-3 items-center px-4 py-1 transition-colors hover:bg-intel-panel2/50"
+                title={`${item.rungs.length} price levels with no resting size — click to expand`}
+                aria-label={`Show ${item.rungs.length} hidden price levels with no resting size`}
               >
-                {rung.price.toFixed(2)}
-              </span>
-
-              {/* Ask size — right flank, only at the best ask rung. */}
-              <span className="text-right text-intel-neg">
-                {rung.askSize != null ? (
-                  <span className="inline-flex items-center justify-end gap-2">
-                    {rung.askSize}
-                    <span className="inline-block h-3 rounded-sm bg-intel-neg/25" style={{ width: sizeBar(rung.askSize) }} />
-                  </span>
-                ) : (
-                  ''
-                )}
-              </span>
-            </div>
-          ))}
+                <span className="h-px bg-intel-divider" />
+                <span className="mx-auto rounded-sm border border-intel-divider bg-intel-panel2/40 px-2 py-[1px] font-mono text-[9px] uppercase tracking-label text-intel-ink3">
+                  {item.rungs.length} empty ⋯
+                </span>
+                <span className="h-px bg-intel-divider" />
+              </button>
+            )
+          )}
         </div>
       )}
 
