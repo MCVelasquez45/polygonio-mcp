@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { getApiBaseUrl } from '../api/http';
+import { getAccessToken } from '../auth/tokenStore';
 
 // Single multiplexed Socket.IO connection for the whole app.
 //
@@ -46,7 +47,8 @@ export function getSharedSocket(): Socket {
   const socket = io(baseUrl, {
     transports: usePollingOnly ? ['polling'] : ['websocket', 'polling'],
     upgrade: !usePollingOnly,
-    withCredentials: false,
+    withCredentials: true,
+    auth: { token: getAccessToken() ?? '' },
     path: '/socket.io',
     timeout: 10_000,
     reconnection: true,

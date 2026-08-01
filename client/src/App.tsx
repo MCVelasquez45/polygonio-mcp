@@ -36,6 +36,9 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { PriceLadder } from './components/options/PriceLadder';
 import { ChatDock } from './components/chat/ChatDock';
 import { debugLog } from './lib/debugLog';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import { AuthScreen } from './auth/AuthScreen';
+import { ProfileMenu } from './auth/ProfileMenu';
 
 // Route-level code splitting: the heavy switchable views load on demand, so the
 // initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
@@ -460,7 +463,7 @@ function formatRelativeTime(value?: string | null): string | null {
 
 // Root component controlling the workstation views. Manages data
 // fetching, caches, and cross-panel selection state.
-function App() {
+function TradingApp() {
   const [view, setView] = useState<View>('trading');
   const [ticker, setTicker] = useState('SPY');
   const normalizedTicker = ticker.trim().toUpperCase() || 'SPY';
@@ -3217,6 +3220,7 @@ function App() {
         isSettingsOpen={settingsOpen}
         chatDisabled={!chatAllowed}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        accountSlot={<ProfileMenu />}
       />
       <SystemStatusControl
         marketClosed={Boolean(marketSessionMeta?.marketClosed)}
@@ -3437,6 +3441,29 @@ function App() {
       />
       <Toaster richColors position="bottom-right" theme="dark" />
     </div>
+  );
+}
+
+function ProtectedApp() {
+  const auth = useAuth();
+  if (auth.status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-intel-bg text-sm text-intel-ink3">
+        Restoring session…
+      </div>
+    );
+  }
+  if (auth.status !== 'authenticated') {
+    return <AuthScreen />;
+  }
+  return <TradingApp />;
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <ProtectedApp />
+    </AuthProvider>
   );
 }
 

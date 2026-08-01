@@ -3,6 +3,7 @@ import express from 'express';
 import cors, { type CorsOptions } from 'cors';
 import compression from 'compression';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { randomUUID } from 'crypto';
 import { Server as SocketIOServer } from 'socket.io';
@@ -64,9 +65,14 @@ import {
 } from './features/tradeLifecycle';
 import { autonomousTradingRouter } from './features/autonomousTrading';
 import { learningRouter, startLearningScheduler, stopLearningScheduler } from './features/learning';
+import { identityRouter } from './features/identity/identity.routes';
+import { runIdentityMigrations } from './features/identity/identity.migrations';
+import { isSessionActive } from './features/identity/services/sessionService';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
-import { initMongo } from './shared/db/mongo';
-import { createRequestIdentityMiddleware } from './shared/auth/requestIdentity';
+import { initMongo, isMongoReady } from './shared/db/mongo';
+import { createRequestIdentityMiddleware, resolveRequestIdentityConfig } from './shared/auth/requestIdentity';
+import { verifyAccessToken } from './shared/identity/jwt';
+import { toLegacyRoles } from './shared/identity/rbac';
 import { serializeErrorForLog, writeStructuredLog } from './shared/logging/safeLogging';
 import { ensureMarketCacheIndexes } from './features/market/services/marketCache';
 import { startAggregatesWorker } from './features/market/services/aggregatesWorker';
@@ -83,7 +89,7 @@ const app = express();
 const corsOrigin = buildCorsOrigin();
 const corsOptions: CorsOptions = {
   origin: corsOrigin,
-  credentials: false,
+  credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -92,6 +98,7 @@ const corsOptions: CorsOptions = {
     'X-AI-Trader-Actor-Id',
     'X-AI-Trader-Account-Id',
     'X-AI-Trader-Roles',
+    'X-CSRF-Token',
   ],
   exposedHeaders: ['X-Request-Id'],
   optionsSuccessStatus: 204,
@@ -122,6 +129,7 @@ app.use(
 );
 app.use(compression());
 app.use(cors(corsOptions));
+app.use(cookieParser());
 writeStructuredLog({
   component: 'server',
   module: 'security',
@@ -182,6 +190,7 @@ app.get(['/health', '/api/health'], (_req, res) => {
   res.json({ ok: true });
 });
 
+app.use('/api/auth', identityRouter);
 app.use('/api/analyze', analyzeRouter);
 app.use('/api/agent', agentProxyRouter);
 app.use('/api/chat', chatRouter);
@@ -236,7 +245,7 @@ const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: {
     origin: corsOrigin,
-    credentials: false,
+    credentials: true,
   }
 });
 app.set('io', io);
@@ -245,13 +254,52 @@ initChartHub({ io, subscribeAggregates: subscribeAggregateSymbol, unsubscribeAgg
 initFuturesRuntime(io);
 startAutomationVisibilityBroadcaster(io);
 
+io.use((socket, next) => {
+  void (async () => {
+    const config = resolveRequestIdentityConfig();
+    const token =
+      typeof socket.handshake.auth?.token === 'string'
+        ? socket.handshake.auth.token
+        : typeof socket.handshake.headers.authorization === 'string'
+          ? socket.handshake.headers.authorization.replace(/^Bearer\s+/i, '')
+          : '';
+    const verified = token ? verifyAccessToken(token) : null;
+    if (verified && isMongoReady() && (await isSessionActive(verified.sid))) {
+      socket.data.auth = {
+        authenticated: true,
+        actorId: verified.sub,
+        accountId: verified.wsp ?? config.defaultAccountId,
+        roles: toLegacyRoles(verified.roles),
+        authMethod: 'session',
+        enforcementMode: config.enforcementMode,
+        sessionId: verified.sid,
+      };
+      next();
+      return;
+    }
+    socket.data.auth = {
+      authenticated: false,
+      actorId: config.defaultActorId,
+      accountId: config.defaultAccountId,
+      roles: config.defaultRoles,
+      authMethod: 'legacy-compatible',
+      enforcementMode: config.enforcementMode,
+    };
+    if (config.enforcementMode === 'required') {
+      next(new Error('AUTH_REQUIRED'));
+      return;
+    }
+    next();
+  })().catch(next);
+});
+
 io.on('connection', socket => {
   writeStructuredLog({
     component: 'server',
     module: 'socket',
     event: 'SOCKET_CONNECTED',
     severity: 'info',
-    context: { socketId: socket.id },
+    context: { socketId: socket.id, authenticated: socket.data.auth?.authenticated ?? false },
   });
   socket.emit('connected', { msg: 'WebSocket connected' });
   registerLiveFeedHandlers(socket);
@@ -277,6 +325,7 @@ async function start() {
   try {
     logMongoGuidance(mongoConfig);
     await initMongo(mongoConfig.uri, mongoConfig.dbName);
+    await runIdentityMigrations();
     await ensureMarketCacheIndexes();
     await seedDefaultContractSpecs();
     // Drop stale unique index on strategyversions that conflicts with Lab version creation.

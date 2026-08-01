@@ -76,7 +76,7 @@ test('system status and metrics expose read-only operations summaries', async ()
       fetch(`http://127.0.0.1:${routeServer.port}/api/system/status`),
       fetch(`http://127.0.0.1:${routeServer.port}/api/system/metrics`),
     ]);
-    assert.ok([200, 503].includes(statusResponse.status));
+    assert.equal(statusResponse.status, 200);
     assert.equal(metricsResponse.status, 200);
     const status = await statusResponse.json();
     const metrics = await metricsResponse.json();
