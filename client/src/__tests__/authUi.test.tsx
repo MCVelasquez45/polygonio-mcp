@@ -37,9 +37,10 @@ describe('AuthScreen', () => {
   it('renders enterprise login with Google sign-in when configured', () => {
     window.history.pushState({}, '', '/auth/login');
     render(<AuthScreen />);
-    expect(screen.getByRole('heading', { name: 'Access AI-Trader' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Sign in to AI-Trader' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Continue with Microsoft' })).toBeDisabled();
+    expect(screen.getByLabelText('Show password')).toBeInTheDocument();
   });
 
   it('renders reset flow from the auth reset route', () => {

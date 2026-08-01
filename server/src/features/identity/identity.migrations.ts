@@ -2,9 +2,11 @@ import { RoleModel } from './models/role.model';
 import { roleCatalog } from '../../shared/identity/rbac';
 import { isMongoReady } from '../../shared/db/mongo';
 import { writeStructuredLog } from '../../shared/logging/safeLogging';
+import { OAuthAttemptModel } from './models/oauthAttempt.model';
 
 export async function runIdentityMigrations(): Promise<void> {
   if (!isMongoReady()) return;
+  await OAuthAttemptModel.syncIndexes();
   for (const role of roleCatalog()) {
     await RoleModel.updateOne(
       { key: role.key },

@@ -6,6 +6,7 @@ export const IDENTITY_COLLECTIONS = {
   users: 'identity_users',
   sessions: 'identity_sessions',
   emailTokens: 'identity_email_tokens',
+  oauthAttempts: 'identity_oauth_attempts',
   auditLogs: 'identity_audit_logs',
   brokerConnections: 'identity_broker_connections',
   apiTokens: 'identity_api_tokens',

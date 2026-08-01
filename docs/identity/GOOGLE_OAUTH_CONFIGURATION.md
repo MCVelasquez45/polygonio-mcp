@@ -223,19 +223,14 @@ Verified:
 - Logout and logout-all revoke sessions.
 - Session restore uses `/api/auth/refresh`.
 
-Security issue documented:
+Security controls verified in the implementation:
 
-- The code uses a signed state value, but does not currently persist or verify a
-  server-side one-time nonce. The state is tamper-resistant and time-limited,
-  but not single-use. Refresh-token rotation still protects sessions after
-  issuance. Consider one-time OAuth state storage if the threat model requires
-  replay rejection before code exchange.
-- The generated state payload contains a nonce for state uniqueness, but the
-  current Authorization Code Flow does not send an OIDC `nonce` parameter to
-  Google or validate a `nonce` claim on the ID token.
-- Authorization Code Flow currently does not use PKCE. For confidential web
-  server clients this is acceptable, but adding PKCE would be a hardening
-  improvement if Google and the existing handler are extended later.
+- Signed OAuth state is backed by a hashed, ten-minute Mongo record that is
+  atomically consumed before code exchange, so callback replay fails closed.
+- The state nonce is sent as the OIDC `nonce` parameter and validated against
+  the verified ID-token claim using a timing-safe comparison.
+- Authorization Code Flow uses PKCE `S256`; the verifier is encrypted at rest
+  with `IDENTITY_ENCRYPTION_KEY` and removed when state is consumed.
 
 No duplicate handlers should be created.
 

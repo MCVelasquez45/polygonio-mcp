@@ -6,7 +6,7 @@ import { authRateLimit } from '../../shared/identity/rateLimit';
 import { requireCsrf } from '../../shared/identity/csrf';
 import { checkPasswordPolicy, verifyPassword } from '../../shared/identity/password';
 import { getIdentityConfig, isGoogleOAuthConfigured } from '../../shared/identity/config';
-import { createGoogleOAuthState, normalizeReturnTo, verifyGoogleOAuthState } from '../../shared/identity/oauthState';
+import { normalizeReturnTo, verifyGoogleOAuthState } from '../../shared/identity/oauthState';
 import { requireAuthenticated, requireMongoIdentity } from './identity.middleware';
 import {
   createEmailPasswordUser,
@@ -31,7 +31,7 @@ import {
   revokeSessionById,
   rotateSession,
 } from './services/sessionService';
-import { buildGoogleAuthUrl, exchangeGoogleCode, verifyGoogleCredential } from './services/oauthService';
+import { beginGoogleOAuth, consumeGoogleOAuthAttempt, exchangeGoogleCode, verifyGoogleCredential } from './services/oauthService';
 import { sendPasswordResetEmail, sendVerificationEmail } from './services/emailService';
 import { clientIp, clientUa, recordAuditFromRequest } from './services/auditService';
 import { getUserWorkspace } from './services/workspaceService';
@@ -89,7 +89,7 @@ identityRouter.get('/csrf', (_req, res) => {
   res.json({ csrfToken: token });
 });
 
-identityRouter.post('/register', requireMongoIdentity, authRateLimit(8), asyncRoute(async (req, res) => {
+identityRouter.post('/register', requireMongoIdentity, requireCsrf, authRateLimit(8), asyncRoute(async (req, res) => {
   const email = stringBody(req.body?.email, 320).toLowerCase();
   const password = String(req.body?.password ?? '');
   const workspaceName = stringBody(req.body?.workspaceName, 120);
@@ -124,7 +124,7 @@ identityRouter.post('/register', requireMongoIdentity, authRateLimit(8), asyncRo
   });
 }));
 
-identityRouter.post('/login', requireMongoIdentity, authRateLimit(), asyncRoute(async (req, res) => {
+identityRouter.post('/login', requireMongoIdentity, requireCsrf, authRateLimit(), asyncRoute(async (req, res) => {
   const email = stringBody(req.body?.email, 320).toLowerCase();
   const password = String(req.body?.password ?? '');
   const rememberMe = bool(req.body?.rememberMe);
@@ -282,7 +282,7 @@ identityRouter.delete('/sessions/:id', requireMongoIdentity, requireAuthenticate
   res.status(revoked ? 200 : 404).json({ ok: revoked });
 }));
 
-identityRouter.post('/verify-email', requireMongoIdentity, authRateLimit(20), asyncRoute(async (req, res) => {
+identityRouter.post('/verify-email', requireMongoIdentity, requireCsrf, authRateLimit(20), asyncRoute(async (req, res) => {
   const user = await verifyEmailWithToken(stringBody(req.body?.token, 512));
   if (!user) {
     res.status(400).json({ error: 'INVALID_OR_EXPIRED_TOKEN' });
@@ -297,7 +297,7 @@ identityRouter.post('/verify-email', requireMongoIdentity, authRateLimit(20), as
   res.json({ ok: true, user: toPublicUser(user) });
 }));
 
-identityRouter.post('/resend-verification', requireMongoIdentity, authRateLimit(5), asyncRoute(async (req, res) => {
+identityRouter.post('/resend-verification', requireMongoIdentity, requireCsrf, authRateLimit(5), asyncRoute(async (req, res) => {
   const email = stringBody(req.body?.email, 320).toLowerCase();
   const user = isEmail(email) ? await findUserByEmail(email) : null;
   if (user && !user.emailVerified && user.status !== 'disabled') {
@@ -306,7 +306,7 @@ identityRouter.post('/resend-verification', requireMongoIdentity, authRateLimit(
   res.json({ ok: true });
 }));
 
-identityRouter.post('/forgot-password', requireMongoIdentity, authRateLimit(5), asyncRoute(async (req, res) => {
+identityRouter.post('/forgot-password', requireMongoIdentity, requireCsrf, authRateLimit(5), asyncRoute(async (req, res) => {
   const email = stringBody(req.body?.email, 320).toLowerCase();
   const user = isEmail(email) ? await findUserByEmail(email) : null;
   if (user && user.status !== 'disabled') {
@@ -321,7 +321,7 @@ identityRouter.post('/forgot-password', requireMongoIdentity, authRateLimit(5), 
   res.json({ ok: true });
 }));
 
-identityRouter.post('/reset-password', requireMongoIdentity, authRateLimit(10), asyncRoute(async (req, res) => {
+identityRouter.post('/reset-password', requireMongoIdentity, requireCsrf, authRateLimit(10), asyncRoute(async (req, res) => {
   const password = String(req.body?.password ?? '');
   const policy = checkPasswordPolicy(password);
   if (!policy.ok) {
@@ -343,14 +343,13 @@ identityRouter.post('/reset-password', requireMongoIdentity, authRateLimit(10), 
   res.json({ ok: true });
 }));
 
-identityRouter.get('/google', requireMongoIdentity, authRateLimit(20), (req, res) => {
+identityRouter.get('/google', requireMongoIdentity, authRateLimit(20), asyncRoute(async (req, res) => {
   if (!isGoogleOAuthConfigured()) {
     res.status(503).json({ error: 'GOOGLE_OAUTH_NOT_CONFIGURED' });
     return;
   }
-  const state = createGoogleOAuthState(String(req.query.returnTo ?? '/'));
-  res.redirect(buildGoogleAuthUrl(state));
-});
+  res.redirect(await beginGoogleOAuth(String(req.query.returnTo ?? '/')));
+}));
 
 identityRouter.get('/google/callback', requireMongoIdentity, authRateLimit(40), asyncRoute(async (req, res) => {
   const code = stringBody(req.query.code, 4096);
@@ -360,7 +359,12 @@ identityRouter.get('/google/callback', requireMongoIdentity, authRateLimit(40), 
     return;
   }
   try {
-    const profile = await exchangeGoogleCode(code);
+    const codeVerifier = await consumeGoogleOAuthAttempt(stringBody(req.query.state, 2048));
+    if (!codeVerifier) {
+      res.redirect(`${getIdentityConfig().appBaseUrl}/auth/login?error=oauth_state`);
+      return;
+    }
+    const profile = await exchangeGoogleCode(code, codeVerifier, state.nonce);
     const user = await upsertOAuthUser(profile);
     await recordSuccessfulLogin(user);
     const tokens = await createSession(user, true, req);

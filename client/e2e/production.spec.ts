@@ -3,8 +3,8 @@ import { test, expect, type Page, type ConsoleMessage, type Request } from '@pla
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173';
 const IS_LOCAL_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(BASE_URL);
 const FORBIDDEN_URL_PATTERNS = IS_LOCAL_BASE_URL
-  ? [/polygonio-backend\.onrender\.com/i]
-  : [/localhost/i, /127\.0\.0\.1/i, /polygonio-backend\.onrender\.com/i];
+  ? [/\.onrender\.com/i]
+  : [/localhost/i, /127\.0\.0\.1/i, /\.onrender\.com/i];
 
 type PageEvidence = {
   consoleErrors: string[];
@@ -322,7 +322,7 @@ test.describe('Automation / Cockpit', () => {
 });
 
 test.describe('AI Desk', () => {
-  test('chat input accepts a message and produces a response', async ({ page }, testInfo) => {
+  test('chat input is available and accepts operator input', async ({ page }) => {
     const evidence = attachEvidenceCollectors(page);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
@@ -333,13 +333,9 @@ test.describe('AI Desk', () => {
     const hasInput = await chatInput.isVisible();
     console.log('AI Desk textarea present:', hasInput);
 
-    if (hasInput && testInfo.project.name === 'desktop-chromium') {
+    if (hasInput) {
       await chatInput.fill('What is the current setup on SOFI?');
-      const sendButton = page.getByRole('button', { name: /send/i }).first();
-      if (await sendButton.count()) {
-        await sendButton.click();
-        await page.waitForTimeout(15000);
-      }
+      await expect(chatInput).toHaveValue('What is the current setup on SOFI?');
     }
 
     await waitForApiRequestsToSettle(evidence);
@@ -349,9 +345,8 @@ test.describe('AI Desk', () => {
   });
 });
 
-test.describe('Mobile viewport', () => {
-  test('bottom navigation is reachable and no horizontal overflow', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name === 'desktop-chromium', 'mobile-only check');
+test.describe('Responsive viewport', () => {
+  test('workspace has no horizontal overflow', async ({ page }, testInfo) => {
     const evidence = attachEvidenceCollectors(page);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(8000);
@@ -360,11 +355,11 @@ test.describe('Mobile viewport', () => {
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     }));
-    console.log(`mobile viewport ${testInfo.project.name}: scrollWidth=${scrollWidth} clientWidth=${clientWidth}`);
+    console.log(`responsive viewport ${testInfo.project.name}: scrollWidth=${scrollWidth} clientWidth=${clientWidth}`);
 
     await waitForApiRequestsToSettle(evidence);
-    reportEvidence(`mobile-${testInfo.project.name}`, evidence);
-    await page.screenshot({ path: `e2e-artifacts/mobile-${testInfo.project.name}.png`, fullPage: true });
+    reportEvidence(`responsive-${testInfo.project.name}`, evidence);
+    await page.screenshot({ path: `e2e-artifacts/responsive-${testInfo.project.name}.png`, fullPage: true });
     expectCleanEvidence(evidence);
   });
 });

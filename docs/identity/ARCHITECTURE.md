@@ -158,10 +158,11 @@ Sessions carry: `userId`, `familyId`, `tokenHash`, `rotatedTo`, `revokedAt`,
 dev. `SameSite=Lax` allows the top-level OAuth redirect to carry the cookie while
 blocking cross-site POSTs.
 
-**CSRF (double-submit).** Cookie-authenticated state-changing endpoints
-(`/api/auth/refresh`, `/api/auth/logout*`) require header `X-CSRF-Token` to equal
-the `id_csrf` cookie value (timing-safe compare). Bearer-authenticated API calls
-are **not** CSRF-vulnerable (no ambient cookie authority) and are exempt.
+**CSRF (double-submit).** Every state-changing identity endpoint requires header
+`X-CSRF-Token` to equal the `id_csrf` cookie value (timing-safe compare). This
+includes login and registration, preventing login CSRF and keeping one policy
+for browser auth mutations. Bearer-authenticated non-identity API calls carry
+no ambient cookie authority and remain exempt.
 
 **CORS.** In dev, UI (`:5173`) and API (`:4000`) are cross-origin, so cookies
 require `Access-Control-Allow-Credentials: true` with a **reflected, allow-listed
@@ -180,6 +181,7 @@ trading collections. `timestamps: true` everywhere (repo convention).
 | `identity_users` | Account of record | `email` (unique, lowercased), `emailVerified`, `passwordHash` (Argon2id, nullable for OAuth-only), `status` (`active`/`disabled`/`pending`), `roles[]`, `profile{name,avatarUrl,timezone,tradingExperience,preferredTheme,workspaceName}`, `oauth[{provider,subject,email}]`, `failedLoginCount`, `lockedUntil`, `lastLoginAt` |
 | `identity_sessions` | Refresh-token sessions / devices | `userId`, `familyId`, `tokenHash` (unique), `rotatedTo`, `revokedAt`, `device{ua,ip}`, `rememberMe`, `expiresAt` (**TTL**) |
 | `identity_email_tokens` | Verify + reset one-time tokens | `userId`, `type` (`verify`/`reset`), `tokenHash` (unique), `usedAt`, `expiresAt` (**TTL**) |
+| `identity_oauth_attempts` | One-time OAuth authorization transactions | `provider`, `stateHash` (unique), encrypted PKCE verifier, `expiresAt` (**TTL**); atomically deleted at callback |
 | `identity_audit_logs` | Security/audit trail (append-only) | `actorId`, `action`, `targetType`, `targetId`, `ip`, `ua`, `outcome`, `meta`, `createdAt` (index) |
 | `identity_broker_connections` | **Scaffold.** User↔broker links | `userId`, `provider`, `label`, `status`, `secretCiphertext{iv,tag,data}` (AES-256-GCM), `createdAt` |
 | `identity_api_tokens` | **Scaffold.** Programmatic access | `userId`, `name`, `tokenHash` (unique), `scopes[]`, `lastUsedAt`, `expiresAt`, `revokedAt` |
@@ -281,11 +283,12 @@ stays valid for existing consumers/logs.
 
 ### Google OAuth (live)
 
-- `GET /api/auth/google?returnTo=/...` → 302 to Google with a signed state
-  payload. Only relative `returnTo` paths are accepted, which prevents open
-  redirects while supporting staging/prod frontend paths.
-- `GET /api/auth/google/callback?code&state` → verify state, exchange code
-  (`google-auth-library`), verify ID token, upsert user by verified email
+- `GET /api/auth/google?returnTo=/...` → create a signed, ten-minute state and
+  encrypted one-time server record, generate PKCE `S256`, and redirect to Google
+  with the OIDC nonce. Only relative `returnTo` paths are accepted.
+- `GET /api/auth/google/callback?code&state` → verify signed state, atomically
+  consume the server record, exchange the code with its PKCE verifier, validate
+  the ID-token audience and nonce (`google-auth-library`), upsert by verified email
   (link `oauth`), mark `emailVerified=true`, set refresh/CSRF cookies, redirect
   to the frontend. The SPA then calls `/api/auth/refresh` to mint an in-memory
   access token.

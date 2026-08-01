@@ -286,20 +286,13 @@ Verified controls:
 - Audit logging for Google login.
 - Session fixation resistance through new session creation after OAuth callback.
 
-Documented gaps / hardening items:
+Verified hardening controls:
 
-- PKCE is not currently implemented for the server-side OAuth web flow. This is
-  acceptable for a confidential web server client with a protected client
-  secret, but PKCE would be a useful defense-in-depth improvement.
-- The generated OAuth state contains a nonce for uniqueness, but the flow does
-  not send an OIDC `nonce` parameter to Google or validate a nonce claim.
-- OAuth state is signed and time-limited, but not stored server-side as a
-  one-time-use state value. Replay within the validity window is mitigated by
-  code single-use semantics at Google, but not independently rejected by local
-  state storage.
-
-No security issue above was silently modified because this task is
-infrastructure-only.
+- PKCE `S256` is implemented for the confidential web client.
+- The generated state nonce is sent to Google and validated against the
+  verified ID-token nonce claim.
+- OAuth state is signed, time-limited, hashed in Mongo, and atomically consumed
+  before code exchange. Callback replay is rejected.
 
 ## 12. Production Validation
 
@@ -355,11 +348,12 @@ Final local verification performed on the `v3/identity-platform` worktree:
 - `npm --prefix server run lint` -> passed.
 - `npm --prefix client run lint` -> passed.
 - `npm --prefix client run test` -> 35 files, 169 tests passed.
-- `npm --prefix server run test` -> 466 tests passed, 0 failed, 0 skipped.
+- `npm --prefix server run test` -> 468 tests passed, 0 failed, 0 skipped.
 - `npm --prefix client run build` -> passed; postbuild guard confirmed no
   backend/loopback origin was embedded in the production bundle.
 - `PLAYWRIGHT_BASE_URL=http://localhost:5174 npm --prefix client run test:e2e -- --workers=1`
-  -> 31 passed, 1 pre-existing desktop skip for the mobile-only assertion.
+  -> 44 passed, 0 failed, 0 skipped across desktop, tablet, and two mobile
+  viewport projects.
 - `git diff --check` -> passed.
 - `npm --prefix server audit --audit-level=high` -> found 0 vulnerabilities.
 - `npm --prefix client audit --audit-level=high` -> found 0 vulnerabilities.
@@ -385,9 +379,8 @@ Implementation note:
 
 Secret-source note:
 
-- The user stated that `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` were added
-  to `.enc`. No `.enc` file was found under this repository path during local
-  verification, so the secret values were not read or printed by this run.
+- OAuth credentials were previously validated and are intentionally omitted
+  from this report. No secret value was printed or added to source control.
 
 ## 13. Render Deployment Checklist
 
@@ -448,50 +441,39 @@ https://polygonio-mcp-beryl.vercel.app/
 16. Wait for access token expiry or force refresh and confirm refresh token
     rotation succeeds.
 
-## 15. Manual Google Console Steps
+## 15. Certification Update — 2026-08-01
 
-Manual interaction is required now.
+The credential and environment blocker recorded in earlier revisions is
+resolved. The current blockers are deployment identity and browser-only Google
+Auth Platform verification:
 
-Open the consent screen:
+- Requested frontend `https://ai-trader-uvj9.vercel.app` returns HTTP 200.
+- Requested backend `https://ai-trader-backend-ar5g.onrender.com` returns
+  `404` with `x-render-routing: no-server`; it is not attached to a service in
+  the authenticated Render account.
+- The authenticated Render account currently exposes `polygonio-backend` at
+  `https://polygonio-backend.onrender.com`, tracking `main` with auto-deploy.
+- PR #61 remains the only branch containing `/api/auth/config`; production
+  cannot return 200 until the branch is promoted to the actual backend service.
+- Google consent-screen audience, publishing status, test users, exact origins,
+  exact redirect URIs, and secret rotation metadata require browser inspection
+  in Google Auth Platform; `gcloud` does not expose those web-client settings.
+
+Do not merge or redirect Vercel to the requested `ar5g` hostname until Render
+either exposes that service to the authenticated account or confirms the
+hostname was supplied in error. Pointing the frontend at a `no-server` hostname
+would create a production outage.
+
+## 16. Remaining Manual Verification
+
+Open these exact pages for project `ai-trading-auth`:
 
 ```text
-https://console.cloud.google.com/apis/credentials/consent?project=ai-trading-auth
+https://console.cloud.google.com/auth/branding?project=ai-trading-auth
+https://console.cloud.google.com/auth/audience?project=ai-trading-auth
+https://console.cloud.google.com/auth/clients?project=ai-trading-auth
 ```
 
-Click path:
-
-1. Choose `External`.
-2. Set app name to `AI-Trader`.
-3. Set user support email.
-4. Set developer contact email.
-5. Add only scopes `openid`, `email`, `profile`.
-6. Save.
-
-Open the credentials page:
-
-```text
-https://console.cloud.google.com/apis/credentials?project=ai-trading-auth
-```
-
-Click path:
-
-1. Click `Create Credentials`.
-2. Click `OAuth client ID`.
-3. Select application type `Web application`.
-4. Name it `AI-Trader Web`.
-5. Add the authorized JavaScript origins from section 6.
-6. Add the authorized redirect URIs from section 7.
-7. Click `Create`.
-8. Copy the client ID to Render as `GOOGLE_CLIENT_ID`.
-9. Copy the client secret directly to Render as `GOOGLE_CLIENT_SECRET`.
-
-## 16. Remaining Blockers
-
-- OAuth consent screen could not be verified or configured from `gcloud`.
-- OAuth web client could not be verified or created from `gcloud`.
-- OAuth client ID is not yet known.
-- OAuth client secret is not yet created or copied to Render.
-- Render currently returns `404` for `/api/auth/config`; the deployed backend
-  does not yet expose the Identity Platform routes.
-- Production Google login cannot be validated until Console credentials and
-  Render deployment/env configuration are complete.
+Verify app branding, External audience/publishing status and test users, then
+open the existing web client and verify the approved origins and callback URIs.
+Do not create another client.
