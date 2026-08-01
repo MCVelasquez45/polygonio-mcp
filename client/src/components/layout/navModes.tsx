@@ -15,12 +15,14 @@ export type NavMode = {
   icon: ReactNode;
 };
 
-/** Primary operating modes — the desk a trader lives in. */
+/** Primary operating modes — aligned to the operator lifecycle
+ *  (Research → Analyze → Enter → Manage → Review). Internal view ids are
+ *  unchanged; only the operator-facing vocabulary moves to the terminal terms. */
 export const PRIMARY_MODES: NavMode[] = [
-  { id: 'trading', label: 'Terminal', hint: 'Discover · analyze · execute · manage', icon: <LineChart className="h-[18px] w-[18px]" /> },
-  { id: 'portfolio', label: 'Positions', hint: 'The book · aggregate risk · P/L', icon: <Layers className="h-[18px] w-[18px]" /> },
+  { id: 'trading', label: 'Trade', hint: 'Research · analyze · enter', icon: <LineChart className="h-[18px] w-[18px]" /> },
+  { id: 'portfolio', label: 'Positions', hint: 'Manage the book · risk · P/L', icon: <Layers className="h-[18px] w-[18px]" /> },
   { id: 'cockpit', label: 'Automation', hint: 'Supervise the machine', icon: <Bot className="h-[18px] w-[18px]" /> },
-  { id: 'intelligence', label: 'Intelligence', hint: 'Sessions · journal · research', icon: <BrainCircuit className="h-[18px] w-[18px]" /> },
+  { id: 'intelligence', label: 'Review', hint: 'Trades · journal · learning', icon: <BrainCircuit className="h-[18px] w-[18px]" /> },
 ];
 
 /** Secondary destination — demoted from the primary rail to a footer utility. */

@@ -546,27 +546,11 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
                 {formatExpirationDate(leg.expiration)}
                 {isHeld && <span className="ml-2 text-intel-accent">· In your book</span>}
               </div>
+              {/* Bid/Ask/Mark/Last/Vol/OI/IV/Spread already read on the row
+                  itself (and in the Top of Book + ticket). The drawer only adds
+                  the analytics the one-line row can't carry. */}
               <div className="grid grid-cols-4 gap-x-4 gap-y-2 md:grid-cols-8">
-                <InfoTile
-                  label="Bid"
-                  value={liveBid != null ? `$${liveBid.toFixed(2)}` : '—'}
-                  sub={liveQuote?.bidSize != null ? `×${liveQuote.bidSize}` : undefined}
-                  tone="pos"
-                />
-                <InfoTile
-                  label="Ask"
-                  value={liveAsk != null ? `$${liveAsk.toFixed(2)}` : '—'}
-                  sub={liveQuote?.askSize != null ? `×${liveQuote.askSize}` : undefined}
-                  tone="neg"
-                />
-                <InfoTile label="Mark" value={liveMark != null ? `$${liveMark.toFixed(2)}` : '—'} />
-                <InfoTile label="Last" value={liveLast != null ? `$${liveLast.toFixed(2)}` : '—'} />
-                <InfoTile label="Vol" value={leg.volume != null ? leg.volume.toLocaleString() : '—'} />
-                <InfoTile label="OI" value={resolvedOpenInterest != null ? resolvedOpenInterest.toLocaleString() : '—'} />
-                <InfoTile label="IV" value={resolvedIv != null ? `${(resolvedIv * 100).toFixed(1)}%` : '—'} />
                 <InfoTile label="B/E" value={breakeven != null ? `$${breakeven.toFixed(2)}` : '—'} />
-              </div>
-              <div className="mt-2 grid grid-cols-4 gap-x-4 gap-y-2 border-t border-intel-line pt-2.5 md:grid-cols-8">
                 <InfoTile
                   label="Intrinsic"
                   value={formatCurrency(intrinsicValue(side, underlyingPrice, strike))}
@@ -574,11 +558,6 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
                 <InfoTile
                   label="Extrinsic"
                   value={formatCurrency(extrinsicValue(side, underlyingPrice, strike, mark))}
-                />
-                <InfoTile
-                  label="Spread"
-                  value={spreadPct != null ? `${spreadPct.toFixed(1)}%` : '—'}
-                  tone={spreadPct != null && spreadPct > 10 ? 'warn' : undefined}
                 />
                 <InfoTile label="Prob ITM" value={pItm != null ? `${(pItm * 100).toFixed(0)}%` : '—'} />
                 <InfoTile
@@ -669,6 +648,39 @@ export const OptionsChainPanel = memo(function OptionsChainPanel({
           </div>
         )}
       </div>
+      {/* Sticky footer — the spot/1σ recap and visible-contract count stay
+          pinned below the internal scroll, so the operator never loses the
+          reference frame while the ladder moves. */}
+      {rows.length > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-intel-line bg-intel-panel px-3 py-1.5 font-mono text-[10px] tabular-nums text-intel-ink3">
+          <div className="flex items-center gap-3">
+            {underlyingPrice != null && (
+              <span>
+                SPOT <span className="text-intel-info">{formatCurrency(underlyingPrice)}</span>
+              </span>
+            )}
+            {expectedMoveValue != null && underlyingPrice != null && (
+              <span className="hidden sm:inline">
+                1σ{' '}
+                <span className="text-intel-ai">
+                  {formatCurrency(underlyingPrice - expectedMoveValue)}–{formatCurrency(underlyingPrice + expectedMoveValue)}
+                </span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <span>
+              {rows.length} {optionType === 'calls' ? 'calls' : 'puts'}
+              {dteLabel ? ` · ${dteLabel}` : ''}
+            </span>
+            {selectedContract && (
+              <span className="max-w-[180px] truncate text-intel-info" title={selectedContract.ticker.replace(/^O:/, '')}>
+                ◧ {selectedContract.ticker.replace(/^O:/, '')}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 });
