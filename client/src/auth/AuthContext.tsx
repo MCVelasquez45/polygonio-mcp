@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { setAccessToken } from './tokenStore';
 import * as authApi from './authApi';
-import type { AuthSession, PublicUser, SessionSummary, WorkspaceSummary } from './authApi';
+import type { AuthSession, OnboardingPatch, PublicUser, SessionSummary, WorkspaceSummary } from './authApi';
 
 type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
 
@@ -10,6 +10,9 @@ type AuthContextValue = {
   user: PublicUser | null;
   googleConfigured: boolean;
   googleClientId: string | null;
+  authConfigStatus: 'loading' | 'ready' | 'error';
+  alpacaConfigured: boolean;
+  alpacaPaper: boolean;
   login: (input: { email: string; password: string; rememberMe?: boolean }) => Promise<void>;
   register: typeof authApi.register;
   logout: () => Promise<void>;
@@ -22,6 +25,10 @@ type AuthContextValue = {
   updateProfile: (patch: Partial<PublicUser['profile']>) => Promise<void>;
   listSessions: () => Promise<SessionSummary[]>;
   getWorkspace: () => Promise<WorkspaceSummary>;
+  updateOnboarding: (patch: OnboardingPatch) => Promise<WorkspaceSummary>;
+  connectPaperBroker: () => Promise<WorkspaceSummary>;
+  connectAlpacaBroker: () => Promise<WorkspaceSummary>;
+  completeOnboarding: () => Promise<WorkspaceSummary>;
   revokeSession: (id: string) => Promise<void>;
   signInWithGoogle: () => void;
 };
@@ -46,12 +53,18 @@ const TEST_USER: PublicUser = {
   oauthProviders: [],
   lastLoginAt: null,
   createdAt: new Date(0).toISOString(),
+  firstLogin: false,
+  onboardingCompletedAt: new Date(0).toISOString(),
 };
 
 function shouldUseTestIdentity(): boolean {
+  const forceRealIdentity =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('__identity') === 'real';
   const e2eIdentity =
     import.meta.env.MODE !== 'production' &&
-    import.meta.env.VITE_E2E_TEST_IDENTITY === 'true';
+    import.meta.env.VITE_E2E_TEST_IDENTITY === 'true' &&
+    !forceRealIdentity;
   return (import.meta.env.MODE === 'test' || e2eIdentity) && typeof window !== 'undefined' && !window.location.pathname.startsWith('/auth');
 }
 
@@ -67,6 +80,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(testIdentity ? TEST_USER : null);
   const [googleConfigured, setGoogleConfigured] = useState(false);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+  const [authConfigStatus, setAuthConfigStatus] = useState<'loading' | 'ready' | 'error'>(testIdentity ? 'ready' : 'loading');
+  const [alpacaConfigured, setAlpacaConfigured] = useState(false);
+  const [alpacaPaper, setAlpacaPaper] = useState(true);
 
   const refresh = useCallback(async () => {
     const session = await authApi.refreshSession();
@@ -82,8 +98,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setGoogleConfigured(config.googleConfigured);
         setGoogleClientId(config.googleClientId);
+        setAlpacaConfigured(config.alpacaConfigured);
+        setAlpacaPaper(config.alpacaPaper);
+        setAuthConfigStatus('ready');
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setAuthConfigStatus('error');
+      });
 
     refresh()
       .catch(() => {
@@ -103,6 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       googleConfigured,
       googleClientId,
+      authConfigStatus,
+      alpacaConfigured,
+      alpacaPaper,
       login: async input => {
         const session = await authApi.login(input);
         applySession(session, setUser, setStatus);
@@ -139,10 +163,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       listSessions: authApi.listSessions,
       getWorkspace: authApi.getWorkspace,
+      updateOnboarding: authApi.updateOnboarding,
+      connectPaperBroker: authApi.connectPaperBroker,
+      connectAlpacaBroker: authApi.connectAlpacaBroker,
+      completeOnboarding: async () => {
+        const result = await authApi.completeOnboarding();
+        setUser(result.user);
+        return result.workspace;
+      },
       revokeSession: authApi.revokeSession,
       signInWithGoogle: () => authApi.googleRedirect(window.location.pathname + window.location.search),
     }),
-    [googleClientId, googleConfigured, refresh, status, user]
+    [alpacaConfigured, alpacaPaper, authConfigStatus, googleClientId, googleConfigured, refresh, status, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

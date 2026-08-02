@@ -1,24 +1,25 @@
 import { Types } from 'mongoose';
-import { BrokerConnectionModel, type BrokerProvider } from '../models/brokerConnection.model';
+import { BrokerConnectionModel, type BrokerConnectionStatus, type BrokerProvider } from '../models/brokerConnection.model';
 import { MembershipModel } from '../models/membership.model';
 import { OrganizationModel, type OrganizationDocument } from '../models/organization.model';
 import { WorkspaceProfileModel, type WorkspaceProfileDocument } from '../models/workspaceProfile.model';
 import type { UserDocument } from '../models/user.model';
+import { UserModel } from '../models/user.model';
 import { normalizeRoles, type IdentityRole } from '../../../shared/identity/rbac';
 
 const DEFAULT_WATCHLIST = [
   { symbol: 'SPY', label: 'S&P 500 ETF', enabled: true },
   { symbol: 'QQQ', label: 'Nasdaq 100 ETF', enabled: true },
   { symbol: 'AAPL', label: 'Apple', enabled: true },
-  { symbol: 'MSFT', label: 'Microsoft', enabled: true },
   { symbol: 'NVDA', label: 'NVIDIA', enabled: true },
+  { symbol: 'TSLA', label: 'Tesla', enabled: true },
 ] as const;
 
 const BROKER_PROVIDERS: { provider: BrokerProvider; label: string; enabled: boolean }[] = [
   { provider: 'alpaca', label: 'Alpaca', enabled: true },
-  { provider: 'tradier', label: 'Tradier', enabled: true },
-  { provider: 'ibkr', label: 'Interactive Brokers', enabled: true },
-  { provider: 'tastytrade', label: 'Tastytrade', enabled: true },
+  { provider: 'tradier', label: 'Tradier', enabled: false },
+  { provider: 'ibkr', label: 'Interactive Brokers', enabled: false },
+  { provider: 'tastytrade', label: 'Tastytrade', enabled: false },
   { provider: 'paper', label: 'Paper Trading', enabled: true },
 ];
 
@@ -37,7 +38,23 @@ export type PublicWorkspace = {
     aiMemory: WorkspaceProfileDocument['aiMemory'];
     journal: WorkspaceProfileDocument['journal'];
   };
-  brokerOnboarding: WorkspaceProfileDocument['brokerOnboarding'];
+  brokerOnboarding: WorkspaceProfileDocument['brokerOnboarding'] & {
+    connections: Array<{
+      provider: BrokerProvider;
+      label: string;
+      status: BrokerConnectionStatus;
+      accountId: string | null;
+      accountType: string | null;
+      paper: boolean;
+      buyingPower: number | null;
+      currency: string | null;
+    }>;
+  };
+  onboarding: WorkspaceProfileDocument['onboarding'];
+  aiProfile: WorkspaceProfileDocument['aiProfile'];
+  riskProfile: WorkspaceProfileDocument['riskProfile'];
+  notifications: WorkspaceProfileDocument['notifications'];
+  layouts: WorkspaceProfileDocument['layouts'];
 };
 
 function userObjectId(user: UserDocument): Types.ObjectId {
@@ -96,6 +113,9 @@ async function ensureBrokerPlaceholders(user: UserDocument): Promise<void> {
             provider: provider.provider,
             label: provider.label,
             status: 'unconfigured',
+            accountId: null,
+            accountType: null,
+            paper: provider.provider === 'paper',
             secretCiphertext: null,
             meta: { onboarding: true },
           },
@@ -133,6 +153,39 @@ async function ensureWorkspaceProfile(user: UserDocument, org: OrganizationDocum
           status: 'not_started',
           providers: BROKER_PROVIDERS,
         },
+        onboarding: { status: 'not_started', currentStep: 0, completedAt: null },
+        aiProfile: {
+          riskTolerance: 'balanced',
+          preferredMarkets: ['stocks', 'options'],
+          preferredStrategies: ['research'],
+          personality: 'institutional',
+          marketHours: 'regular',
+        },
+        riskProfile: {
+          maximumDailyLoss: 500,
+          maximumPositionSize: 5000,
+          instruments: 'stocks_options',
+          paperTrading: true,
+          automationAllowed: false,
+          defaultStrategy: 'manual',
+          emergencyStop: true,
+        },
+        notifications: {
+          emailAlerts: true,
+          tradeAlerts: true,
+          automationAlerts: true,
+          aiSuggestions: true,
+          brokerDisconnect: true,
+          marginCalls: true,
+          systemMaintenance: true,
+        },
+        layouts: [
+          { key: 'trading', label: 'Trading Layout', version: 1 },
+          { key: 'ai', label: 'AI Layout', version: 1 },
+          { key: 'research', label: 'Research Layout', version: 1 },
+          { key: 'portfolio', label: 'Portfolio Layout', version: 1 },
+          { key: 'automation', label: 'Automation Layout', version: 1 },
+        ],
       },
     },
     { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
@@ -144,17 +197,152 @@ export async function ensureUserWorkspace(user: UserDocument): Promise<PublicWor
   const org = await findOrCreateOrganization(user);
   await Promise.all([ensureMembership(user, org), ensureBrokerPlaceholders(user)]);
   const profile = await ensureWorkspaceProfile(user, org);
-  return toPublicWorkspace(org, normalizeRoles(user.roles), profile);
+  return toPublicWorkspace(org, normalizeRoles(user.roles), profile, await publicBrokerConnections(user));
 }
 
 export async function getUserWorkspace(user: UserDocument): Promise<PublicWorkspace> {
   return ensureUserWorkspace(user);
 }
 
+export type OnboardingConfiguration = {
+  timezone?: string;
+  tradingExperience?: UserDocument['profile']['tradingExperience'];
+  aiProfile?: Partial<WorkspaceProfileDocument['aiProfile']>;
+  riskProfile?: Partial<WorkspaceProfileDocument['riskProfile']>;
+  notifications?: Partial<WorkspaceProfileDocument['notifications']>;
+  currentStep?: number;
+};
+
+export async function updateOnboardingConfiguration(
+  user: UserDocument,
+  patch: OnboardingConfiguration
+): Promise<PublicWorkspace> {
+  const workspace = await ensureWorkspaceProfile(user, await findOrCreateOrganization(user));
+  if (patch.timezone !== undefined) user.profile.timezone = patch.timezone;
+  if (patch.tradingExperience !== undefined) user.profile.tradingExperience = patch.tradingExperience;
+  if (patch.timezone !== undefined || patch.tradingExperience !== undefined) {
+    user.markModified('profile');
+    await user.save();
+  }
+  if (patch.aiProfile) Object.assign(workspace.aiProfile, patch.aiProfile);
+  if (patch.riskProfile) Object.assign(workspace.riskProfile, patch.riskProfile);
+  if (patch.notifications) Object.assign(workspace.notifications, patch.notifications);
+  workspace.onboarding.status = 'in_progress';
+  if (patch.currentStep !== undefined) workspace.onboarding.currentStep = patch.currentStep;
+  workspace.markModified('aiProfile');
+  workspace.markModified('riskProfile');
+  workspace.markModified('notifications');
+  workspace.markModified('onboarding');
+  await workspace.save();
+  const org = await OrganizationModel.findById(workspace.orgId);
+  return toPublicWorkspace(org!, normalizeRoles(user.roles), workspace, await publicBrokerConnections(user));
+}
+
+async function publicBrokerConnections(user: UserDocument): Promise<PublicWorkspace['brokerOnboarding']['connections']> {
+  const connections = await BrokerConnectionModel.find({ userId: userObjectId(user) }).sort({ provider: 1 });
+  return connections.map(connection => ({
+    provider: connection.provider,
+    label: connection.label,
+    status: connection.status,
+    accountId: connection.accountId,
+    accountType: connection.accountType,
+    paper: connection.paper,
+    buyingPower: Number.isFinite(Number(connection.meta?.buyingPower)) ? Number(connection.meta.buyingPower) : null,
+    currency: typeof connection.meta?.currency === 'string' ? connection.meta.currency : null,
+  }));
+}
+
+export async function connectPaperBroker(user: UserDocument): Promise<PublicWorkspace> {
+  const userId = userObjectId(user);
+  await ensureUserWorkspace(user);
+  await BrokerConnectionModel.updateOne(
+    { userId, provider: 'paper' },
+    {
+      $set: {
+        status: 'connected',
+        accountId: `paper-${String(user._id)}`,
+        accountType: 'paper',
+        paper: true,
+        meta: { onboarding: true, buyingPower: 100_000, currency: 'USD' },
+      },
+    }
+  );
+  await WorkspaceProfileModel.updateOne(
+    { userId },
+    { $set: { 'brokerOnboarding.status': 'connected', 'onboarding.status': 'in_progress', 'onboarding.currentStep': 2 } }
+  );
+  return getUserWorkspace(user);
+}
+
+export type AlpacaAccountSnapshot = {
+  id?: unknown;
+  account_number?: unknown;
+  status?: unknown;
+  buying_power?: unknown;
+  currency?: unknown;
+  account_type?: unknown;
+  pattern_day_trader?: unknown;
+};
+
+export async function connectAlpacaBroker(
+  user: UserDocument,
+  account: AlpacaAccountSnapshot,
+  paper: boolean
+): Promise<PublicWorkspace> {
+  const userId = userObjectId(user);
+  await ensureUserWorkspace(user);
+  const accountId = String(account.id ?? account.account_number ?? '').trim();
+  if (!accountId) throw new Error('ALPACA_ACCOUNT_INVALID');
+  const buyingPower = Number(account.buying_power);
+  await BrokerConnectionModel.updateOne(
+    { userId, provider: 'alpaca' },
+    {
+      $set: {
+        status: 'connected',
+        accountId,
+        accountType: String(account.account_type ?? (paper ? 'paper' : 'live')),
+        paper,
+        meta: {
+          onboarding: true,
+          credentialSource: 'deployment',
+          brokerStatus: String(account.status ?? 'ACTIVE'),
+          buyingPower: Number.isFinite(buyingPower) ? buyingPower : null,
+          currency: String(account.currency ?? 'USD'),
+          patternDayTrader: account.pattern_day_trader === true,
+        },
+      },
+    }
+  );
+  await WorkspaceProfileModel.updateOne(
+    { userId },
+    { $set: { 'brokerOnboarding.status': 'connected', 'onboarding.status': 'in_progress', 'onboarding.currentStep': 2 } }
+  );
+  return getUserWorkspace(user);
+}
+
+export async function completeUserOnboarding(user: UserDocument): Promise<PublicWorkspace | null> {
+  const userId = userObjectId(user);
+  const connectedBroker = await BrokerConnectionModel.exists({ userId, status: 'connected' });
+  if (!connectedBroker) return null;
+  const completedAt = new Date();
+  await WorkspaceProfileModel.updateOne(
+    { userId },
+    { $set: { 'onboarding.status': 'complete', 'onboarding.currentStep': 5, 'onboarding.completedAt': completedAt } }
+  );
+  await UserModel.updateOne(
+    { _id: userId },
+    { $set: { firstLogin: false, onboardingCompletedAt: completedAt } }
+  );
+  user.firstLogin = false;
+  user.onboardingCompletedAt = completedAt;
+  return getUserWorkspace(user);
+}
+
 function toPublicWorkspace(
   org: OrganizationDocument,
   roles: IdentityRole[],
-  profile: WorkspaceProfileDocument
+  profile: WorkspaceProfileDocument,
+  connections: PublicWorkspace['brokerOnboarding']['connections']
 ): PublicWorkspace {
   return {
     organization: {
@@ -169,7 +357,16 @@ function toPublicWorkspace(
       aiMemory: profile.aiMemory,
       journal: profile.journal,
     },
-    brokerOnboarding: profile.brokerOnboarding,
+    brokerOnboarding: {
+      status: profile.brokerOnboarding.status,
+      providers: profile.brokerOnboarding.providers,
+      connections,
+    },
+    onboarding: profile.onboarding,
+    aiProfile: profile.aiProfile,
+    riskProfile: profile.riskProfile,
+    notifications: profile.notifications,
+    layouts: profile.layouts,
   };
 }
 

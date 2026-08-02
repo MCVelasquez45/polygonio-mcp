@@ -101,28 +101,6 @@ export async function exchangeGoogleCode(
   };
 }
 
-export async function verifyGoogleCredential(idToken: string): Promise<OAuthProfile> {
-  const cfg = getIdentityConfig();
-  const oauth = client();
-  const ticket = await oauth.verifyIdToken({
-    idToken,
-    audience: cfg.googleClientId!,
-  });
-  const payload = ticket.getPayload();
-  if (!payload || !payload.sub) {
-    throw new Error('Google ID token had no subject.');
-  }
-  if (!payload.email || payload.email_verified === false) {
-    throw new Error('Google account email is missing or unverified.');
-  }
-  return {
-    provider: 'google',
-    subject: payload.sub,
-    email: payload.email,
-    name: payload.name,
-  };
-}
-
 /** Test/hot-reload helper. */
 export function resetOAuthClientCache(): void {
   cachedClient = null;

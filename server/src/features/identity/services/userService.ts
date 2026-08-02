@@ -23,6 +23,8 @@ export type PublicUser = {
   oauthProviders: string[];
   lastLoginAt: string | null;
   createdAt: string;
+  firstLogin: boolean;
+  onboardingCompletedAt: string | null;
 };
 
 export function toPublicUser(user: UserDocument): PublicUser {
@@ -37,6 +39,8 @@ export function toPublicUser(user: UserDocument): PublicUser {
     oauthProviders: (user.oauth ?? []).map(o => o.provider),
     lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
     createdAt: user.createdAt.toISOString(),
+    firstLogin: user.firstLogin !== false,
+    onboardingCompletedAt: user.onboardingCompletedAt?.toISOString() ?? null,
   };
 }
 
@@ -74,6 +78,7 @@ export async function createEmailPasswordUser(input: CreateUserInput): Promise<U
     emailVerified: false,
     passwordHash,
     status: 'pending',
+    firstLogin: true,
     // Bootstrap: the very first account provisions as admin so the deployment
     // has an operator. Every subsequent self-registration is a viewer.
     roles: isFirstUser ? ['admin'] : ['viewer'],
@@ -210,6 +215,7 @@ export async function upsertOAuthUser(oauth: OAuthProfile): Promise<UserDocument
       emailVerified: true,
       passwordHash: null,
       status: 'active',
+      firstLogin: true,
       roles: isFirstUser ? ['admin'] : ['viewer'],
       profile: {
         name: oauth.name?.trim() || email.split('@')[0],

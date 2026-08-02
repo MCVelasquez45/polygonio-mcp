@@ -207,6 +207,13 @@ export function AuthScreen() {
                     {oauthBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-300 text-xs font-bold">G</span>}
                     {oauthBusy ? 'Connecting to Google...' : 'Continue with Google'}
                   </button>
+                  {auth.authConfigStatus !== 'loading' && !auth.googleConfigured && (
+                    <p role="status" className="rounded-md border border-amber-300/15 bg-amber-300/[0.05] px-3 py-2 text-xs leading-5 text-amber-100/80">
+                      {auth.authConfigStatus === 'error'
+                        ? 'Google sign-in status could not be verified. Use email sign-in or retry after the identity service recovers.'
+                        : 'Google sign-in is not configured for this environment. Use email sign-in.'}
+                    </p>
+                  )}
                   <button
                     type="button"
                     disabled

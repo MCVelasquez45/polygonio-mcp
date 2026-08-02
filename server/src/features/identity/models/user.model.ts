@@ -38,6 +38,8 @@ export interface UserDocument extends Document {
   failedLoginCount: number;
   lockedUntil: Date | null;
   lastLoginAt: Date | null;
+  firstLogin: boolean;
+  onboardingCompletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +83,10 @@ const UserSchema = new Schema<UserDocument>(
     failedLoginCount: { type: Number, required: true, default: 0 },
     lockedUntil: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
+    // Default false keeps pre-V3 accounts on the returning-user path. Every
+    // newly created V3 account sets this explicitly to true in userService.
+    firstLogin: { type: Boolean, required: true, default: false },
+    onboardingCompletedAt: { type: Date, default: null },
   },
   { timestamps: true, collection: IDENTITY_COLLECTIONS.users }
 );

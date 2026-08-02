@@ -16,6 +16,9 @@ export interface BrokerConnectionDocument extends Document {
   provider: BrokerProvider;
   label: string;
   status: BrokerConnectionStatus;
+  accountId: string | null;
+  accountType: string | null;
+  paper: boolean;
   secretCiphertext: EnvelopeCiphertext | null; // never plaintext
   meta: Record<string, unknown>;
   createdAt: Date;
@@ -43,6 +46,9 @@ const BrokerConnectionSchema = new Schema<BrokerConnectionDocument>(
       required: true,
       default: 'unconfigured',
     },
+    accountId: { type: String, default: null },
+    accountType: { type: String, default: null },
+    paper: { type: Boolean, required: true, default: false },
     secretCiphertext: { type: EnvelopeSchema, default: null },
     meta: { type: Schema.Types.Mixed, default: {} },
   },

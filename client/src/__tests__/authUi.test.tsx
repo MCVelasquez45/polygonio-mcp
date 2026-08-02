@@ -6,6 +6,9 @@ const authMock = {
   user: null,
   googleConfigured: true,
   googleClientId: 'google-client',
+  authConfigStatus: 'ready',
+  alpacaConfigured: true,
+  alpacaPaper: true,
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
@@ -18,6 +21,10 @@ const authMock = {
   updateProfile: vi.fn(),
   listSessions: vi.fn(),
   getWorkspace: vi.fn(),
+  updateOnboarding: vi.fn(),
+  connectPaperBroker: vi.fn(),
+  connectAlpacaBroker: vi.fn(),
+  completeOnboarding: vi.fn(),
   revokeSession: vi.fn(),
   signInWithGoogle: vi.fn(),
 };
@@ -31,6 +38,8 @@ const { AuthScreen } = await import('../auth/AuthScreen');
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  authMock.googleConfigured = true;
+  authMock.authConfigStatus = 'ready';
 });
 
 describe('AuthScreen', () => {
@@ -48,5 +57,13 @@ describe('AuthScreen', () => {
     render(<AuthScreen />);
     expect(screen.getByRole('heading', { name: 'Set a new password' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
+  });
+
+  it('explains when Google authentication is unavailable', () => {
+    authMock.googleConfigured = false;
+    window.history.pushState({}, '', '/auth/login');
+    render(<AuthScreen />);
+    expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Google sign-in is not configured');
   });
 });

@@ -39,6 +39,7 @@ import { debugLog } from './lib/debugLog';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { AuthScreen } from './auth/AuthScreen';
 import { ProfileMenu } from './auth/ProfileMenu';
+import { OnboardingScreen } from './auth/OnboardingScreen';
 
 // Route-level code splitting: the heavy switchable views load on demand, so the
 // initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
@@ -3199,6 +3200,7 @@ function TradingApp() {
           }
           chat={mobileChat}
           banners={mobileBanners}
+          accountSlot={<ProfileMenu />}
         />
         <Toaster richColors position="top-center" theme="dark" />
       </>
@@ -3454,7 +3456,17 @@ function ProtectedApp() {
     );
   }
   if (auth.status !== 'authenticated') {
+    if (!window.location.pathname.startsWith('/auth')) {
+      window.history.replaceState({}, '', '/auth/login');
+    }
     return <AuthScreen />;
+  }
+  if (auth.user?.firstLogin) {
+    if (window.location.pathname !== '/onboarding') window.history.replaceState({}, '', '/onboarding');
+    return <OnboardingScreen />;
+  }
+  if (window.location.pathname.startsWith('/auth') || window.location.pathname === '/onboarding' || window.location.pathname === '/') {
+    window.history.replaceState({}, '', '/terminal');
   }
   return <TradingApp />;
 }

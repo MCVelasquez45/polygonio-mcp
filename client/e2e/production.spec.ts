@@ -1,4 +1,4 @@
-import { test, expect, type Page, type ConsoleMessage, type Request } from '@playwright/test';
+import { test, expect, type BrowserContext, type Page, type ConsoleMessage, type Request } from '@playwright/test';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173';
 const IS_LOCAL_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(BASE_URL);
@@ -213,6 +213,52 @@ async function selectWatchlistSymbol(page: Page, symbol: string): Promise<boolea
   }
 }
 
+async function mockBrokerReadModel(context: BrowserContext): Promise<void> {
+  await context.route('**/api/broker/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/broker/account' || path === '/api/broker/alpaca/account') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'e2e-paper-account',
+          status: 'ACTIVE',
+          buying_power: '100000.00',
+          cash: '100000.00',
+          equity: '100000.00',
+          multiplier: '2',
+        }),
+      });
+    }
+    if (path === '/api/broker/alpaca/options/positions') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ positions: [] }) });
+    }
+    if (path === '/api/broker/alpaca/options/orders') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ orders: [] }) });
+    }
+    if (path === '/api/broker/alpaca/clock') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          timestamp: '2026-08-01T12:00:00.000Z',
+          is_open: false,
+          next_open: '2026-08-03T13:30:00.000Z',
+          next_close: '2026-08-03T20:00:00.000Z',
+        }),
+      });
+    }
+    return route.continue();
+  });
+}
+
+test.beforeEach(async ({ context }) => {
+  // Cross-browser UI certification must not consume or depend on an external
+  // broker quota. Broker route behavior is certified independently by the
+  // server integration suite; these fixtures exercise the same client schema.
+  await mockBrokerReadModel(context);
+});
+
 test.describe('Production application shell', () => {
   test('loads without crashing and has no forbidden-origin calls', async ({ page }) => {
     const evidence = attachEvidenceCollectors(page);
@@ -226,6 +272,17 @@ test.describe('Production application shell', () => {
     await waitForApiRequestsToSettle(evidence);
     reportEvidence('app-shell', evidence);
     expectCleanEvidence(evidence);
+
+    if ((page.viewportSize()?.width ?? 1440) >= 768) {
+      const review = page.getByRole('button', { name: /Review/i }).first();
+      await review.click();
+      await expect(page.getByTestId('trading-intelligence-workspace')).toBeVisible({ timeout: 20_000 });
+      const trade = page.getByRole('button', { name: /^Trade\b/i }).first();
+      await trade.click();
+      await expect(trade).toHaveAttribute('aria-current', 'page');
+      await waitForApiRequestsToSettle(evidence);
+      expectCleanEvidence(evidence);
+    }
 
     await page.screenshot({ path: 'e2e-artifacts/app-shell.png', fullPage: true });
   });

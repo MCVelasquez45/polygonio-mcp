@@ -44,6 +44,7 @@ export function ProfileMenu() {
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label="Open operator profile"
         className="inline-flex h-9 items-center gap-2 rounded-lg border border-intel-line px-2.5 text-sm text-intel-ink2 transition hover:border-intel-accentLine hover:text-intel-accent"
       >
         <span className="flex h-6 w-6 items-center justify-center rounded-md bg-intel-accentSoft font-mono text-[10px] text-intel-accent">{initials}</span>

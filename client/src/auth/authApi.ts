@@ -20,6 +20,8 @@ export type PublicUser = {
   oauthProviders: string[];
   lastLoginAt: string | null;
   createdAt: string;
+  firstLogin: boolean;
+  onboardingCompletedAt: string | null;
 };
 
 export type AuthSession = {
@@ -71,10 +73,52 @@ export type WorkspaceSummary = {
   brokerOnboarding: {
     status: 'not_started' | 'in_progress' | 'connected';
     providers: { provider: BrokerProvider; label: string; enabled: boolean }[];
+    connections: Array<{
+      provider: BrokerProvider;
+      label: string;
+      status: 'unconfigured' | 'connected' | 'error' | 'revoked';
+      accountId: string | null;
+      accountType: string | null;
+      paper: boolean;
+      buyingPower: number | null;
+      currency: string | null;
+    }>;
   };
+  onboarding: {
+    status: 'not_started' | 'in_progress' | 'complete';
+    currentStep: number;
+    completedAt: string | null;
+  };
+  aiProfile: {
+    riskTolerance: 'conservative' | 'balanced' | 'aggressive';
+    preferredMarkets: string[];
+    preferredStrategies: string[];
+    personality: 'institutional' | 'research' | 'execution' | 'automation';
+    marketHours: 'regular' | 'extended';
+  };
+  riskProfile: {
+    maximumDailyLoss: number;
+    maximumPositionSize: number;
+    instruments: 'stocks' | 'options' | 'stocks_options';
+    paperTrading: boolean;
+    automationAllowed: boolean;
+    defaultStrategy: string;
+    emergencyStop: boolean;
+  };
+  notifications: Record<'emailAlerts' | 'tradeAlerts' | 'automationAlerts' | 'aiSuggestions' | 'brokerDisconnect' | 'marginCalls' | 'systemMaintenance', boolean>;
+  layouts: { key: string; label: string; version: number }[];
 };
 
-export async function getAuthConfig(): Promise<{ googleConfigured: boolean; googleClientId: string | null }> {
+export type OnboardingPatch = {
+  timezone?: string;
+  tradingExperience?: PublicUser['profile']['tradingExperience'];
+  currentStep?: number;
+  aiProfile?: Partial<WorkspaceSummary['aiProfile']>;
+  riskProfile?: Partial<WorkspaceSummary['riskProfile']>;
+  notifications?: Partial<WorkspaceSummary['notifications']>;
+};
+
+export async function getAuthConfig(): Promise<{ googleConfigured: boolean; googleClientId: string | null; alpacaConfigured: boolean; alpacaPaper: boolean }> {
   const response = await http.get('/api/auth/config');
   return response.data;
 }
@@ -100,10 +144,22 @@ export async function login(input: { email: string; password: string; rememberMe
   return response.data;
 }
 
-export async function refreshSession(): Promise<AuthSession> {
-  await ensureCsrf();
-  const response = await http.post('/api/auth/refresh', {});
-  return response.data;
+let refreshSessionPromise: Promise<AuthSession> | null = null;
+
+export function refreshSession(): Promise<AuthSession> {
+  // Refresh tokens rotate on every use. React Strict Mode intentionally mounts
+  // effects twice in development, so concurrent restore calls must share one
+  // request or the second request is correctly detected as token replay.
+  if (!refreshSessionPromise) {
+    refreshSessionPromise = (async () => {
+      await ensureCsrf();
+      const response = await http.post('/api/auth/refresh', {});
+      return response.data;
+    })().finally(() => {
+      refreshSessionPromise = null;
+    });
+  }
+  return refreshSessionPromise;
 }
 
 export async function logout(): Promise<void> {
@@ -132,6 +188,26 @@ export async function listSessions(): Promise<SessionSummary[]> {
 export async function getWorkspace(): Promise<WorkspaceSummary> {
   const response = await http.get('/api/auth/workspace');
   return response.data.workspace;
+}
+
+export async function updateOnboarding(patch: OnboardingPatch): Promise<WorkspaceSummary> {
+  const response = await http.patch('/api/auth/onboarding', patch);
+  return response.data.workspace;
+}
+
+export async function connectPaperBroker(): Promise<WorkspaceSummary> {
+  const response = await http.post('/api/auth/onboarding/broker/paper', {});
+  return response.data.workspace;
+}
+
+export async function connectAlpacaBroker(): Promise<WorkspaceSummary> {
+  const response = await http.post('/api/auth/onboarding/broker/alpaca', {});
+  return response.data.workspace;
+}
+
+export async function completeOnboarding(): Promise<{ workspace: WorkspaceSummary; user: PublicUser }> {
+  const response = await http.post('/api/auth/onboarding/complete', {});
+  return response.data;
 }
 
 export async function revokeSession(id: string): Promise<void> {

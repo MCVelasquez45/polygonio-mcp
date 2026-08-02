@@ -14,7 +14,10 @@ function clientKey(req: Request): string {
   // Trust the platform proxy's forwarded IP when present; fall back to socket.
   const forwarded = req.header('x-forwarded-for');
   const ip = forwarded ? forwarded.split(',')[0]!.trim() : req.ip || req.socket.remoteAddress || 'unknown';
-  return ip;
+  // Each route declares its own threshold. Keeping endpoint buckets isolated
+  // prevents ordinary flows (CSRF -> register -> verify -> login) from
+  // exhausting a stricter recovery or resend limit on the same IP.
+  return `${ip}:${req.method}:${req.baseUrl}${req.path}`;
 }
 
 function prune(bucket: Bucket, windowMs: number, now: number): void {

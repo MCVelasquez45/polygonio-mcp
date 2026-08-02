@@ -206,21 +206,30 @@ function isAuthRefresh(config: any): boolean {
   return String(config?.url ?? '').includes('/api/auth/refresh');
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const csrf = readCookie('id_csrf');
-  if (!csrf) return null;
-  const response = await axios.post(
-    '/api/auth/refresh',
-    {},
-    {
-      baseURL: getActiveBaseUrl(),
-      withCredentials: true,
-      headers: { 'X-CSRF-Token': csrf },
-    }
-  );
-  const token = typeof response.data?.accessToken === 'string' ? response.data.accessToken : null;
-  setAccessToken(token);
-  return token;
+let accessTokenRefreshPromise: Promise<string | null> | null = null;
+
+function refreshAccessToken(): Promise<string | null> {
+  if (!accessTokenRefreshPromise) {
+    accessTokenRefreshPromise = (async () => {
+      const csrf = readCookie('id_csrf');
+      if (!csrf) return null;
+      const response = await axios.post(
+        '/api/auth/refresh',
+        {},
+        {
+          baseURL: getActiveBaseUrl(),
+          withCredentials: true,
+          headers: { 'X-CSRF-Token': csrf },
+        }
+      );
+      const token = typeof response.data?.accessToken === 'string' ? response.data.accessToken : null;
+      setAccessToken(token);
+      return token;
+    })().finally(() => {
+      accessTokenRefreshPromise = null;
+    });
+  }
+  return accessTokenRefreshPromise;
 }
 
 function getHeader(headers: any, key: string): string | undefined {
@@ -318,7 +327,11 @@ http.interceptors.response.use(
     return response;
   },
   async error => {
-    const config = error?.config as (typeof error.config & { __baseUrlRetried?: boolean; __authRetried?: boolean }) | undefined;
+    const config = error?.config as (typeof error.config & {
+      __baseUrlRetried?: boolean;
+      __authRetried?: boolean;
+      __networkRetried?: boolean;
+    }) | undefined;
     if (config && !error?.response && !config.__baseUrlRetried) {
       const fallback = computeFallbackBaseUrl();
       if (fallback && fallback !== getActiveBaseUrl()) {
@@ -327,6 +340,17 @@ http.interceptors.response.use(
         config.baseURL = fallback;
         return http.request(config);
       }
+    }
+    if (
+      config &&
+      !error?.response &&
+      !config.__networkRetried &&
+      String(config.method ?? 'GET').toUpperCase() === 'GET' &&
+      !isCancellation(error)
+    ) {
+      config.__networkRetried = true;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return http.request(config);
     }
     if (isCancellation(error)) {
       if (HTTP_DEBUG) {

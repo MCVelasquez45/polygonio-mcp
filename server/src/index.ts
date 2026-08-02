@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './shared/loadEnv';
 import express from 'express';
 import cors, { type CorsOptions } from 'cors';
 import compression from 'compression';

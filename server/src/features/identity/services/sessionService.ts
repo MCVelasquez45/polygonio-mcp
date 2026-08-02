@@ -117,18 +117,24 @@ export async function rotateSession(
   // Rotate: mint a new token in the same family, mark the old one rotated.
   const ttl = refreshTtl(session.rememberMe);
   const rawRefresh = generateOpaqueToken();
+  const successorHash = sha256(rawRefresh);
   const newSession = await SessionModel.create({
     userId: session.userId,
     familyId: session.familyId,
-    tokenHash: sha256(rawRefresh),
+    tokenHash: successorHash,
     rememberMe: session.rememberMe,
     device: { ua: clientUa(req), ip: clientIp(req) },
     lastUsedAt: new Date(),
     expiresAt: new Date(Date.now() + ttl * 1000),
   });
-  session.rotatedTo = newSession.tokenHash;
-  session.lastUsedAt = new Date();
-  await session.save();
+  const claimed = await SessionModel.updateOne(
+    { _id: session._id, rotatedTo: null, revokedAt: null },
+    { $set: { rotatedTo: successorHash, lastUsedAt: new Date() } }
+  );
+  if ((claimed.modifiedCount ?? 0) !== 1) {
+    await revokeFamily(session.familyId);
+    return { status: 'reuse', familyId: session.familyId, userId: String(session.userId) };
+  }
 
   const tokens = await issueTokensForSession(user, newSession, rawRefresh, ttl);
   return { status: 'ok', tokens, user };

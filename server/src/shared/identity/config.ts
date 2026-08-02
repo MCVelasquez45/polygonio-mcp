@@ -5,6 +5,8 @@
 // are validated lazily at point of use so the server still boots in observe
 // mode without them.
 
+import { createHash } from 'crypto';
+
 export type IdentityConfig = {
   /** Signing secret for short-lived access JWTs. */
   jwtSecret: string;
@@ -61,7 +63,16 @@ function envOptional(name: string): string | null {
 
 function parseEncryptionKey(): Buffer | null {
   const raw = envOptional('IDENTITY_ENCRYPTION_KEY');
-  if (!raw) return null;
+  if (!raw) {
+    const legacySessionSecret = envOptional('SESSION_SECRET');
+    if (process.env.NODE_ENV !== 'production' && legacySessionSecret) {
+      return createHash('sha256')
+        .update('ai-trader:identity-encryption:v1\0', 'utf8')
+        .update(legacySessionSecret, 'utf8')
+        .digest();
+    }
+    return null;
+  }
   const buf = Buffer.from(raw, 'base64');
   if (buf.length !== 32) {
     throw new Error(
@@ -80,7 +91,9 @@ export function getIdentityConfig(): IdentityConfig {
   // In development we allow an ephemeral JWT secret so the server boots; it is
   // regenerated per process (invalidates tokens on restart) — acceptable for
   // dev, never for production. Production MUST set IDENTITY_JWT_SECRET.
-  const jwtSecret = envOptional('IDENTITY_JWT_SECRET');
+  const jwtSecret =
+    envOptional('IDENTITY_JWT_SECRET') ??
+    (process.env.NODE_ENV !== 'production' ? envOptional('SESSION_SECRET') : null);
   const resolvedJwtSecret =
     jwtSecret ??
     (process.env.NODE_ENV === 'production'

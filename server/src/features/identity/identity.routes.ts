@@ -8,6 +8,7 @@ import { checkPasswordPolicy, verifyPassword } from '../../shared/identity/passw
 import { getIdentityConfig, isGoogleOAuthConfigured } from '../../shared/identity/config';
 import { normalizeReturnTo, verifyGoogleOAuthState } from '../../shared/identity/oauthState';
 import { requireAuthenticated, requireMongoIdentity } from './identity.middleware';
+import type { UserDocument } from './models/user.model';
 import {
   createEmailPasswordUser,
   findUserByEmail,
@@ -31,10 +32,17 @@ import {
   revokeSessionById,
   rotateSession,
 } from './services/sessionService';
-import { beginGoogleOAuth, consumeGoogleOAuthAttempt, exchangeGoogleCode, verifyGoogleCredential } from './services/oauthService';
+import { beginGoogleOAuth, consumeGoogleOAuthAttempt, exchangeGoogleCode } from './services/oauthService';
+import { getAlpacaAccount, getAlpacaEnvironment } from '../broker/services/alpaca';
 import { sendPasswordResetEmail, sendVerificationEmail } from './services/emailService';
 import { clientIp, clientUa, recordAuditFromRequest } from './services/auditService';
-import { getUserWorkspace } from './services/workspaceService';
+import {
+  completeUserOnboarding,
+  connectAlpacaBroker,
+  connectPaperBroker,
+  getUserWorkspace,
+  updateOnboardingConfiguration,
+} from './services/workspaceService';
 
 export const identityRouter = express.Router();
 
@@ -77,9 +85,12 @@ function isEmail(value: string): boolean {
 }
 
 identityRouter.get('/config', (_req, res) => {
+  const alpaca = getAlpacaEnvironment();
   res.json({
     googleConfigured: isGoogleOAuthConfigured(),
     googleClientId: getIdentityConfig().googleClientId,
+    alpacaConfigured: alpaca.hasCredentials,
+    alpacaPaper: alpaca.paper,
   });
 });
 
@@ -244,6 +255,100 @@ identityRouter.get('/workspace', requireMongoIdentity, requireAuthenticated, asy
   res.json({ workspace: await getUserWorkspace(user) });
 }));
 
+identityRouter.patch('/onboarding', requireMongoIdentity, requireAuthenticated, requireCsrf, asyncRoute(async (req, res) => {
+  const user = await findUserById(req.auth!.actorId);
+  if (!user || user.status === 'disabled') {
+    res.status(401).json({ error: 'AUTH_REQUIRED' });
+    return;
+  }
+  const experience = stringBody(req.body?.tradingExperience, 32);
+  const riskTolerance = stringBody(req.body?.aiProfile?.riskTolerance, 32);
+  const personality = stringBody(req.body?.aiProfile?.personality, 32);
+  const marketHours = stringBody(req.body?.aiProfile?.marketHours, 32);
+  const instruments = stringBody(req.body?.riskProfile?.instruments, 32);
+  const maximumDailyLoss = Number(req.body?.riskProfile?.maximumDailyLoss);
+  const maximumPositionSize = Number(req.body?.riskProfile?.maximumPositionSize);
+  const currentStep = Math.max(0, Math.min(5, Number(req.body?.currentStep) || 0));
+  const workspace = await updateOnboardingConfiguration(user, {
+    timezone: stringBody(req.body?.timezone, 64) || undefined,
+    tradingExperience: ['none', 'beginner', 'intermediate', 'advanced', 'professional'].includes(experience)
+      ? experience as UserDocument['profile']['tradingExperience']
+      : undefined,
+    currentStep,
+    aiProfile: {
+      ...(['conservative', 'balanced', 'aggressive'].includes(riskTolerance) ? { riskTolerance: riskTolerance as 'conservative' | 'balanced' | 'aggressive' } : {}),
+      ...(['institutional', 'research', 'execution', 'automation'].includes(personality) ? { personality: personality as 'institutional' | 'research' | 'execution' | 'automation' } : {}),
+      ...(['regular', 'extended'].includes(marketHours) ? { marketHours: marketHours as 'regular' | 'extended' } : {}),
+      ...(Array.isArray(req.body?.aiProfile?.preferredMarkets) ? { preferredMarkets: req.body.aiProfile.preferredMarkets.map((item: unknown) => stringBody(item, 32)).filter(Boolean).slice(0, 10) } : {}),
+      ...(Array.isArray(req.body?.aiProfile?.preferredStrategies) ? { preferredStrategies: req.body.aiProfile.preferredStrategies.map((item: unknown) => stringBody(item, 48)).filter(Boolean).slice(0, 10) } : {}),
+    },
+    riskProfile: {
+      ...(Number.isFinite(maximumDailyLoss) ? { maximumDailyLoss: Math.max(0, Math.min(maximumDailyLoss, 10_000_000)) } : {}),
+      ...(Number.isFinite(maximumPositionSize) ? { maximumPositionSize: Math.max(0, Math.min(maximumPositionSize, 100_000_000)) } : {}),
+      ...(['stocks', 'options', 'stocks_options'].includes(instruments) ? { instruments: instruments as 'stocks' | 'options' | 'stocks_options' } : {}),
+      ...(typeof req.body?.riskProfile?.paperTrading === 'boolean' ? { paperTrading: req.body.riskProfile.paperTrading } : {}),
+      ...(typeof req.body?.riskProfile?.automationAllowed === 'boolean' ? { automationAllowed: req.body.riskProfile.automationAllowed } : {}),
+      ...(typeof req.body?.riskProfile?.emergencyStop === 'boolean' ? { emergencyStop: req.body.riskProfile.emergencyStop } : {}),
+      ...(stringBody(req.body?.riskProfile?.defaultStrategy, 64) ? { defaultStrategy: stringBody(req.body.riskProfile.defaultStrategy, 64) } : {}),
+    },
+    notifications: Object.fromEntries(
+      ['emailAlerts', 'tradeAlerts', 'automationAlerts', 'aiSuggestions', 'brokerDisconnect', 'marginCalls', 'systemMaintenance']
+        .filter(key => typeof req.body?.notifications?.[key] === 'boolean')
+        .map(key => [key, req.body.notifications[key]])
+    ),
+  });
+  await recordAuditFromRequest(req, { actorId: req.auth!.actorId, action: 'ONBOARDING_UPDATED', targetType: 'workspace', targetId: workspace.organization.id, meta: { currentStep } });
+  res.json({ workspace });
+}));
+
+identityRouter.post('/onboarding/broker/paper', requireMongoIdentity, requireAuthenticated, requireCsrf, asyncRoute(async (req, res) => {
+  const user = await findUserById(req.auth!.actorId);
+  if (!user || user.status === 'disabled') {
+    res.status(401).json({ error: 'AUTH_REQUIRED' });
+    return;
+  }
+  const workspace = await connectPaperBroker(user);
+  await recordAuditFromRequest(req, { actorId: req.auth!.actorId, action: 'PAPER_BROKER_CONNECTED', targetType: 'workspace', targetId: workspace.organization.id });
+  res.json({ workspace });
+}));
+
+identityRouter.post('/onboarding/broker/alpaca', requireMongoIdentity, requireAuthenticated, requireCsrf, asyncRoute(async (req, res) => {
+  const user = await findUserById(req.auth!.actorId);
+  if (!user || user.status === 'disabled') {
+    res.status(401).json({ error: 'AUTH_REQUIRED' });
+    return;
+  }
+  const environment = getAlpacaEnvironment();
+  if (!environment.hasCredentials) {
+    res.status(503).json({ error: 'ALPACA_NOT_CONFIGURED' });
+    return;
+  }
+  try {
+    const account = await getAlpacaAccount();
+    const workspace = await connectAlpacaBroker(user, account as Record<string, unknown>, environment.paper);
+    await recordAuditFromRequest(req, { actorId: req.auth!.actorId, action: 'ALPACA_BROKER_CONNECTED', targetType: 'workspace', targetId: workspace.organization.id, meta: { paper: environment.paper } });
+    res.json({ workspace });
+  } catch {
+    await recordAuditFromRequest(req, { actorId: req.auth!.actorId, action: 'ALPACA_BROKER_CONNECTION_FAILED', targetType: 'workspace', outcome: 'failure' });
+    res.status(502).json({ error: 'ALPACA_CONNECTION_FAILED' });
+  }
+}));
+
+identityRouter.post('/onboarding/complete', requireMongoIdentity, requireAuthenticated, requireCsrf, asyncRoute(async (req, res) => {
+  const user = await findUserById(req.auth!.actorId);
+  if (!user || user.status === 'disabled') {
+    res.status(401).json({ error: 'AUTH_REQUIRED' });
+    return;
+  }
+  const workspace = await completeUserOnboarding(user);
+  if (!workspace) {
+    res.status(409).json({ error: 'BROKER_CONNECTION_REQUIRED' });
+    return;
+  }
+  await recordAuditFromRequest(req, { actorId: req.auth!.actorId, action: 'ONBOARDING_COMPLETED', targetType: 'workspace', targetId: workspace.organization.id });
+  res.json({ workspace, user: toPublicUser(user) });
+}));
+
 identityRouter.patch('/profile', requireMongoIdentity, requireAuthenticated, requireCsrf, asyncRoute(async (req, res) => {
   const user = await updateProfile(req.auth!.actorId, {
     name: req.body?.name,
@@ -379,25 +484,6 @@ identityRouter.get('/google/callback', requireMongoIdentity, authRateLimit(40), 
   } catch {
     res.redirect(`${getIdentityConfig().appBaseUrl}/auth/login?error=google`);
   }
-}));
-
-identityRouter.post('/google/credential', requireMongoIdentity, authRateLimit(20), asyncRoute(async (req, res) => {
-  if (!isGoogleOAuthConfigured()) {
-    res.status(503).json({ error: 'GOOGLE_OAUTH_NOT_CONFIGURED' });
-    return;
-  }
-  const profile = await verifyGoogleCredential(stringBody(req.body?.credential, 4096));
-  const user = await upsertOAuthUser(profile);
-  await recordSuccessfulLogin(user);
-  const tokens = await createSession(user, bool(req.body?.rememberMe), req);
-  setSessionCookies(res, tokens);
-  await recordAuditFromRequest(req, {
-    actorId: String(user._id),
-    action: 'GOOGLE_CREDENTIAL_LOGIN',
-    targetType: 'session',
-    targetId: tokens.sessionId,
-  });
-  sendTokenResponse(res, tokens, toPublicUser(user));
 }));
 
 export default identityRouter;
