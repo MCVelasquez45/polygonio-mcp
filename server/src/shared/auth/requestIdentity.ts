@@ -1,6 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { writeStructuredLog } from '../logging/safeLogging';
+import { isMongoReady } from '../db/mongo';
+import { verifyAccessToken } from '../identity/jwt';
+import { toLegacyRoles } from '../identity/rbac';
+import { isSessionActive } from '../../features/identity/services/sessionService';
 
 export type AuthRole = 'viewer' | 'trader' | 'operator' | 'administrator';
 
@@ -11,8 +15,9 @@ export type RequestAuthContext = {
   actorId: string;
   accountId: string;
   roles: AuthRole[];
-  authMethod: 'bearer' | 'legacy-compatible';
+  authMethod: 'bearer' | 'session' | 'legacy-compatible';
   enforcementMode: AuthEnforcementMode;
+  sessionId?: string;
 };
 
 export type RequestIdentityConfig = {
@@ -39,7 +44,8 @@ const ROLE_SET = new Set<AuthRole>(['viewer', 'trader', 'operator', 'administrat
 
 export function createRequestIdentityMiddleware(config = resolveRequestIdentityConfig()) {
   return (req: RequestWithContext, res: Response, next: NextFunction): void => {
-    const identity = resolveRequestIdentity(req, config);
+    resolveRequestIdentity(req, config)
+      .then(identity => {
     req.auth = identity;
 
     if (shouldRequireAuthentication(req, config) && !identity.authenticated) {
@@ -65,6 +71,8 @@ export function createRequestIdentityMiddleware(config = resolveRequestIdentityC
     }
 
     next();
+      })
+      .catch(next);
   };
 }
 
@@ -79,7 +87,7 @@ export function resolveRequestIdentityConfig(env: NodeJS.ProcessEnv = process.en
   };
 }
 
-export function resolveRequestIdentity(req: Request, config: RequestIdentityConfig): RequestAuthContext {
+export async function resolveRequestIdentity(req: Request, config: RequestIdentityConfig): Promise<RequestAuthContext> {
   const providedToken = extractBearerToken(req.header('authorization'));
   if (providedToken && config.staticToken && tokenEquals(providedToken, config.staticToken)) {
     return {
@@ -90,6 +98,21 @@ export function resolveRequestIdentity(req: Request, config: RequestIdentityConf
       authMethod: 'bearer',
       enforcementMode: config.enforcementMode,
     };
+  }
+
+  if (providedToken) {
+    const verified = verifyAccessToken(providedToken);
+    if (verified && isMongoReady() && (await isSessionActive(verified.sid))) {
+      return {
+        authenticated: true,
+        actorId: verified.sub,
+        accountId: verified.wsp ?? config.defaultAccountId,
+        roles: toLegacyRoles(verified.roles),
+        authMethod: 'session',
+        enforcementMode: config.enforcementMode,
+        sessionId: verified.sid,
+      };
+    }
   }
 
   return {
@@ -106,6 +129,7 @@ export function shouldRequireAuthentication(req: Request, config: RequestIdentit
   if (config.enforcementMode !== 'required') return false;
   if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return false;
   const path = req.originalUrl || req.path || '';
+  if (path === '/api/auth' || path.startsWith('/api/auth/')) return false;
   return path === '/api' || path.startsWith('/api/');
 }
 

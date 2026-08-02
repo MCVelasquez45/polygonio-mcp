@@ -6,6 +6,7 @@ import {
   ACTIVITY_FILTERS,
   groupActivityEvents,
   humanizeEvent,
+  isOperatorEvent,
   type ActivityFilter,
 } from '../../lib/activityFeed';
 
@@ -36,28 +37,43 @@ export function ActivityFeed({
   events,
   max = 60,
   className = '',
+  operatorOnly = false,
+  title = 'Activity',
 }: {
   events: AutomationVisibilityEvent[];
   max?: number;
   className?: string;
+  /** Show only operator-facing events (trades, orders, risk, errors, alerts).
+   *  Engineering telemetry (heartbeats, reconciliation, scheduler) is excluded
+   *  and lives in the Diagnostics drawer instead. */
+  operatorOnly?: boolean;
+  title?: string;
 }) {
   const [filter, setFilter] = useState<ActivityFilter>('all');
+  const sourceEvents = useMemo(
+    () => (operatorOnly ? events.filter(isOperatorEvent) : events),
+    [events, operatorOnly]
+  );
   const rows = useMemo(
-    () => groupActivityEvents(events, filter).slice(0, max),
-    [events, filter, max]
+    () => groupActivityEvents(sourceEvents, filter).slice(0, max),
+    [sourceEvents, filter, max]
   );
 
   return (
     <div className={`flex flex-col rounded-panel border border-intel-line bg-intel-panel p-4 ${className}`}>
       <div className="mb-3 flex items-center gap-2">
         <Radio className="h-4 w-4 text-intel-accent" aria-hidden="true" />
-        <span className="text-sm font-semibold text-intel-ink">Activity</span>
+        <span className="text-sm font-semibold text-intel-ink">{title}</span>
         <span className="ml-auto font-mono text-[10px] uppercase tracking-label text-intel-ink3">
-          {events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'live'}
+          {sourceEvents.length ? `${sourceEvents.length} event${sourceEvents.length === 1 ? '' : 's'}` : 'live'}
         </span>
       </div>
 
-      <div className="mb-2 flex flex-wrap gap-1" role="tablist" aria-label="Activity filter">
+      <div
+        className={`mb-2 flex-wrap gap-1 ${operatorOnly ? 'hidden' : 'flex'}`}
+        role="tablist"
+        aria-label="Activity filter"
+      >
         {ACTIVITY_FILTERS.map((f) => (
           <button
             key={f.key}

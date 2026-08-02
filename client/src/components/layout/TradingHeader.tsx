@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Command, Menu, MessageSquare, Plus, Search, Settings, TrendingUp } from 'lucide-react';
 import { ActionButton } from '../intelligence/ui';
 import { LiveNumber } from '../shared/terminal';
@@ -19,6 +19,7 @@ type Props = {
   onToggleSettings: () => void;
   isSettingsOpen?: boolean;
   onOpenCommandPalette?: () => void;
+  accountSlot?: ReactNode;
 };
 
 /** SPY from a raw ticker or option symbol (O:SPY...), for the context pill. */
@@ -43,6 +44,7 @@ export const TradingHeader = memo(function TradingHeader({
   onToggleSettings,
   isSettingsOpen,
   onOpenCommandPalette,
+  accountSlot,
 }: Props) {
   const [tickerInput, setTickerInput] = useState(selectedTicker);
 
@@ -157,6 +159,7 @@ export const TradingHeader = memo(function TradingHeader({
         >
           <Settings className="h-5 w-5" />
         </button>
+        {accountSlot}
       </div>
     </header>
   );

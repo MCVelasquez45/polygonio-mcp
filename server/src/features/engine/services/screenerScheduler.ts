@@ -101,14 +101,8 @@ export class ScreenerScheduler {
           timestamp: new Date()
         });
 
-        // TODO: Execute trade via broker
-        // await broker.submitOrder({
-        //   symbol: best.ticker,
-        //   side: 'sell',
-        //   type: 'limit',
-        //   qty: 1,
-        //   limit_price: best.mid
-        // });
+        // Screener signals are observational. Orders must enter through the
+        // governed manual-intent or automation execution gateway.
 
         // Update strategy state
         await EngineStrategyModel.findByIdAndUpdate(strategy._id, {

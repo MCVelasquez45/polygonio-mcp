@@ -92,7 +92,11 @@ router.post('/approve', async (req, res) => {
     };
     await handoff.save();
 
-    // TODO: Notify Engine/Executor (WebSocket or Event Bus)
+    req.app.get('io')?.emit('handoff_approved', {
+      requestId: String(handoff._id),
+      strategyId: String(engineStrategy._id),
+      approvedAt: handoff.approvalMeta.approvedAt,
+    });
 
     res.json({ handoff, engineStrategy });
   } catch (error: any) {

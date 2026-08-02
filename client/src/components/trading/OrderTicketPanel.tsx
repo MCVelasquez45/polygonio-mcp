@@ -747,7 +747,9 @@ export const OrderTicketPanel = memo(function OrderTicketPanel({
         </TicketCard>
 
         <TicketCard title="Probability">
-          <div className="grid grid-cols-5 gap-x-2 gap-y-2">
+          {/* 6 metrics on a 3-col grid → two balanced rows (was 5-col, which
+              stranded Vega alone on a second line). */}
+          <div className="grid grid-cols-3 gap-x-3 gap-y-2">
             <TicketMetric
               label="POP"
               value={popDisplay}

@@ -38,6 +38,7 @@ export type MobileShellProps = {
   cockpitPanel: ReactNode;
   chat: ReactNode;
   banners?: ReactNode;
+  accountSlot?: ReactNode;
 };
 
 export function MobileShell({
@@ -59,6 +60,7 @@ export function MobileShell({
   cockpitPanel,
   chat,
   banners,
+  accountSlot,
 }: MobileShellProps) {
   const [openSection, setOpenSection] = useState<TradeSection>('chart');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -180,19 +182,26 @@ export function MobileShell({
               <span className="text-xl font-bold tracking-wide">{ticker}</span>
               <Search className="h-4 w-4 text-intel-ink3" aria-hidden="true" />
             </button>
-            <span className="flex items-baseline gap-2">
-              <span className="font-mono text-lg font-semibold">
-                {typeof price === 'number' ? `$${price.toFixed(2)}` : '—'}
-              </span>
-              <span className={`font-mono text-xs ${changeTone}`}>
-                {typeof change === 'number' ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}` : ''}
-                {typeof changePercent === 'number' ? ` (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)` : ''}
-              </span>
-              {marketClosed && (
-                <span className="rounded bg-intel-warn/10 px-1.5 py-[1px] font-mono text-[9px] font-semibold uppercase tracking-label text-intel-warn">
-                  Closed
+            <span className="ml-auto flex min-w-0 items-center gap-2">
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="font-mono text-lg font-semibold">
+                  {typeof price === 'number' ? `$${price.toFixed(2)}` : '—'}
                 </span>
-              )}
+                <span className={`font-mono text-xs ${changeTone}`}>
+                  {typeof change === 'number' ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}` : ''}
+                  {typeof changePercent === 'number' && (
+                    <span className="hidden min-[390px]:inline">
+                      {` (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`}
+                    </span>
+                  )}
+                </span>
+                {marketClosed && (
+                  <span className="hidden rounded bg-intel-warn/10 px-1.5 py-[1px] font-mono text-[9px] font-semibold uppercase tracking-label text-intel-warn min-[390px]:inline-flex">
+                    Closed
+                  </span>
+                )}
+              </span>
+              {accountSlot}
             </span>
           </>
         )}

@@ -204,7 +204,10 @@ systemHealthRouter.get('/status', async (_req: Request, res: Response) => {
         : sched.state === 'ACTIVE' || mon.state === 'ACTIVE'
           ? 'RUNNING'
           : 'STOPPED';
-  res.status(status === 'BLOCKED' ? 503 : 200).json({
+  // /api/system/status is a UI read-model, not a liveness probe. Keep the
+  // semantic state in the payload so the cockpit can render BLOCKED/DEGRADED
+  // without turning expected operational states into browser-level 5xx errors.
+  res.status(200).json({
     status,
     generatedAt: new Date(now).toISOString(),
     summary:

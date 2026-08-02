@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ChevronRight, Info, RotateCcw, X } from 'lucide-react';
 import type { Socket } from 'socket.io-client';
 import { Toaster } from 'sonner';
+// Lazy so the markdown vendor chunk stays out of the initial trading bundle —
+// it loads on demand only when an AI desk note actually needs rendering.
+const ReactMarkdown = lazy(() => import('react-markdown'));
 import { getSharedSocket } from './lib/socket';
 import {
   publishQuote,
@@ -19,7 +22,10 @@ import { NavRail } from './components/layout/NavRail';
 import { MobileShell } from './components/layout/MobileShell';
 import type { MobileTab } from './components/layout/MobileTabBar';
 import { MarketContextBar } from './components/layout/MarketContextBar';
-import { SystemStatusBar } from './components/layout/SystemStatusBar';
+import { SystemStatusControl } from './components/layout/SystemStatusControl';
+import { DiagnosticsDrawer } from './components/layout/DiagnosticsDrawer';
+import { CollapsibleSection } from './components/shared/CollapsibleSection';
+import { setActiveSymbol, setActiveContract, useActivePosition, useLinkedMode } from './lib/workspaceContextStore';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { ChatBot } from './components/chat/ChatBot';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -30,6 +36,10 @@ import { OptionsChainPanel } from './components/options/OptionsChainPanel';
 import { PriceLadder } from './components/options/PriceLadder';
 import { ChatDock } from './components/chat/ChatDock';
 import { debugLog } from './lib/debugLog';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import { AuthScreen } from './auth/AuthScreen';
+import { ProfileMenu } from './auth/ProfileMenu';
+import { OnboardingScreen } from './auth/OnboardingScreen';
 
 // Route-level code splitting: the heavy switchable views load on demand, so the
 // initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
@@ -454,13 +464,14 @@ function formatRelativeTime(value?: string | null): string | null {
 
 // Root component controlling the workstation views. Manages data
 // fetching, caches, and cross-panel selection state.
-function App() {
+function TradingApp() {
   const [view, setView] = useState<View>('trading');
   const [ticker, setTicker] = useState('SPY');
   const normalizedTicker = ticker.trim().toUpperCase() || 'SPY';
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   // Phone companion shell: an entirely separate layout below `md`, not a
   // squeezed workstation. Desktop state (view) is untouched by mobile tabs.
@@ -524,6 +535,32 @@ function App() {
   const [desiredContract, setDesiredContract] = useState<string | null>(null);
   const activeContractSymbol = selectedLeg?.ticker ?? null;
   const activeContractSymbolRef = useRef<string | null>(null);
+
+  // Publish the operator's current focus onto the shared workspace context bus
+  // so downstream panels (chart, matrix, Greeks, risk, AI) can subscribe to one
+  // source of truth instead of receiving the same value threaded through props.
+  // This is a thin mirror of existing selection state — it opens no sockets and
+  // fetches nothing, so it can never create a duplicate subscription.
+  useEffect(() => {
+    setActiveSymbol(normalizedTicker);
+  }, [normalizedTicker]);
+  useEffect(() => {
+    setActiveContract(selectedLeg);
+  }, [selectedLeg]);
+
+  // Linked Mode (Deliverable 4/5): when the operator selects an open position
+  // and Linked Mode is on, re-center the chart underlying and the options matrix
+  // on that position's contract. Uses the existing setters (setTicker /
+  // setDesiredContract) so chart, matrix, Greeks, and AI context all follow —
+  // no new fetch or subscription. When Linked Mode is off, a selection never
+  // interrupts a symbol the operator is researching.
+  const linkedActivePosition = useActivePosition();
+  const linkedMode = useLinkedMode();
+  useEffect(() => {
+    if (!linkedMode || !linkedActivePosition) return;
+    if (linkedActivePosition.underlying) setTicker(linkedActivePosition.underlying);
+    if (linkedActivePosition.optionSymbol) setDesiredContract(linkedActivePosition.optionSymbol);
+  }, [linkedMode, linkedActivePosition]);
 
   const [contractDetail, setContractDetail] = useState<OptionContractDetail | null>(null);
 
@@ -2774,9 +2811,24 @@ function App() {
         <div className="space-y-2.5">
           <div className="ai-glass-panel-soft rounded-md px-3 py-2 shadow-none">
             <p className="ai-section-title font-mono text-[11px] text-intel-ai">Summary</p>
-            <p className="mt-1 text-sm leading-relaxed text-intel-ink whitespace-pre-line">
-              {deskSummary || `No notes yet. Open the AI desk to ask about ${deskInsightSymbol} or any spread.`}
-            </p>
+            {deskSummary ? (
+              // Render the desk note as markdown so the model's own section
+              // hierarchy (thesis, bull/bear, catalysts, risks) reads as headings
+              // and lists instead of raw ** ** text. Display only — no AI logic.
+              <Suspense
+                fallback={
+                  <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-intel-ink">{deskSummary}</p>
+                }
+              >
+                <div className="desk-markdown mt-1">
+                  <ReactMarkdown>{deskSummary}</ReactMarkdown>
+                </div>
+              </Suspense>
+            ) : (
+              <p className="mt-1 text-sm leading-relaxed text-intel-ink2">
+                No notes yet. Open the AI desk to ask about {deskInsightSymbol} or any spread.
+              </p>
+            )}
           </div>
           {(sentimentText || fedEvent) && (
             <div className="flex flex-wrap gap-1.5 text-[11px]">
@@ -2955,22 +3007,26 @@ function App() {
         {deskInsightPanel}
       </div>
       <div className="lg:col-span-2 min-w-0">
-        <GreeksPanel
-          contract={contractDetail}
-          leg={selectedLeg}
-          label={displayTicker}
-          underlyingPrice={greeksUnderlyingPrice}
-          insight={deskInsight}
-          selection={contractSelection}
-          selectionLoading={contractSelectionLoading}
-          onRequestSelection={handleContractSelectionRequest}
-          selectionDisabled={!contractSelectionAllowed}
-          analysisRequestId={contractAnalysisRequestId}
-          analysisDisabled={!contractAnalysisAllowed}
-        />
+        <CollapsibleSection title="Greeks & contract analysis" hint="Advanced">
+          <GreeksPanel
+            contract={contractDetail}
+            leg={selectedLeg}
+            label={displayTicker}
+            underlyingPrice={greeksUnderlyingPrice}
+            insight={deskInsight}
+            selection={contractSelection}
+            selectionLoading={contractSelectionLoading}
+            onRequestSelection={handleContractSelectionRequest}
+            selectionDisabled={!contractSelectionAllowed}
+            analysisRequestId={contractAnalysisRequestId}
+            analysisDisabled={!contractAnalysisAllowed}
+          />
+        </CollapsibleSection>
       </div>
       <div className="lg:col-span-3 min-w-0">
-        {scannerPanelEl}
+        <CollapsibleSection title="Scanner" hint="Watchlist analysis · entry checklist">
+          {scannerPanelEl}
+        </CollapsibleSection>
       </div>
     </div>
   );
@@ -3144,6 +3200,7 @@ function App() {
           }
           chat={mobileChat}
           banners={mobileBanners}
+          accountSlot={<ProfileMenu />}
         />
         <Toaster richColors position="top-center" theme="dark" />
       </>
@@ -3165,8 +3222,13 @@ function App() {
         isSettingsOpen={settingsOpen}
         chatDisabled={!chatAllowed}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        accountSlot={<ProfileMenu />}
       />
-      <SystemStatusBar marketClosed={Boolean(marketSessionMeta?.marketClosed)} chartErrored={Boolean(marketError)} />
+      <SystemStatusControl
+        marketClosed={Boolean(marketSessionMeta?.marketClosed)}
+        chartErrored={Boolean(marketError)}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+      />
       <MarketContextBar />
       {settingsOpen && (
         <div
@@ -3359,6 +3421,8 @@ function App() {
         onTickerSubmit={handleHeaderTickerSubmit}
       />
 
+      <DiagnosticsDrawer open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
+
       <ChatDock
         isOpen={isChatOpen && chatAllowed}
         onClose={() => setIsChatOpen(false)}
@@ -3379,6 +3443,39 @@ function App() {
       />
       <Toaster richColors position="bottom-right" theme="dark" />
     </div>
+  );
+}
+
+function ProtectedApp() {
+  const auth = useAuth();
+  if (auth.status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-intel-bg text-sm text-intel-ink3">
+        Restoring session…
+      </div>
+    );
+  }
+  if (auth.status !== 'authenticated') {
+    if (!window.location.pathname.startsWith('/auth')) {
+      window.history.replaceState({}, '', '/auth/login');
+    }
+    return <AuthScreen />;
+  }
+  if (auth.user?.firstLogin) {
+    if (window.location.pathname !== '/onboarding') window.history.replaceState({}, '', '/onboarding');
+    return <OnboardingScreen />;
+  }
+  if (window.location.pathname.startsWith('/auth') || window.location.pathname === '/onboarding' || window.location.pathname === '/') {
+    window.history.replaceState({}, '', '/terminal');
+  }
+  return <TradingApp />;
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <ProtectedApp />
+    </AuthProvider>
   );
 }
 

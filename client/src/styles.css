@@ -116,3 +116,127 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* ── Custom scrollbars ──────────────────────────────────────────────────────
+   One consistent, thin, professional scrollbar across every panel scroll
+   region. Intel palette; the track is transparent so the bar never overlaps or
+   competes with content, and the thumb recedes until hovered. Firefox uses the
+   standardized properties; WebKit/Blink use the pseudo-elements. Monaco ships
+   its own overlay scrollbars, so it is exempted below. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1f2b3e transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #1f2b3e; /* subtle, always visible so scrollability reads */
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:vertical {
+  min-height: 32px;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background-color: #2b3b56;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #3d5378; /* brighter on direct hover of the bar */
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Monaco manages its own scrollbars — don't let the global rule fight it. */
+.monaco-editor *::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.3);
+}
+
+/* ── AI desk note markdown ──────────────────────────────────────────────────
+   Render the model's markdown in the terminal idiom: purple, tracked, uppercase
+   section headings (thesis / bull / bear / catalysts / risks surface as h2/h3),
+   compact lists, and restrained links. Display only — the AI text is untouched. */
+.desk-markdown {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #eef2fa;
+}
+.desk-markdown > *:first-child {
+  margin-top: 0;
+}
+.desk-markdown > *:last-child {
+  margin-bottom: 0;
+}
+.desk-markdown p {
+  margin: 0 0 0.5rem;
+}
+.desk-markdown strong {
+  color: #eef2fa;
+  font-weight: 600;
+}
+.desk-markdown em {
+  color: #93a3ba;
+}
+.desk-markdown h1,
+.desk-markdown h2,
+.desk-markdown h3,
+.desk-markdown h4 {
+  margin: 0.75rem 0 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #a98bf5;
+}
+.desk-markdown ul {
+  margin: 0 0 0.5rem;
+  padding-left: 1rem;
+  list-style: disc;
+}
+.desk-markdown ol {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+  list-style: decimal;
+}
+.desk-markdown li {
+  margin: 0.125rem 0;
+}
+.desk-markdown li::marker {
+  color: #5c6b81;
+}
+.desk-markdown a {
+  color: #6aa5f5;
+  text-decoration: underline;
+}
+.desk-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+  background: rgba(148, 163, 184, 0.12);
+  padding: 0 0.25rem;
+  border-radius: 3px;
+}
+.desk-markdown blockquote {
+  margin: 0.5rem 0;
+  border-left: 2px solid #243144;
+  padding-left: 0.6rem;
+  color: #93a3ba;
+}
+.desk-markdown hr {
+  margin: 0.6rem 0;
+  border: 0;
+  border-top: 1px solid #16202e;
+}

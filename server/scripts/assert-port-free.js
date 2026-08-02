@@ -1,7 +1,7 @@
 // Runs automatically before `npm run dev` (see the `predev` script).
 // Fails fast with a clear message when the API port is already taken, so
 // ts-node-dev doesn't spawn a second instance that dies with EADDRINUSE.
-require('dotenv').config();
+require('dotenv').config({ path: ['.env', '.env.local'] });
 const net = require('net');
 
 const port = process.env.PORT ? Number(process.env.PORT) : 4000;

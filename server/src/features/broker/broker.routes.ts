@@ -14,10 +14,27 @@ import { logAutomationEvent } from '../automation/services/automationAudit.servi
 const router = Router();
 
 // Simple in-memory caches to avoid calling Alpaca more than ~once every 10s.
-const CACHE_TTL_MS = 10_000;
+const configuredCacheTtlMs = Number(process.env.BROKER_CACHE_TTL_MS);
+const CACHE_TTL_MS = Number.isFinite(configuredCacheTtlMs) && configuredCacheTtlMs > 0 ? configuredCacheTtlMs : 10_000;
 
 let cachedAccount: { data: any; expiresAt: number } | null = null;
 let cachedPositions: { data: any; expiresAt: number } | null = null;
+let accountRequest: Promise<any> | null = null;
+let positionsRequest: Promise<any> | null = null;
+const cachedOrders = new Map<string, { data: any; expiresAt: number }>();
+const orderRequests = new Map<string, Promise<any>>();
+
+function isProviderRateLimit(error: any): boolean {
+  return Number(error?.response?.status ?? error?.status ?? error?.statusCode) === 429;
+}
+
+function serveRateLimitedCache(res: any, cache: { data: any; expiresAt: number } | null, wrap: (data: any) => any): boolean {
+  if (!cache) return false;
+  res.setHeader('X-Broker-Data-Stale', 'true');
+  res.setHeader('Warning', '110 - "Response is stale; broker rate limit active"');
+  res.json(wrap(cache.data));
+  return true;
+}
 
 // GET /api/broker/alpaca/account – fetches account snapshot (buying power, etc.).
 async function getAccountSnapshot(_req: any, res: any, next: any) {
@@ -26,10 +43,14 @@ async function getAccountSnapshot(_req: any, res: any, next: any) {
     if (cachedAccount && cachedAccount.expiresAt > now) {
       return res.json(cachedAccount.data);
     }
-    const account = await getAlpacaAccount();
-    cachedAccount = { data: account, expiresAt: now + CACHE_TTL_MS };
+    accountRequest ??= getAlpacaAccount().finally(() => {
+      accountRequest = null;
+    });
+    const account = await accountRequest;
+    cachedAccount = { data: account, expiresAt: Date.now() + CACHE_TTL_MS };
     res.json(account);
   } catch (error) {
+    if (isProviderRateLimit(error) && serveRateLimitedCache(res, cachedAccount, data => data)) return;
     next(error);
   }
 }
@@ -43,6 +64,7 @@ router.get('/alpaca/clock', async (_req, res, next) => {
     const clock = await getAlpacaClock();
     res.json(clock);
   } catch (error) {
+    if (isProviderRateLimit(error) && serveRateLimitedCache(res, cachedPositions, positions => ({ positions }))) return;
     next(error);
   }
 });
@@ -54,8 +76,11 @@ router.get('/alpaca/options/positions', async (_req, res, next) => {
     if (cachedPositions && cachedPositions.expiresAt > now) {
       return res.json({ positions: cachedPositions.data });
     }
-    const positions = await listAlpacaOptionPositions();
-    cachedPositions = { data: positions, expiresAt: now + CACHE_TTL_MS };
+    positionsRequest ??= listAlpacaOptionPositions().finally(() => {
+      positionsRequest = null;
+    });
+    const positions = await positionsRequest;
+    cachedPositions = { data: positions, expiresAt: Date.now() + CACHE_TTL_MS };
     res.json({ positions });
   } catch (error) {
     next(error);
@@ -63,12 +88,27 @@ router.get('/alpaca/options/positions', async (_req, res, next) => {
 });
 
 router.get('/alpaca/options/orders', async (req, res, next) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+  const cacheKey = `${status ?? ''}:${Number.isFinite(limit) ? limit : ''}`;
   try {
-    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
-    const orders = await listAlpacaOptionOrders({ status, limit });
+    const now = Date.now();
+    const cached = cachedOrders.get(cacheKey);
+    if (cached && cached.expiresAt > now) return res.json({ orders: cached.data });
+
+    let request = orderRequests.get(cacheKey);
+    if (!request) {
+      request = listAlpacaOptionOrders({ status, limit }).finally(() => {
+        orderRequests.delete(cacheKey);
+      });
+      orderRequests.set(cacheKey, request);
+    }
+    const orders = await request;
+    cachedOrders.set(cacheKey, { data: orders, expiresAt: Date.now() + CACHE_TTL_MS });
     res.json({ orders });
   } catch (error) {
+    const cached = cachedOrders.get(cacheKey) ?? null;
+    if (isProviderRateLimit(error) && serveRateLimitedCache(res, cached, orders => ({ orders }))) return;
     next(error);
   }
 });
