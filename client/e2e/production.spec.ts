@@ -214,6 +214,17 @@ async function selectWatchlistSymbol(page: Page, symbol: string): Promise<boolea
 }
 
 async function mockBrokerReadModel(context: BrowserContext): Promise<void> {
+  await context.route('**/api/brokers/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/brokers/status') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ checkedAt: new Date().toISOString(), healthy: 0, degraded: 0, reconnectRequired: 0, aiStatus: 'ready', riskScore: 35, recentSignals: [], connections: [] }),
+      });
+    }
+    return route.continue();
+  });
   await context.route('**/api/broker/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/broker/account' || path === '/api/broker/alpaca/account') {

@@ -66,6 +66,8 @@ import {
 import { autonomousTradingRouter } from './features/autonomousTrading';
 import { learningRouter, startLearningScheduler, stopLearningScheduler } from './features/learning';
 import { identityRouter } from './features/identity/identity.routes';
+import { brokerageRouter } from './features/brokerage/brokerage.routes';
+import { startBrokerRefreshService, stopBrokerRefreshService } from './features/brokerage/brokerPlatform.service';
 import { runIdentityMigrations } from './features/identity/identity.migrations';
 import { isSessionActive } from './features/identity/services/sessionService';
 import { initializeAutomation } from './features/automation/services/sessionRecovery.service';
@@ -191,6 +193,7 @@ app.get(['/health', '/api/health'], (_req, res) => {
 });
 
 app.use('/api/auth', identityRouter);
+app.use('/api/brokers', brokerageRouter);
 app.use('/api/analyze', analyzeRouter);
 app.use('/api/agent', agentProxyRouter);
 app.use('/api/chat', chatRouter);
@@ -366,6 +369,7 @@ async function start() {
     startStrategyOrchestratorScheduler();
     startRiskEngineScheduler();
     startLearningScheduler();
+    startBrokerRefreshService();
   });
 
   // Automation safety foundation (Phase 2A): fail-closed init AFTER the HTTP
@@ -450,6 +454,7 @@ async function gracefulShutdown(signal: string) {
   stopStrategyOrchestratorScheduler();
   stopRiskEngineScheduler();
   stopLearningScheduler();
+  stopBrokerRefreshService();
   await stopTradeLifecycleScheduler().catch(() => undefined);
   stopAutomationVisibilityBroadcaster();
   stopOrderReconciliationWorker();

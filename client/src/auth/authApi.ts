@@ -76,7 +76,7 @@ export type WorkspaceSummary = {
     connections: Array<{
       provider: BrokerProvider;
       label: string;
-      status: 'unconfigured' | 'connected' | 'error' | 'revoked';
+      status: 'unconfigured' | 'connecting' | 'connected' | 'syncing' | 'error' | 'revoked';
       accountId: string | null;
       accountType: string | null;
       paper: boolean;

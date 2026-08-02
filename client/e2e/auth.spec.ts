@@ -138,7 +138,7 @@ test.describe('Enterprise identity gateway', () => {
     await page.unroute('**/api/auth/config');
     await page.unroute('**/api/auth/csrf');
     await page.unroute('**/api/auth/refresh');
-    await page.route(/^https?:\/\/[^/]+:4001\/api\//, route => {
+    await page.route(/^https?:\/\/[^/]+\/api\//, route => {
       const path = new URL(route.request().url()).pathname;
       let body: object = {};
       if (path === '/api/auth/config') body = { googleConfigured: true, googleClientId: 'test-client', alpacaConfigured: true, alpacaPaper: true };
@@ -177,7 +177,7 @@ test.describe('Enterprise identity gateway', () => {
     expect((await googleStart).url()).toContain('returnTo=%2Fauth%2Flogin');
   });
 
-  test('forces first-login onboarding and launches a provisioned paper workspace', async ({ page }) => {
+  test('forces first-login OAuth onboarding, portfolio sync, and terminal launch', async ({ page }) => {
     const user: any = {
       id: 'operator-1',
       email: 'operator@example.com',
@@ -208,11 +208,21 @@ test.describe('Enterprise identity gateway', () => {
       layouts: ['trading', 'ai', 'research', 'portfolio', 'automation'].map(key => ({ key, label: `${key} layout`, version: 1 })),
     };
 
-    await page.route('**/api/auth/login', route => route.fulfill({
+    let authenticated = false;
+    await page.unroute('**/api/auth/refresh');
+    await page.route('**/api/auth/refresh', route => route.fulfill({
+      status: authenticated ? 200 : 401,
+      contentType: 'application/json',
+      body: JSON.stringify(authenticated ? { accessToken: 'restored-token', accessTokenExpiresInSec: 900, sessionId: 'session-1', user } : { error: 'SESSION_INVALID' }),
+    }));
+    await page.route('**/api/auth/login', route => {
+      authenticated = true;
+      return route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ accessToken: 'access-token', accessTokenExpiresInSec: 900, sessionId: 'session-1', user }),
-    }));
+      });
+    });
     await page.route('**/api/auth/workspace', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ workspace }) }));
     await page.route('**/api/auth/onboarding', async route => {
       const body = route.request().postDataJSON();
@@ -222,15 +232,25 @@ test.describe('Enterprise identity gateway', () => {
       if (body.riskProfile) Object.assign(workspace.riskProfile, body.riskProfile);
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ workspace }) });
     });
-    await page.route('**/api/auth/onboarding/broker/paper', route => {
-      workspace.brokerOnboarding.status = 'connected';
-      workspace.brokerOnboarding.connections = [{ provider: 'paper', label: 'Paper Trading', status: 'connected', accountId: 'paper-1', accountType: 'paper', paper: true, buyingPower: 100000, currency: 'USD' }];
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ workspace }) });
+    const brokerEntry = () => ({
+      provider: 'alpaca', name: 'Alpaca', monogram: 'A', assets: ['Stocks', 'Options', 'Crypto'], oauthSupported: true,
+      paperTrading: true, liveTrading: true, available: true, configured: true,
+      permissions: ['Read Account', 'Read Buying Power', 'Read Positions', 'Read Orders', 'Submit Orders'],
+      description: 'API-first brokerage for equities, options, and digital assets.',
+      connections: workspace.brokerOnboarding.connections.map((connection: any) => ({
+        id: 'connection-1', provider: 'alpaca', brokerName: 'Alpaca', nickname: 'Alpaca', accountId: connection.accountId,
+        accountType: 'margin', environment: 'paper', paper: true, live: false, primary: true, status: 'connected',
+        scopes: ['account', 'trading'], permissions: ['Read Account', 'Submit Orders'], connectedAt: new Date().toISOString(),
+        lastSync: new Date().toISOString(), lastRefresh: null, expiresAt: null, oauthStatus: 'authorized', reconnectStatus: 'not_required', health: 'healthy',
+        balances: { buyingPower: 250000.5, cash: 100000, equity: 300000, portfolioValue: 300000 }, metrics: { openPositions: 2, openOrders: 1, todayPl: 125 },
+      })),
     });
-    await page.route('**/api/auth/onboarding/broker/alpaca', route => {
+    await page.route('**/api/brokers', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ brokers: [brokerEntry()] }) }));
+    await page.route('**/api/brokers/alpaca/connect', route => {
       workspace.brokerOnboarding.status = 'connected';
-      workspace.brokerOnboarding.connections.push({ provider: 'alpaca', label: 'Alpaca', status: 'connected', accountId: 'alpaca-1', accountType: 'margin', paper: true, buyingPower: 250000.5, currency: 'USD' });
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ workspace }) });
+      workspace.brokerOnboarding.connections = [{ provider: 'alpaca', label: 'Alpaca', status: 'connected', accountId: 'alpaca-1', accountType: 'margin', paper: true, buyingPower: 250000.5, currency: 'USD' }];
+      workspace.onboarding.currentStep = 2;
+      return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ authorizationUrl: `${new URL(page.url()).origin}/onboarding?__identity=real&broker=alpaca&connection=success` }) });
     });
     await page.route('**/api/auth/onboarding/complete', route => {
       workspace.onboarding.status = 'complete';
@@ -246,18 +266,17 @@ test.describe('Enterprise identity gateway', () => {
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Welcome to AI-Trader' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
-    await page.getByRole('button', { name: 'Start Paper Workspace' }).click();
-    await expect(page.getByRole('button', { name: 'Paper Connected' })).toBeVisible();
-    await page.getByRole('button', { name: 'Connect Alpaca' }).click();
-    await expect(page.getByRole('button', { name: 'Alpaca Connected' })).toBeVisible();
-    await expect(page.getByText('$250,000.5 buying power')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
-    await page.getByRole('button', { name: 'Save AI profile' }).click();
-    await page.getByRole('button', { name: 'Initialize workspace' }).click();
-    await expect(page.getByRole('heading', { name: 'Workspace ready' })).toBeVisible();
+    await page.getByRole('button', { name: 'Open Broker Connection Center' }).click();
+    await page.getByRole('button', { name: /Alpaca/ }).first().click();
+    await expect(page.getByRole('heading', { name: 'Alpaca', exact: true })).toBeVisible();
+    await expect(page.getByText('AI-Trader never sees or stores your password')).toBeVisible();
+    await page.getByRole('button', { name: 'Connect with Alpaca' }).click();
+    await expect(page).toHaveURL(/connection=success/);
+    await expect(page.getByRole('heading', { name: 'Set hard operating boundaries' })).toBeVisible();
+    await page.getByRole('button', { name: 'Initialize AI workspace' }).click();
+    await expect(page.getByRole('heading', { name: 'Trading terminal ready' })).toBeVisible();
     await page.screenshot({ path: 'e2e-artifacts/onboarding-ready.png', fullPage: true });
-    await page.getByRole('button', { name: /Launch Trading Workspace/ }).click();
+    await page.getByRole('button', { name: /Launch Trading Terminal/ }).click();
     await expect(page).toHaveURL(/\/terminal$/);
   });
 });

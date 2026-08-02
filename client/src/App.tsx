@@ -40,6 +40,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext';
 import { AuthScreen } from './auth/AuthScreen';
 import { ProfileMenu } from './auth/ProfileMenu';
 import { OnboardingScreen } from './auth/OnboardingScreen';
+import { BrokerageSummaryBar } from './components/brokerage/BrokerageSummaryBar';
 
 // Route-level code splitting: the heavy switchable views load on demand, so the
 // initial (trading) bundle no longer ships Scanner + Portfolio + Cockpit +
@@ -3120,6 +3121,7 @@ function TradingApp() {
   if (isMobile) {
     const mobileBanners = (
       <>
+        <BrokerageSummaryBar />
         {marketError && (
           <div className="mb-2 rounded-panel border border-intel-neg/30 bg-intel-neg/10 px-3 py-2 text-sm text-intel-neg">
             {marketError}
@@ -3230,6 +3232,7 @@ function TradingApp() {
         onOpenDiagnostics={() => setDiagnosticsOpen(true)}
       />
       <MarketContextBar />
+      <BrokerageSummaryBar />
       {settingsOpen && (
         <div
           className="fixed inset-0 z-40 flex justify-end bg-black/70 sm:px-3 sm:py-3"
