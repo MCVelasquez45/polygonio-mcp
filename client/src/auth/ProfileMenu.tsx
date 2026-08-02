@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Building2, Link2, LogOut, MonitorSmartphone, UserRound, X } from 'lucide-react';
+import { Building2, Link2, LogOut, MonitorSmartphone, ShieldCheck, UserRound, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import type { SessionSummary, WorkspaceSummary } from './authApi';
+import { BrokerConnectionCenter } from '../components/brokerage/BrokerConnectionCenter';
+import { SecurityCenter } from '../components/brokerage/SecurityCenter';
 
 export function ProfileMenu() {
   const auth = useAuth();
@@ -11,6 +13,7 @@ export function ProfileMenu() {
   const [name, setName] = useState(auth.user?.profile.name ?? '');
   const [workspaceName, setWorkspaceName] = useState(auth.user?.profile.workspaceName ?? '');
   const [busy, setBusy] = useState(false);
+  const [settingsView, setSettingsView] = useState<'profile' | 'brokers' | 'security'>('profile');
 
   useEffect(() => {
     setName(auth.user?.profile.name ?? '');
@@ -61,8 +64,8 @@ export function ProfileMenu() {
           >
             <div className="flex items-start justify-between border-b border-intel-line px-4 py-3">
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-eyebrow text-intel-ink3">Identity</p>
-                <h2 className="mt-1 text-lg font-semibold text-intel-ink">Profile</h2>
+                <p className="font-mono text-[10px] uppercase tracking-eyebrow text-intel-ink3">Settings</p>
+                <h2 className="mt-1 text-lg font-semibold capitalize text-intel-ink">{settingsView === 'brokers' ? 'Broker connections' : settingsView === 'security' ? 'Security center' : 'Profile'}</h2>
               </div>
               <button type="button" onClick={() => setOpen(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-intel-line text-intel-ink2 hover:border-intel-accentLine hover:text-intel-accent" aria-label="Close profile">
                 <X className="h-4 w-4" />
@@ -70,6 +73,12 @@ export function ProfileMenu() {
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="Account settings">
+                <SettingsTab active={settingsView === 'profile'} onClick={() => setSettingsView('profile')} label="Profile" />
+                <SettingsTab active={settingsView === 'brokers'} onClick={() => setSettingsView('brokers')} label="Brokers" />
+                <SettingsTab active={settingsView === 'security'} onClick={() => setSettingsView('security')} label="Security" />
+              </div>
+              {settingsView === 'profile' && <>
               <section className="rounded-md border border-intel-line bg-intel-bg p-3">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <UserRound className="h-4 w-4 text-intel-accent" />
@@ -111,33 +120,9 @@ export function ProfileMenu() {
                 </div>
               </section>
 
-              <section className="rounded-md border border-intel-line bg-intel-bg">
-                <div className="flex items-center justify-between gap-2 border-b border-intel-line px-3 py-2">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <Link2 className="h-4 w-4 text-intel-accent" />
-                    Connect Broker
-                  </div>
-                  <span className="font-mono text-[10px] uppercase tracking-label text-intel-ink3">Post-login</span>
-                </div>
-                <div className="grid gap-2 p-3 sm:grid-cols-2">
-                  {(workspace?.brokerOnboarding.providers ?? [
-                    { provider: 'alpaca', label: 'Alpaca', enabled: true },
-                    { provider: 'tradier', label: 'Tradier', enabled: true },
-                    { provider: 'ibkr', label: 'IBKR', enabled: true },
-                    { provider: 'tastytrade', label: 'Tastytrade', enabled: true },
-                    { provider: 'paper', label: 'Paper', enabled: true },
-                  ]).map(provider => (
-                    <button
-                      key={provider.provider}
-                      type="button"
-                      disabled
-                      className="flex h-10 items-center justify-between rounded-md border border-intel-lineSoft bg-intel-panel px-3 text-left text-sm text-intel-ink2 disabled:cursor-not-allowed disabled:opacity-80"
-                    >
-                      <span>{provider.label}</span>
-                      <span className="font-mono text-[10px] uppercase tracking-label text-intel-ink3">Ready</span>
-                    </button>
-                  ))}
-                </div>
+              <section className="grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={() => setSettingsView('brokers')} className="flex items-center gap-3 rounded-md border border-intel-line bg-intel-bg p-3 text-left hover:border-intel-accentLine"><Link2 className="h-4 w-4 text-intel-accent" /><span><span className="block text-sm font-semibold text-intel-ink">Broker connections</span><span className="mt-0.5 block text-xs text-intel-ink3">OAuth, sync, reconnect</span></span></button>
+                <button type="button" onClick={() => setSettingsView('security')} className="flex items-center gap-3 rounded-md border border-intel-line bg-intel-bg p-3 text-left hover:border-intel-accentLine"><ShieldCheck className="h-4 w-4 text-intel-accent" /><span><span className="block text-sm font-semibold text-intel-ink">Security center</span><span className="mt-0.5 block text-xs text-intel-ink3">Sessions and activity</span></span></button>
               </section>
 
               <section className="rounded-md border border-intel-line bg-intel-bg">
@@ -162,6 +147,9 @@ export function ProfileMenu() {
                   {!sessions.length && <div className="px-3 py-4 text-sm text-intel-ink3">No active sessions found.</div>}
                 </div>
               </section>
+              </>}
+              {settingsView === 'brokers' && <BrokerConnectionCenter mode="settings" />}
+              {settingsView === 'security' && <SecurityCenter />}
             </div>
 
             <div className="grid grid-cols-2 gap-2 border-t border-intel-line px-4 py-3">
@@ -179,4 +167,8 @@ export function ProfileMenu() {
       )}
     </>
   );
+}
+
+function SettingsTab({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={`h-9 rounded-md border text-xs font-semibold ${active ? 'border-intel-accentLine bg-intel-accentSoft text-intel-accent' : 'border-intel-line text-intel-ink3'}`}>{label}</button>;
 }
